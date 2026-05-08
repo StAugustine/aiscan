@@ -562,11 +562,11 @@ func TestScanPipelineDoesNotDispatchFindingOrError(t *testing.T) {
 	if runs != 0 {
 		t.Fatalf("capability runs = %d, want 0", runs)
 	}
-	if len(projector.fingerprints) != 1 {
-		t.Fatalf("fingerprints = %d, want 1", len(projector.fingerprints))
+	if len(projector.data.fingerprints) != 1 {
+		t.Fatalf("fingerprints = %d, want 1", len(projector.data.fingerprints))
 	}
-	if len(projector.errors) != 1 {
-		t.Fatalf("errors = %d, want 1", len(projector.errors))
+	if len(projector.data.errors) != 1 {
+		t.Fatalf("errors = %d, want 1", len(projector.data.errors))
 	}
 }
 
@@ -614,11 +614,11 @@ func TestScanPipelineDispatchesHighPriorityFindingToAgentVerifier(t *testing.T) 
 	if runs != 1 {
 		t.Fatalf("verifier runs = %d, want 1", runs)
 	}
-	if len(projector.verifications) != 1 {
-		t.Fatalf("verifications = %d, want 1", len(projector.verifications))
+	if len(projector.data.verifications) != 1 {
+		t.Fatalf("verifications = %d, want 1", len(projector.data.verifications))
 	}
-	if projector.verifications[0].Finding.Status != verificationConfirmed {
-		t.Fatalf("verification status = %s, want %s", projector.verifications[0].Finding.Status, verificationConfirmed)
+	if projector.data.verifications[0].Finding.Status != verificationConfirmed {
+		t.Fatalf("verification status = %s, want %s", projector.data.verifications[0].Finding.Status, verificationConfirmed)
 	}
 }
 
@@ -640,10 +640,10 @@ func TestAgentVerifyCapabilityUsesProviderAndEmitsVerification(t *testing.T) {
 		findingEvent(capNeutronPOC, vulnFinding{Message: "[vuln] http://127.0.0.1 template=test severity=high"}),
 	})
 
-	if len(projector.verifications) != 1 {
-		t.Fatalf("verifications = %d, want 1", len(projector.verifications))
+	if len(projector.data.verifications) != 1 {
+		t.Fatalf("verifications = %d, want 1", len(projector.data.verifications))
 	}
-	got := projector.verifications[0].Finding
+	got := projector.data.verifications[0].Finding
 	if got.Status != verificationConfirmed {
 		t.Fatalf("status = %s, want %s", got.Status, verificationConfirmed)
 	}
@@ -708,17 +708,17 @@ func TestScanPipelineFanoutAndDedup(t *testing.T) {
 	if !reflect.DeepEqual(seen, []string{"service-to-web", "web-to-finger"}) {
 		t.Fatalf("seen capability runs = %#v", seen)
 	}
-	if len(projector.webEndpoints) != 1 {
-		t.Fatalf("web endpoints = %d, want 1", len(projector.webEndpoints))
+	if len(projector.data.webEndpoints) != 1 {
+		t.Fatalf("web endpoints = %d, want 1", len(projector.data.webEndpoints))
 	}
-	if len(projector.fingerprints) != 1 {
-		t.Fatalf("fingerprints = %d, want 1", len(projector.fingerprints))
+	if len(projector.data.fingerprints) != 1 {
+		t.Fatalf("fingerprints = %d, want 1", len(projector.data.fingerprints))
 	}
-	if len(projector.gogoResults) != 1 {
-		t.Fatalf("gogo results = %d, want 1", len(projector.gogoResults))
+	if len(projector.data.gogoResults) != 1 {
+		t.Fatalf("gogo results = %d, want 1", len(projector.data.gogoResults))
 	}
-	if len(projector.trace) != 0 {
-		t.Fatalf("trace entries = %d, want 0 without debug", len(projector.trace))
+	if len(projector.data.trace) != 0 {
+		t.Fatalf("trace entries = %d, want 0 without debug", len(projector.data.trace))
 	}
 }
 
@@ -798,11 +798,11 @@ func TestScanPipelineDebugTrace(t *testing.T) {
 	pipeline := newPipeline(context.Background(), capabilities, projector, true)
 	pipeline.Run([]event{targetEvent("test", "", newWebTarget("", "http://127.0.0.1", ""))})
 
-	if len(projector.trace) == 0 {
+	if len(projector.data.trace) == 0 {
 		t.Fatal("expected debug trace entries")
 	}
-	if !strings.Contains(strings.Join(projector.trace, "\n"), "dispatch") {
-		t.Fatalf("trace missing dispatch entry: %#v", projector.trace)
+	if !strings.Contains(strings.Join(projector.data.trace, "\n"), "dispatch") {
+		t.Fatalf("trace missing dispatch entry: %#v", projector.data.trace)
 	}
 }
 
@@ -898,8 +898,8 @@ func TestScanSkipsFailedSprayProbeResults(t *testing.T) {
 	if got := buf.String(); got != "" {
 		t.Fatalf("stream output = %q, want empty", got)
 	}
-	if len(projector.sprayResults) != 0 {
-		t.Fatalf("spray results = %d, want 0", len(projector.sprayResults))
+	if len(projector.data.sprayResults) != 0 {
+		t.Fatalf("spray results = %d, want 0", len(projector.data.sprayResults))
 	}
 	var derived []event
 	deriveWebProbeResult(profile{AllowBroadPOC: true}, webProbeResult{

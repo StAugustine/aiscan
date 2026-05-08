@@ -3,7 +3,6 @@ package cmd
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,7 +20,7 @@ type runtimeFeatures struct {
 	VerifyMinPriority   string
 }
 
-func appConfig(option *Option, features runtimeFeatures) app.Config {
+func appConfig(option *Option, features runtimeFeatures, logger telemetry.Logger) app.Config {
 	return app.Config{
 		Provider: app.ProviderConfig{
 			Enabled:  features.ProviderEnabled,
@@ -29,23 +28,19 @@ func appConfig(option *Option, features runtimeFeatures) app.Config {
 			Optional: features.ProviderOptional,
 		},
 		Scanner: app.ScannerConfig{
-			CyberhubURL:         resolvedCyberhubURL(option),
-			CyberhubKey:         resolvedCyberhubKey(option),
-			CyberhubMode:        resolvedCyberhubMode(option),
+			CyberhubURL:         option.CyberhubURL,
+			CyberhubKey:         option.CyberhubKey,
+			CyberhubMode:        option.CyberhubMode,
 			VerificationEnabled: features.VerificationEnabled,
-			VerifyMinPriority:   resolvedVerifyMinPriority(features.VerifyMinPriority),
-			VerifyMaxTurns:      resolvedDefaultInt(DefaultVerifyTurns, 3),
-			VerifyTimeout:       resolvedDefaultInt(DefaultVerifyTimeout, 120),
+			VerifyMinPriority:   verifyMinPriority(features.VerifyMinPriority),
+			VerifyMaxTurns:      defaultInt(DefaultVerifyTurns, 3),
+			VerifyTimeout:       defaultInt(DefaultVerifyTimeout, 120),
 		},
 		Tools: app.ToolConfig{
 			Enabled:     features.ToolsEnabled,
 			BashTimeout: 300,
 		},
-		Logger: telemetry.NewLogger(telemetry.LogConfig{
-			Debug:  option.Debug,
-			Quiet:  option.Quiet,
-			Output: os.Stderr,
-		}),
+		Logger: logger,
 	}
 }
 
@@ -56,8 +51,8 @@ func providerConfig(option *Option) provider.ProviderConfig {
 	} else if inferred := inferProviderFromBaseURL(option.BaseURL); inferred != "" {
 		cfg.Provider = inferred
 	}
-	if baseURL := resolvedBaseURL(option); baseURL != "" {
-		cfg.BaseURL = baseURL
+	if option.BaseURL != "" {
+		cfg.BaseURL = option.BaseURL
 	}
 	if option.APIKey != "" {
 		cfg.APIKey = option.APIKey
@@ -80,8 +75,24 @@ func applyResolvedProviderOptions(option *Option, cfg provider.ProviderConfig) {
 	option.Proxy = cfg.Proxy
 }
 
-func resolvedBaseURL(option *Option) string {
-	return option.BaseURL
+func applyDefaults(option *Option) {
+	option.CyberhubURL = resolveString(option.CyberhubURL, DefaultCyberhubURL)
+	option.CyberhubKey = resolveString(option.CyberhubKey, DefaultCyberhubKey)
+	option.CyberhubMode = resolveString(resolveString(option.CyberhubMode, DefaultCyberhubMode), "merge")
+	option.ACPURL = resolveString(option.ACPURL, DefaultACPURL)
+	option.ACPNodeID = resolveString(option.ACPNodeID, DefaultACPNodeID)
+	option.ACPNodeName = resolveString(option.ACPNodeName, DefaultACPNodeName)
+	option.Space = resolveSpace(option.Space)
+	if option.Model == "" {
+		option.Model = resolveString(DefaultModel, "gpt-4o")
+	}
+}
+
+func resolveString(value, fallback string) string {
+	if value != "" {
+		return value
+	}
+	return fallback
 }
 
 func inferProviderFromBaseURL(baseURL string) string {
@@ -102,41 +113,7 @@ func inferProviderFromBaseURL(baseURL string) string {
 	}
 }
 
-func resolvedModel(option *Option) string {
-	if option.Model != "" {
-		return option.Model
-	}
-	if DefaultModel != "" {
-		return DefaultModel
-	}
-	return "gpt-4o"
-}
-
-func resolvedCyberhubURL(option *Option) string {
-	if option.CyberhubURL != "" {
-		return option.CyberhubURL
-	}
-	return DefaultCyberhubURL
-}
-
-func resolvedCyberhubKey(option *Option) string {
-	if option.CyberhubKey != "" {
-		return option.CyberhubKey
-	}
-	return DefaultCyberhubKey
-}
-
-func resolvedCyberhubMode(option *Option) string {
-	if option.CyberhubMode != "" {
-		return option.CyberhubMode
-	}
-	if DefaultCyberhubMode != "" {
-		return DefaultCyberhubMode
-	}
-	return "merge"
-}
-
-func resolvedDefaultVerify() string {
+func defaultVerifyMode() string {
 	value := strings.ToLower(strings.TrimSpace(DefaultVerify))
 	if value == "" {
 		return "auto"
@@ -144,7 +121,7 @@ func resolvedDefaultVerify() string {
 	return value
 }
 
-func resolvedVerifyMinPriority(value string) string {
+func verifyMinPriority(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return "high"
@@ -152,7 +129,7 @@ func resolvedVerifyMinPriority(value string) string {
 	return value
 }
 
-func resolvedDefaultInt(value string, fallback int) int {
+func defaultInt(value string, fallback int) int {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return fallback
@@ -164,43 +141,22 @@ func resolvedDefaultInt(value string, fallback int) int {
 	return parsed
 }
 
-func resolvedACPURL(option *Option) string {
-	if option.ACPURL != "" {
-		return option.ACPURL
-	}
-	return DefaultACPURL
-}
-
-func resolvedACPNodeID(option *Option) string {
-	if option.ACPNodeID != "" {
-		return option.ACPNodeID
-	}
-	return DefaultACPNodeID
-}
-
-func resolvedACPNodeName(option *Option) string {
-	if option.ACPNodeName != "" {
-		return option.ACPNodeName
-	}
-	return DefaultACPNodeName
-}
-
-func resolvedSpace(option *Option) string {
-	if option.Space != "" && option.Space != "default" {
-		return option.Space
+func resolveSpace(space string) string {
+	if space != "" && space != "default" {
+		return space
 	}
 	if DefaultSpace != "" {
 		return DefaultSpace
 	}
-	if option.Space != "" {
-		return option.Space
+	if space != "" {
+		return space
 	}
 	return "default"
 }
 
 func defaultACPNodeName(option *Option) string {
-	if nodeName := resolvedACPNodeName(option); nodeName != "" {
-		return nodeName
+	if option.ACPNodeName != "" {
+		return option.ACPNodeName
 	}
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err == nil {

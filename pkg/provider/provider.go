@@ -85,3 +85,7 @@ func NewProvider(cfg *ProviderConfig) (Provider, error) {
 	}
 	return NewOpenAIProvider(resolved)
 }
+
+func NewProviderFromResolved(cfg *ProviderConfig) (Provider, error) {
+	return NewOpenAIProvider(cfg)
+}

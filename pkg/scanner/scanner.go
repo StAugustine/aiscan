@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/chainreactors/aiscan/pkg/registry"
 	"github.com/chainreactors/aiscan/pkg/scanner/scan"
 )
 
@@ -22,40 +23,23 @@ type StreamingCommand interface {
 }
 
 type ScannerRegistry struct {
-	commands map[string]PseudoCommand
-	order    []string
+	*registry.OrderedRegistry[PseudoCommand]
 }
 
 func NewScannerRegistry() *ScannerRegistry {
-	return &ScannerRegistry{
-		commands: make(map[string]PseudoCommand),
-	}
-}
-
-func (r *ScannerRegistry) Register(cmd PseudoCommand) {
-	name := cmd.Name()
-	if _, exists := r.commands[name]; !exists {
-		r.order = append(r.order, name)
-	}
-	r.commands[name] = cmd
+	return &ScannerRegistry{OrderedRegistry: registry.New[PseudoCommand]()}
 }
 
 func (r *ScannerRegistry) ConfigureScan(opts ...scan.Option) {
-	cmd, ok := r.commands["scan"].(*scan.Command)
-	if !ok || cmd == nil {
+	cmd, ok := r.Get("scan")
+	if !ok {
 		return
 	}
-	cmd.Configure(opts...)
-}
-
-func (r *ScannerRegistry) Has(name string) bool {
-	_, ok := r.commands[name]
-	return ok
-}
-
-func (r *ScannerRegistry) Get(name string) (PseudoCommand, bool) {
-	cmd, ok := r.commands[name]
-	return cmd, ok
+	scanCmd, ok := cmd.(*scan.Command)
+	if !ok || scanCmd == nil {
+		return
+	}
+	scanCmd.Configure(opts...)
 }
 
 func (r *ScannerRegistry) Execute(ctx context.Context, cmdLine string) (string, error) {
@@ -83,7 +67,7 @@ func (r *ScannerRegistry) ExecuteArgsStreaming(ctx context.Context, tokens []str
 	}
 
 	name := tokens[0]
-	cmd, ok := r.commands[name]
+	cmd, ok := r.Get(name)
 	if !ok {
 		return "", fmt.Errorf("unknown scanner command: %s", name)
 	}
@@ -101,8 +85,7 @@ func (r *ScannerRegistry) ExecuteArgsStreaming(ctx context.Context, tokens []str
 
 func (r *ScannerRegistry) UsageDocs() string {
 	var sb strings.Builder
-	for _, name := range r.order {
-		cmd := r.commands[name]
+	for _, cmd := range r.All() {
 		sb.WriteString("```\n")
 		sb.WriteString(cmd.Usage())
 		sb.WriteString("\n```\n\n")

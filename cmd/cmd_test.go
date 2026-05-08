@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/skills"
 )
 
@@ -243,12 +244,13 @@ func TestAppConfigUsesCompiledDefaults(t *testing.T) {
 		DefaultSpace = "case-1"
 
 		opt := &Option{}
+		applyDefaults(opt)
 		cfg := appConfig(opt, runtimeFeatures{
 			ProviderEnabled:     true,
 			ProviderOptional:    true,
 			VerificationEnabled: true,
 			VerifyMinPriority:   "critical",
-		})
+		}, telemetry.NopLogger())
 		if cfg.Scanner.CyberhubURL != DefaultCyberhubURL || cfg.Scanner.CyberhubKey != DefaultCyberhubKey || cfg.Scanner.CyberhubMode != DefaultCyberhubMode {
 			t.Fatalf("scanner cyberhub config = %#v", cfg.Scanner)
 		}
@@ -258,7 +260,7 @@ func TestAppConfigUsesCompiledDefaults(t *testing.T) {
 		if !cfg.Provider.Enabled || !cfg.Provider.Optional {
 			t.Fatalf("provider config = %#v", cfg.Provider)
 		}
-		if resolvedACPURL(opt) != DefaultACPURL || resolvedACPNodeID(opt) != DefaultACPNodeID || resolvedACPNodeName(opt) != DefaultACPNodeName || resolvedSpace(opt) != DefaultSpace {
+		if opt.ACPURL != DefaultACPURL || opt.ACPNodeID != DefaultACPNodeID || opt.ACPNodeName != DefaultACPNodeName || opt.Space != DefaultSpace {
 			t.Fatal("compiled ACP defaults were not resolved")
 		}
 	})

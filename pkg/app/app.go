@@ -118,7 +118,7 @@ func initProvider(cfg provider.ProviderConfig, logger telemetry.Logger) (provide
 		return nil, nil, err
 	}
 	logger.Infof("provider init provider=%s model=%s", resolved.Provider, resolved.Model)
-	llmProvider, err := provider.NewProvider(resolved)
+	llmProvider, err := provider.NewProviderFromResolved(resolved)
 	if err != nil {
 		return nil, nil, err
 	}

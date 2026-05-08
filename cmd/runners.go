@@ -21,22 +21,13 @@ import (
 	"github.com/chainreactors/aiscan/skills"
 )
 
-func commandLogger(option *Option) telemetry.Logger {
-	return telemetry.NewLogger(telemetry.LogConfig{
-		Debug:  option.Debug,
-		Quiet:  option.Quiet,
-		Output: os.Stderr,
-	})
-}
-
-func runAgentMode(ctx context.Context, option *Option) error {
-	logger := commandLogger(option)
+func runAgentMode(ctx context.Context, option *Option, logger telemetry.Logger) error {
 	application, err := app.New(ctx, appConfig(option, runtimeFeatures{
 		ProviderEnabled:     true,
 		ToolsEnabled:        true,
 		VerificationEnabled: true,
 		VerifyMinPriority:   "high",
-	}))
+	}, logger))
 	if err != nil {
 		return fmt.Errorf("init app: %w", err)
 	}
@@ -73,7 +64,7 @@ func runAgentMode(ctx context.Context, option *Option) error {
 		agent.WithProvider(application.Provider),
 		agent.WithMaxTurns(option.MaxTurns),
 		agent.WithSystemPrompt(systemPrompt),
-		agent.WithModel(resolvedModel(option)),
+		agent.WithModel(option.Model),
 		agent.WithStream(true),
 		agent.WithLogger(logger),
 	)
@@ -86,8 +77,7 @@ func runAgentMode(ctx context.Context, option *Option) error {
 	return nil
 }
 
-func runDirectScannerMode(ctx context.Context, option *Option, rest []string) error {
-	logger := commandLogger(option)
+func runDirectScannerMode(ctx context.Context, option *Option, rest []string, logger telemetry.Logger) error {
 	features, scannerArgs, err := directScannerRuntimeFeatures(rest)
 	if err != nil {
 		return err
@@ -106,7 +96,7 @@ func runDirectScannerMode(ctx context.Context, option *Option, rest []string) er
 			return nil
 		}
 	}
-	application, err := app.New(ctx, appConfig(option, features))
+	application, err := app.New(ctx, appConfig(option, features, logger))
 	if err != nil {
 		return fmt.Errorf("init app: %w", err)
 	}
@@ -184,7 +174,7 @@ func runScannerAgentMode(ctx context.Context, option *Option, application *app.A
 		agent.WithProvider(application.Provider),
 		agent.WithMaxTurns(maxTurns),
 		agent.WithSystemPrompt(systemPrompt),
-		agent.WithModel(resolvedModel(option)),
+		agent.WithModel(option.Model),
 		agent.WithStream(true),
 		agent.WithLogger(logger),
 	)
@@ -217,14 +207,14 @@ func runScannerAIProcess(ctx context.Context, option *Option, application *app.A
 	if err != nil {
 		return "", err
 	}
-	timeout := resolvedDefaultInt(DefaultVerifyTimeout, 120)
+	timeout := defaultInt(DefaultVerifyTimeout, 120)
 	processCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	return agent.Run(processCtx, buildScannerAIProcessPrompt(command, scannerArgs[1:], intent, output), tool.NewToolRegistry(),
 		agent.WithProvider(application.Provider),
-		agent.WithModel(resolvedModel(option)),
-		agent.WithMaxTurns(resolvedDefaultInt(DefaultVerifyTurns, 3)),
+		agent.WithModel(option.Model),
+		agent.WithMaxTurns(defaultInt(DefaultVerifyTurns, 3)),
 		agent.WithMaxTokens(1600),
 		agent.WithSystemPrompt(scannerAIProcessSystemPrompt(command)),
 		agent.WithLogger(telemetry.NopLogger()),
@@ -400,7 +390,7 @@ func scannerVerifyMode(args []string) (string, bool) {
 		}
 		return "", true
 	}
-	return resolvedDefaultVerify(), false
+	return defaultVerifyMode(), false
 }
 
 func replaceOrAppendScannerFlag(args []string, flag, value string) []string {
@@ -441,9 +431,8 @@ func removeScannerFlag(args []string, flag string) []string {
 	return out
 }
 
-func runLoop(ctx context.Context, option *Option) error {
-	logger := commandLogger(option)
-	acpURL := resolvedACPURL(option)
+func runLoop(ctx context.Context, option *Option, logger telemetry.Logger) error {
+	acpURL := option.ACPURL
 	if acpURL == "" {
 		acpURL = "http://127.0.0.1:8765"
 	}
@@ -452,11 +441,11 @@ func runLoop(ctx context.Context, option *Option) error {
 		ToolsEnabled:        true,
 		VerificationEnabled: true,
 		VerifyMinPriority:   "high",
-	})
+	}, logger)
 	cfg.ACP = &app.ACPConfig{
 		URL:           acpURL,
-		NodeID:        resolvedACPNodeID(option),
-		NodeName:      resolvedACPNodeName(option),
+		NodeID:        option.ACPNodeID,
+		NodeName:      option.ACPNodeName,
 		RegisterTools: true,
 		AutoRegister:  false,
 	}
@@ -495,11 +484,11 @@ func runLoop(ctx context.Context, option *Option) error {
 		Provider:         application.Provider,
 		Tools:            application.Tools,
 		SystemPrompt:     systemPrompt,
-		Model:            resolvedModel(option),
+		Model:            option.Model,
 		MaxTurns:         option.MaxTurns,
 		Stream:           true,
 		NodeName:         defaultACPNodeName(option),
-		SpaceName:        resolvedSpace(option),
+		SpaceName:        option.Space,
 		SpaceDescription: "aiscan loop worker",
 		PollInterval:     2 * time.Second,
 		Prompt:           rawPrompt,
@@ -510,7 +499,7 @@ func runLoop(ctx context.Context, option *Option) error {
 	return runner.Run(ctx)
 }
 
-func runACPServe(ctx context.Context, option *Option) error {
+func runACPServe(ctx context.Context, option *Option, logger telemetry.Logger) error {
 	return servercmd.Run(ctx, servercmd.Options{
 		URL:     option.ACPURL,
 		DB:      option.ACPDB,
@@ -521,14 +510,14 @@ func runACPServe(ctx context.Context, option *Option) error {
 }
 
 func registerACPTools(ctx context.Context, application *app.App, option *Option) error {
-	acpURL := resolvedACPURL(option)
+	acpURL := option.ACPURL
 	if acpURL == "" {
 		return nil
 	}
 	cfg := app.ACPConfig{
 		URL:           acpURL,
-		NodeID:        resolvedACPNodeID(option),
-		NodeName:      resolvedACPNodeName(option),
+		NodeID:        option.ACPNodeID,
+		NodeName:      option.ACPNodeName,
 		RegisterTools: true,
 		AutoRegister:  true,
 		NodeMeta:      map[string]any{"client": "aiscan"},

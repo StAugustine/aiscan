@@ -39,10 +39,6 @@ func RegisterAllWithLogger(reg *ScannerRegistry, engineSet *engines.Set, logger 
 		reg.Register(neutroncmd.New(engineSet.Neutron, engineSet.Index).WithLogger(logger))
 	}
 
-	names := make([]string, 0, len(reg.order))
-	for _, name := range reg.order {
-		names = append(names, name)
-	}
-	logger.Infof("scanner commands=%s", fmt.Sprintf("%v", names))
+	logger.Infof("scanner commands=%s", fmt.Sprintf("%v", reg.Names()))
 	return nil
 }

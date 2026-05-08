@@ -66,63 +66,20 @@ type MiscOptions struct {
 }
 
 type cliOptions struct {
-	RootOptions
-	Agent   agentCommandOptions       `command:"agent" description:"Run the LLM agent"`
-	Loop    loopCommandOptions        `command:"loop" description:"Run an ACP loop worker"`
-	ACP     acpCommandOptions         `command:"acp" description:"ACP server commands"`
-	Scan    scannerCommandOptions     `command:"scan" description:"Run the scan pipeline"`
-	Gogo    passthroughCommandOptions `command:"gogo" description:"Run gogo scanner"`
-	Spray   passthroughCommandOptions `command:"spray" description:"Run spray scanner"`
-	Zombie  passthroughCommandOptions `command:"zombie" description:"Run zombie weakpass scanner"`
-	Neutron passthroughCommandOptions `command:"neutron" description:"Run neutron POC scanner"`
+	Option
+	Agent   struct{}   `command:"agent" description:"Run the LLM agent"`
+	Loop    struct{}   `command:"loop" description:"Run an ACP loop worker"`
+	ACP     acpCommand `command:"acp" description:"ACP server commands"`
+	Scan    struct{}   `command:"scan" description:"Run the scan pipeline"`
+	Gogo    struct{}   `command:"gogo" description:"Run gogo scanner"`
+	Spray   struct{}   `command:"spray" description:"Run spray scanner"`
+	Zombie  struct{}   `command:"zombie" description:"Run zombie weakpass scanner"`
+	Neutron struct{}   `command:"neutron" description:"Run neutron POC scanner"`
 }
 
-type RootOptions struct {
-	LLMOptions     `group:"LLM Options"`
-	MiscOptions    `group:"Miscellaneous Options"`
-	ScannerOptions `group:"Scanner Options"`
+type acpCommand struct {
+	Serve struct{} `command:"serve" description:"Run the ACP HTTP server"`
 }
-
-type agentCommandOptions struct {
-	LLMOptions     `group:"LLM Options"`
-	AgentOptions   `group:"Agent Options"`
-	ACPToolOptions `group:"ACP Tool Options"`
-}
-
-type ACPToolOptions struct {
-	ACPURL      string `long:"acp-url" description:"ACP server URL for agent tools"`
-	ACPNodeID   string `long:"acp-node-id" description:"Existing ACP node id for agent tools"`
-	ACPNodeName string `long:"acp-node-name" description:"ACP node name when auto-registering"`
-}
-
-type loopCommandOptions struct {
-	LLMOptions     `group:"LLM Options"`
-	AgentOptions   `group:"Agent Options"`
-	LoopACPOptions `group:"Loop ACP Options"`
-}
-
-type LoopACPOptions struct {
-	ACPURL      string `long:"acp-url" description:"ACP server URL"`
-	ACPNodeID   string `long:"acp-node-id" description:"Existing ACP node id"`
-	ACPNodeName string `long:"acp-node-name" description:"ACP node name"`
-	Space       string `long:"space" description:"ACP space name" default:"default"`
-}
-
-type acpCommandOptions struct {
-	Serve acpServeCommandOptions `command:"serve" description:"Run the ACP HTTP server"`
-}
-
-type acpServeCommandOptions struct {
-	ACPURL  string `long:"acp-url" description:"ACP server listen URL" default:"http://127.0.0.1:8765"`
-	ACPDB   string `long:"acp-db" description:"ACP SQLite database path" default:"./acp.db"`
-	Timeout int    `long:"timeout" description:"Overall timeout in seconds" default:"3600"`
-}
-
-type scannerCommandOptions struct {
-	LLMOptions `group:"LLM Options"`
-}
-
-type passthroughCommandOptions struct{}
 
 type runMode string
 
@@ -157,6 +114,7 @@ func AiScan() {
 		os.Exit(1)
 	}
 
+	applyDefaults(&option)
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: os.Stderr})
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(option.Timeout)*time.Second)
@@ -166,22 +124,22 @@ func AiScan() {
 
 	switch parsed.Mode {
 	case runModeAgent:
-		if err := runAgentMode(ctx, &option); err != nil {
+		if err := runAgentMode(ctx, &option, logger); err != nil {
 			logger.Errorf("agent failed: %s", err)
 			os.Exit(1)
 		}
 	case runModeLoop:
-		if err := runLoop(ctx, &option); err != nil {
+		if err := runLoop(ctx, &option, logger); err != nil {
 			logger.Errorf("loop failed: %s", err)
 			os.Exit(1)
 		}
 	case runModeACPServe:
-		if err := runACPServe(ctx, &option); err != nil {
+		if err := runACPServe(ctx, &option, logger); err != nil {
 			logger.Errorf("acp server failed: %s", err)
 			os.Exit(1)
 		}
 	case runModeScanner:
-		if err := runDirectScannerMode(ctx, &option, parsed.ScannerArgs); err != nil {
+		if err := runDirectScannerMode(ctx, &option, parsed.ScannerArgs, logger); err != nil {
 			logger.Errorf("scanner command failed: %s", err)
 			os.Exit(1)
 		}
@@ -199,7 +157,7 @@ func parseCLI(args []string) (parsedCLI, error) {
 	if err != nil {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
 			if scannerName := firstCommandName(args, rootFlagValueArity); isScannerCommandName(scannerName) {
-				option := baseOption(cli.RootOptions)
+				option := cli.Option
 				option.Timeout = 3600
 				scannerArgs := append([]string{scannerName}, argsAfterCommand(args, scannerName)...)
 				return parsedCLI{Option: option, Mode: runModeScanner, ScannerArgs: scannerArgs}, nil
@@ -210,7 +168,7 @@ func parseCLI(args []string) (parsedCLI, error) {
 		return parsedCLI{}, err
 	}
 
-	option := baseOption(cli.RootOptions)
+	option := cli.Option
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: runModeNoCommand}, nil
 	}
@@ -220,20 +178,8 @@ func parseCLI(args []string) (parsedCLI, error) {
 		return parsedCLI{Option: option, Mode: runModeNoCommand}, nil
 	}
 
-	scannerName := selectedScanner(parser)
-	switch mode {
-	case runModeAgent:
-		option.ScannerOptions = mergeScannerOptions(option.ScannerOptions, cli.RootOptions.ScannerOptions)
-		mergeAgentCommand(&option, cli.Agent)
-	case runModeLoop:
-		option.ScannerOptions = mergeScannerOptions(option.ScannerOptions, cli.RootOptions.ScannerOptions)
-		mergeLoopCommand(&option, cli.Loop)
-	case runModeACPServe:
-		mergeACPServeCommand(&option, cli.ACP.Serve)
-	case runModeScanner:
-		if scannerName == "scan" {
-			mergeLLMOptions(&option, cli.Scan.LLMOptions)
-		}
+	if mode == runModeScanner {
+		scannerName := selectedScanner(parser)
 		option.Timeout = 3600
 		scannerRest, err := applyScannerRootArgs(rest, &option)
 		if err != nil {
@@ -264,7 +210,7 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 		return parsedCLI{}, err
 	}
 
-	option := baseOption(cli.RootOptions)
+	option := cli.Option
 	mergeManualScannerOptions(&option, manual)
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: runModeNoCommand}, nil
@@ -283,42 +229,25 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 }
 
 func mergeManualScannerOptions(option *Option, manual Option) {
-	option.LLMOptions = mergeLLMOptionValues(option.LLMOptions, manual.LLMOptions)
-	option.ScannerOptions = mergeScannerOptions(option.ScannerOptions, manual.ScannerOptions)
+	option.Provider = resolveString(manual.Provider, option.Provider)
+	option.BaseURL = resolveString(manual.BaseURL, option.BaseURL)
+	option.APIKey = resolveString(manual.APIKey, option.APIKey)
+	option.Model = resolveString(manual.Model, option.Model)
+	option.Proxy = resolveString(manual.Proxy, option.Proxy)
+	if manual.AI {
+		option.AI = true
+	}
+	option.CyberhubURL = resolveString(manual.CyberhubURL, option.CyberhubURL)
+	option.CyberhubKey = resolveString(manual.CyberhubKey, option.CyberhubKey)
+	option.CyberhubMode = resolveString(manual.CyberhubMode, option.CyberhubMode)
 	if manual.NoColor {
 		option.NoColor = true
 	}
-	if manual.Prompt != "" {
-		option.Prompt = manual.Prompt
-	}
-	if manual.TaskFile != "" {
-		option.TaskFile = manual.TaskFile
-	}
+	option.Prompt = resolveString(manual.Prompt, option.Prompt)
+	option.TaskFile = resolveString(manual.TaskFile, option.TaskFile)
 	if len(manual.Skills) > 0 {
 		option.Skills = append(option.Skills, manual.Skills...)
 	}
-}
-
-func mergeLLMOptionValues(base, override LLMOptions) LLMOptions {
-	if override.Provider != "" {
-		base.Provider = override.Provider
-	}
-	if override.BaseURL != "" {
-		base.BaseURL = override.BaseURL
-	}
-	if override.APIKey != "" {
-		base.APIKey = override.APIKey
-	}
-	if override.Model != "" {
-		base.Model = override.Model
-	}
-	if override.Proxy != "" {
-		base.Proxy = override.Proxy
-	}
-	if override.AI {
-		base.AI = true
-	}
-	return base
 }
 
 func newCLIParser(cli *cliOptions, options goflags.Options) *goflags.Parser {
@@ -399,19 +328,49 @@ func firstCommandName(args []string, valueArity map[string]int) string {
 	return ""
 }
 
-var rootFlagValueArity = map[string]int{
-	"--cyberhub-url":  1,
-	"--cyberhub-key":  1,
-	"--cyberhub-mode": 1,
-	"--llm-provider":  1,
-	"--llm-base-url":  1,
-	"--llm-api-key":   1,
-	"--llm-model":     1,
-	"--llm-proxy":     1,
-	"--prompt":        1,
-	"--task-file":     1,
-	"--skill":         1,
-	"--max-turns":     1,
+type knownFlag struct {
+	names []string
+	arity int // 0 for bool, 1 for value
+	apply func(opt *Option, val string)
+}
+
+var scannerKnownFlags = []knownFlag{
+	{names: []string{"--cyberhub-url"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubURL = v }},
+	{names: []string{"--cyberhub-key"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubKey = v }},
+	{names: []string{"--cyberhub-mode"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubMode = v }},
+	{names: []string{"--no-color"}, arity: 0, apply: func(o *Option, _ string) { o.NoColor = true }},
+	{names: []string{"--ai"}, arity: 0, apply: func(o *Option, v string) {
+		if v != "" {
+			o.AI = truthyFlagValue(v)
+		} else {
+			o.AI = true
+		}
+	}},
+	{names: []string{"--prompt"}, arity: 1, apply: func(o *Option, v string) { o.Prompt = v }},
+	{names: []string{"--task-file"}, arity: 1, apply: func(o *Option, v string) { o.TaskFile = v }},
+	{names: []string{"--skill"}, arity: 1, apply: func(o *Option, v string) { o.Skills = append(o.Skills, v) }},
+	{names: []string{"--llm-provider", "--provider"}, arity: 1, apply: func(o *Option, v string) { o.Provider = v }},
+	{names: []string{"--llm-base-url", "--base-url"}, arity: 1, apply: func(o *Option, v string) { o.BaseURL = v }},
+	{names: []string{"--llm-api-key", "--api-key"}, arity: 1, apply: func(o *Option, v string) { o.APIKey = v }},
+	{names: []string{"--llm-model", "--model"}, arity: 1, apply: func(o *Option, v string) { o.Model = v }},
+	{names: []string{"--llm-proxy", "--proxy"}, arity: 1, apply: func(o *Option, v string) { o.Proxy = v }},
+	{names: []string{"--max-turns"}, arity: 1, apply: func(o *Option, v string) {
+		if n, e := strconv.Atoi(v); e == nil && n > 0 {
+			o.MaxTurns = n
+		}
+	}},
+}
+
+var rootFlagValueArity = buildRootFlagValueArity()
+
+func buildRootFlagValueArity() map[string]int {
+	m := make(map[string]int, len(scannerKnownFlags)*2)
+	for _, f := range scannerKnownFlags {
+		for _, name := range f.names {
+			m[name] = f.arity
+		}
+	}
+	return m
 }
 
 func argsAfterCommand(args []string, command string) []string {
@@ -464,162 +423,61 @@ func selectedScanner(parser *goflags.Parser) string {
 	return ""
 }
 
-func baseOption(root RootOptions) Option {
-	option := Option{
-		LLMOptions:     root.LLMOptions,
-		MiscOptions:    root.MiscOptions,
-		ScannerOptions: root.ScannerOptions,
-	}
-	return option
-}
-
-func mergeAgentCommand(option *Option, cmd agentCommandOptions) {
-	mergeLLMOptions(option, cmd.LLMOptions)
-	option.AgentOptions = cmd.AgentOptions
-	option.ACPURL = cmd.ACPURL
-	option.ACPNodeID = cmd.ACPNodeID
-	option.ACPNodeName = cmd.ACPNodeName
-}
-
-func mergeLoopCommand(option *Option, cmd loopCommandOptions) {
-	mergeLLMOptions(option, cmd.LLMOptions)
-	option.AgentOptions = cmd.AgentOptions
-	option.ACPURL = cmd.ACPURL
-	option.ACPNodeID = cmd.ACPNodeID
-	option.ACPNodeName = cmd.ACPNodeName
-	option.Space = cmd.Space
-}
-
-func mergeACPServeCommand(option *Option, cmd acpServeCommandOptions) {
-	option.ACPURL = cmd.ACPURL
-	option.ACPDB = cmd.ACPDB
-	option.Timeout = cmd.Timeout
-}
-
-func mergeLLMOptions(option *Option, llm LLMOptions) {
-	option.LLMOptions = llm
-}
-
-func mergeScannerOptions(base, override ScannerOptions) ScannerOptions {
-	if override.CyberhubURL != "" {
-		base.CyberhubURL = override.CyberhubURL
-	}
-	if override.CyberhubKey != "" {
-		base.CyberhubKey = override.CyberhubKey
-	}
-	if override.CyberhubMode != "" {
-		base.CyberhubMode = override.CyberhubMode
-	}
-	return base
-}
-
 func applyScannerRootArgs(args []string, option *Option) ([]string, error) {
 	return applyScannerCommandArgs("", args, option)
 }
 
-func applyScannerCommandArgs(scannerName string, args []string, option *Option) ([]string, error) {
+func applyScannerCommandArgs(_ string, args []string, option *Option) ([]string, error) {
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		key, value, hasValue := strings.Cut(arg, "=")
-		nextValue := func() (string, error) {
-			if hasValue {
-				return value, nil
+		matched := false
+		for _, f := range scannerKnownFlags {
+			if !containsString(f.names, key) {
+				continue
 			}
-			if i+1 >= len(args) {
-				return "", fmt.Errorf("%s requires a value", arg)
-			}
-			i++
-			return args[i], nil
-		}
-		switch key {
-		case "--cyberhub-url":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.CyberhubURL = v
-		case "--cyberhub-key":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.CyberhubKey = v
-		case "--cyberhub-mode":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.CyberhubMode = v
-		case "--no-color":
-			option.NoColor = true
-		case "--ai":
-			if hasValue {
-				option.AI = truthyFlagValue(value)
+			matched = true
+			if f.arity == 0 {
+				if hasValue {
+					f.apply(option, value)
+				} else {
+					f.apply(option, "")
+				}
 			} else {
-				option.AI = true
+				v, err := flagValue(arg, hasValue, value, args, &i)
+				if err != nil {
+					return nil, err
+				}
+				f.apply(option, v)
 			}
-		case "--prompt":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.Prompt = v
-		case "--task-file":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.TaskFile = v
-		case "--skill":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.Skills = append(option.Skills, v)
-		case "--llm-provider", "--provider":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.Provider = v
-		case "--llm-base-url", "--base-url":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.BaseURL = v
-		case "--llm-api-key", "--api-key":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.APIKey = v
-		case "--llm-model", "--model":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.Model = v
-		case "--llm-proxy", "--proxy":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			option.Proxy = v
-		case "--max-turns":
-			v, err := nextValue()
-			if err != nil {
-				return nil, err
-			}
-			if n, e := strconv.Atoi(v); e == nil && n > 0 {
-				option.MaxTurns = n
-			}
-		default:
+			break
+		}
+		if !matched {
 			out = append(out, arg)
 		}
 	}
 	return out, nil
+}
+
+func flagValue(arg string, hasValue bool, value string, args []string, i *int) (string, error) {
+	if hasValue {
+		return value, nil
+	}
+	if *i+1 >= len(args) {
+		return "", fmt.Errorf("%s requires a value", arg)
+	}
+	*i++
+	return args[*i], nil
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, s := range haystack {
+		if s == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func truthyFlagValue(value string) bool {
