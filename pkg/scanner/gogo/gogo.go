@@ -25,6 +25,9 @@ func (c *Command) Usage() string {
 
 func (c *Command) Execute(ctx context.Context, args []string) (string, error) {
 	var buf bytes.Buffer
+	if c.engine != nil {
+		c.engine.InstallResourceProvider()
+	}
 	if err := gogocore.RunWithArgs(ctx, args, gogocore.RunOptions{
 		Output: &buf,
 		BeforeInit: func() error {
