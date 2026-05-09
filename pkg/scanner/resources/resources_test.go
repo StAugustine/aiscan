@@ -8,7 +8,7 @@ import (
 	"github.com/chainreactors/utils"
 )
 
-func TestInitUsesUpstreamEmbeddedResources(t *testing.T) {
+func TestInitUsesAiscanEmbeddedResources(t *testing.T) {
 	oldUtilsPrePort := utils.PrePort
 	oldFingerPrePort := fingerresources.PrePort
 	oldFingerPortData := cloneBytes(fingerresources.PortData)
@@ -54,8 +54,8 @@ func TestInitUsesUpstreamEmbeddedResources(t *testing.T) {
 	if len(set.ZombieConfig("http")) == 0 || len(set.ZombieConfig("socket")) == 0 || len(set.ZombieConfig("port")) == 0 {
 		t.Fatalf("zombie provider missing shared resources")
 	}
-	if len(set.GogoConfig("fingerprinthub_web")) == 0 || string(set.GogoConfig("fingerprinthub_service")) != "[]" {
-		t.Fatalf("fingerprinthub defaults were not loaded")
+	if string(set.GogoConfig("fingerprinthub_web")) != "[]" || string(set.GogoConfig("fingerprinthub_service")) != "[]" {
+		t.Fatalf("fingerprinthub fallback data should be empty JSON")
 	}
 	if utils.PrePort == nil || fingerresources.PrePort == nil || len(fingerresources.PortData) == 0 {
 		t.Fatalf("local port preset was not installed")

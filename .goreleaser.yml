@@ -2,6 +2,10 @@ version: 2
 
 project_name: aiscan
 
+before:
+  hooks:
+    - go generate ./pkg/scanner/resources
+
 builds:
   - id: aiscan
     main: ./cmd/aiscan
@@ -22,6 +26,8 @@ builds:
       - -trimpath
     tags:
       - forceposix
+      - emptytemplates
+      - noembed
     ldflags:
       - -s -w
 

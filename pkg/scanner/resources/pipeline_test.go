@@ -23,10 +23,13 @@ import (
 //
 //	(aiscan Set.XxxConfig)  ===  (sdk pkg.LoadConfig with our provider installed)
 //
-// Note on embedded data: aiscan stages the SDK modules' embedded resources and
-// then installs them as providers. A missing provider entry could silently fall
-// through to SDK data, so the companion TestPipelineProviderActuallyDrivesLoadConfig
-// below pins the negative case.
+// Note on build tags: by default each SDK ships its own embedded fallback
+// (templates.go), so a missing provider entry would silently fall through to
+// SDK data — the equality check here can't distinguish that. The companion
+// TestPipelineProviderActuallyDrivesLoadConfig below pins the negative case,
+// and running this suite with -tags emptytemplates (which the SDK templates
+// switch to no-op stubs) is the strongest harness: the suite should still
+// pass because data must come from aiscan.
 func TestPipelineDeliversAiscanBytes(t *testing.T) {
 	oldUtilsPrePort := utils.PrePort
 	oldFingerPrePort := fingerresources.PrePort

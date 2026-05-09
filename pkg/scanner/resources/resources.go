@@ -1,5 +1,7 @@
 package resources
 
+//go:generate go run ./templates_gen.go -t ../../../templates -o template.go
+
 import (
 	"context"
 	"encoding/json"
@@ -8,13 +10,10 @@ import (
 
 	fingerslib "github.com/chainreactors/fingers/fingers"
 	fingerresources "github.com/chainreactors/fingers/resources"
-	gogopkg "github.com/chainreactors/gogo/v2/pkg"
 	"github.com/chainreactors/neutron/templates"
 	"github.com/chainreactors/sdk/fingers"
 	"github.com/chainreactors/sdk/neutron"
-	spraypkg "github.com/chainreactors/spray/pkg"
 	"github.com/chainreactors/utils"
-	zombiepkg "github.com/chainreactors/zombie/pkg"
 	"gopkg.in/yaml.v3"
 )
 
@@ -136,43 +135,39 @@ func NormalizeMode(mode string) (string, error) {
 }
 
 func defaultGogoConfigs() map[string][]byte {
-	load := gogopkg.LoadEmbeddedConfig
 	return map[string][]byte{
-		"http":                   embeddedOrDefault(load, "http", []byte("[]")),
-		"socket":                 embeddedOrDefault(load, "socket", []byte("[]")),
-		"fingerprinthub_web":     embeddedOrDefault(load, "fingerprinthub_web", []byte("[]")),
-		"fingerprinthub_service": embeddedOrDefault(load, "fingerprinthub_service", []byte("[]")),
-		"port":                   embeddedOrDefault(load, "port", []byte("[]")),
-		"extract":                embeddedOrDefault(load, "extract", []byte("[]")),
-		"workflow":               embeddedOrDefault(load, "workflow", []byte("[]")),
-		"neutron":                embeddedOrDefault(load, "neutron", []byte("[]")),
+		"http":                   embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
+		"socket":                 embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
+		"fingerprinthub_web":     embeddedOrDefault(loadEmbeddedConfig, "fingerprinthub_web", []byte("[]")),
+		"fingerprinthub_service": embeddedOrDefault(loadEmbeddedConfig, "fingerprinthub_service", []byte("[]")),
+		"port":                   embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
+		"extract":                embeddedOrDefault(loadEmbeddedConfig, "extract", []byte("[]")),
+		"workflow":               embeddedOrDefault(loadEmbeddedConfig, "workflow", []byte("[]")),
+		"neutron":                embeddedOrDefault(loadEmbeddedConfig, "neutron", []byte("[]")),
 	}
 }
 
 func defaultSprayConfigs() map[string][]byte {
-	shared := gogopkg.LoadEmbeddedConfig
-	load := spraypkg.LoadEmbeddedConfig
 	return map[string][]byte{
-		"http":         embeddedOrDefault(shared, "http", []byte("[]")),
-		"socket":       embeddedOrDefault(shared, "socket", []byte("[]")),
-		"port":         embeddedOrDefault(load, "port", []byte("[]")),
-		"spray_rule":   embeddedOrDefault(load, "spray_rule", []byte("{}")),
-		"spray_dict":   embeddedOrDefault(load, "spray_dict", []byte("{}")),
-		"spray_common": embeddedOrDefault(load, "spray_common", []byte("{}")),
-		"extract":      embeddedOrDefault(load, "extract", []byte("[]")),
+		"http":         embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
+		"socket":       embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
+		"port":         embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
+		"spray_rule":   embeddedOrDefault(loadEmbeddedConfig, "spray_rule", []byte("{}")),
+		"spray_dict":   embeddedOrDefault(loadEmbeddedConfig, "spray_dict", []byte("{}")),
+		"spray_common": embeddedOrDefault(loadEmbeddedConfig, "spray_common", []byte("{}")),
+		"extract":      embeddedOrDefault(loadEmbeddedConfig, "extract", []byte("[]")),
 	}
 }
 
 func defaultZombieConfigs() map[string][]byte {
-	load := zombiepkg.LoadEmbeddedConfig
 	return map[string][]byte{
-		"http":            embeddedOrDefault(load, "http", []byte("[]")),
-		"socket":          embeddedOrDefault(load, "socket", []byte("[]")),
-		"port":            embeddedOrDefault(load, "port", []byte("[]")),
-		"zombie_common":   embeddedOrDefault(load, "zombie_common", []byte("{}")),
-		"zombie_default":  embeddedOrDefault(load, "zombie_default", []byte("[]")),
-		"zombie_rule":     embeddedOrDefault(load, "zombie_rule", []byte("{}")),
-		"zombie_template": embeddedOrDefault(load, "zombie_template", []byte("[]")),
+		"http":            embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
+		"socket":          embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
+		"port":            embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
+		"zombie_common":   embeddedOrDefault(loadEmbeddedConfig, "zombie_common", []byte("{}")),
+		"zombie_default":  embeddedOrDefault(loadEmbeddedConfig, "zombie_default", []byte("[]")),
+		"zombie_rule":     embeddedOrDefault(loadEmbeddedConfig, "zombie_rule", []byte("{}")),
+		"zombie_template": embeddedOrDefault(loadEmbeddedConfig, "zombie_template", []byte("[]")),
 	}
 }
 
@@ -187,29 +182,19 @@ func embeddedOrDefault(provider func(string) []byte, name string, fallback []byt
 }
 
 func loadLocalFingers() (fingerslib.Fingers, fingerslib.Fingers, error) {
-	httpFingers, err := fingerslib.LoadFingers(gogopkg.LoadEmbeddedConfig("http"))
+	httpFingers, err := fingerslib.LoadFingers(loadEmbeddedConfig("http"))
 	if err != nil {
 		return nil, nil, err
 	}
-	socketFingers, err := fingerslib.LoadFingers(gogopkg.LoadEmbeddedConfig("socket"))
+	socketFingers, err := fingerslib.LoadFingers(loadEmbeddedConfig("socket"))
 	if err != nil {
 		return nil, nil, err
 	}
-	setFingerProtocol(httpFingers, fingerslib.HTTPProtocol)
-	setFingerProtocol(socketFingers, fingerslib.TCPProtocol)
 	return httpFingers, socketFingers, nil
 }
 
-func setFingerProtocol(items fingerslib.Fingers, protocol string) {
-	for _, item := range items {
-		if item != nil && item.Protocol == "" {
-			item.Protocol = protocol
-		}
-	}
-}
-
 func loadLocalTemplates() []*templates.Template {
-	content := gogopkg.LoadEmbeddedConfig("neutron")
+	content := loadEmbeddedConfig("neutron")
 	if len(content) == 0 {
 		return nil
 	}
@@ -221,7 +206,7 @@ func loadLocalTemplates() []*templates.Template {
 }
 
 func installLocalPortPreset() error {
-	content := gogopkg.LoadEmbeddedConfig("port")
+	content := loadEmbeddedConfig("port")
 	if len(content) == 0 {
 		return nil
 	}
