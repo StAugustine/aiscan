@@ -27,12 +27,17 @@ type Option struct {
 }
 
 type LLMOptions struct {
-	Provider string `long:"llm-provider" description:"LLM provider name (openai, deepseek, openrouter, ollama, etc.)"`
-	BaseURL  string `long:"llm-base-url" description:"LLM API base URL"`
-	APIKey   string `long:"llm-api-key" description:"LLM API key (or set env: OPENAI_API_KEY, AISCAN_API_KEY)"`
-	Model    string `long:"llm-model" description:"LLM model name"`
-	Proxy    string `long:"llm-proxy" description:"HTTP proxy for LLM API"`
-	AI       bool   `long:"ai" description:"Use the configured LLM to process direct scanner output with the relevant tool skill"`
+	Provider      string `long:"llm-provider" description:"LLM provider name (openai, deepseek, openrouter, ollama, etc.)"`
+	BaseURL       string `long:"llm-base-url" description:"LLM API base URL"`
+	APIKey        string `long:"llm-api-key" description:"LLM API key (or set env: OPENAI_API_KEY, AISCAN_API_KEY)"`
+	Model         string `long:"llm-model" description:"LLM model name"`
+	Proxy         string `long:"llm-proxy" description:"HTTP proxy for LLM API"`
+	ProviderAlias string `long:"provider" description:"Alias for --llm-provider"`
+	BaseURLAlias  string `long:"base-url" description:"Alias for --llm-base-url"`
+	APIKeyAlias   string `long:"api-key" description:"Alias for --llm-api-key"`
+	ModelAlias    string `long:"model" description:"Alias for --llm-model"`
+	ProxyAlias    string `long:"proxy" description:"Alias for --llm-proxy"`
+	AI            bool   `long:"ai" description:"Use the configured LLM to process direct scanner output with the relevant tool skill"`
 }
 
 type ScannerOptions struct {
@@ -46,6 +51,7 @@ type AgentOptions struct {
 	Inputs   []string `short:"i" long:"input" description:"Target input: IP, URL, IP:port, or CIDR. Can specify multiple"`
 	Skills   []string `short:"s" long:"skill" description:"Embedded skill to apply. Can specify multiple"`
 	TaskFile string   `long:"task-file" description:"File containing task description"`
+	Loop     bool     `long:"loop" description:"Run as an ACP loop worker instead of local agent mode"`
 	MaxTurns int      `long:"max-turns" description:"Maximum agent loop iterations" default:"50"`
 	Timeout  int      `long:"timeout" description:"Overall timeout in seconds" default:"3600"`
 }
@@ -55,7 +61,7 @@ type ACPOptions struct {
 	ACPNodeID   string `long:"acp-node-id" description:"Existing ACP node id for agent tools"`
 	ACPNodeName string `long:"acp-node-name" description:"ACP node name when auto-registering"`
 	ACPDB       string `long:"acp-db" description:"ACP SQLite database path for 'aiscan acp serve'" default:"./acp.db"`
-	Space       string `long:"space" description:"ACP space name for 'aiscan loop'" default:"default"`
+	Space       string `long:"space" description:"ACP space name for 'aiscan agent --loop'" default:"default"`
 }
 
 type MiscOptions struct {
@@ -68,7 +74,6 @@ type MiscOptions struct {
 type cliOptions struct {
 	Option
 	Agent   struct{}   `command:"agent" description:"Run the LLM agent"`
-	Loop    struct{}   `command:"loop" description:"Run an ACP loop worker"`
 	ACP     acpCommand `command:"acp" description:"ACP server commands"`
 	Scan    struct{}   `command:"scan" description:"Run the scan pipeline"`
 	Gogo    struct{}   `command:"gogo" description:"Run gogo scanner"`
@@ -85,7 +90,6 @@ type runMode string
 
 const (
 	runModeAgent     runMode = "agent"
-	runModeLoop      runMode = "loop"
 	runModeACPServe  runMode = "acp serve"
 	runModeScanner   runMode = "scanner"
 	runModeNoCommand runMode = ""
@@ -95,6 +99,7 @@ type parsedCLI struct {
 	Option      Option
 	Mode        runMode
 	ScannerArgs []string
+	Help        bool
 }
 
 func AiScan() {
@@ -109,8 +114,11 @@ func AiScan() {
 		fmt.Printf("aiscan v%s\n", Version)
 		return
 	}
+	if parsed.Help {
+		return
+	}
 	if parsed.Mode == runModeNoCommand {
-		fmt.Fprintln(os.Stderr, "error: missing subcommand: use agent, loop, acp serve, scan, gogo, spray, zombie, or neutron")
+		fmt.Fprintln(os.Stderr, "error: missing subcommand: use agent, acp serve, scan, gogo, spray, zombie, or neutron")
 		os.Exit(1)
 	}
 
@@ -126,11 +134,6 @@ func AiScan() {
 	case runModeAgent:
 		if err := runAgentMode(ctx, &option, logger); err != nil {
 			logger.Errorf("agent failed: %s", err)
-			os.Exit(1)
-		}
-	case runModeLoop:
-		if err := runLoop(ctx, &option, logger); err != nil {
-			logger.Errorf("loop failed: %s", err)
 			os.Exit(1)
 		}
 	case runModeACPServe:
@@ -158,17 +161,19 @@ func parseCLI(args []string) (parsedCLI, error) {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
 			if scannerName := firstCommandName(args, rootFlagValueArity); isScannerCommandName(scannerName) {
 				option := cli.Option
+				normalizeLLMAliases(&option)
 				option.Timeout = 3600
 				scannerArgs := append([]string{scannerName}, argsAfterCommand(args, scannerName)...)
 				return parsedCLI{Option: option, Mode: runModeScanner, ScannerArgs: scannerArgs}, nil
 			}
 			printHelp(parser)
-			return parsedCLI{Mode: runModeNoCommand}, nil
+			return parsedCLI{Mode: runModeNoCommand, Help: true}, nil
 		}
 		return parsedCLI{}, err
 	}
 
 	option := cli.Option
+	normalizeLLMAliases(&option)
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: runModeNoCommand}, nil
 	}
@@ -205,12 +210,13 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 	if _, err := parser.ParseArgs(filteredRootArgs); err != nil {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
 			printHelp(parser)
-			return parsedCLI{Mode: runModeNoCommand}, nil
+			return parsedCLI{Mode: runModeNoCommand, Help: true}, nil
 		}
 		return parsedCLI{}, err
 	}
 
 	option := cli.Option
+	normalizeLLMAliases(&option)
 	mergeManualScannerOptions(&option, manual)
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: runModeNoCommand}, nil
@@ -250,6 +256,14 @@ func mergeManualScannerOptions(option *Option, manual Option) {
 	}
 }
 
+func normalizeLLMAliases(option *Option) {
+	option.Provider = resolveString(option.Provider, option.ProviderAlias)
+	option.BaseURL = resolveString(option.BaseURL, option.BaseURLAlias)
+	option.APIKey = resolveString(option.APIKey, option.APIKeyAlias)
+	option.Model = resolveString(option.Model, option.ModelAlias)
+	option.Proxy = resolveString(option.Proxy, option.ProxyAlias)
+}
+
 func newCLIParser(cli *cliOptions, options goflags.Options) *goflags.Parser {
 	parser := goflags.NewParser(cli, options)
 	parser.SubcommandsOptional = true
@@ -259,7 +273,6 @@ aiscan - Agentic Security Scanner powered by LLM
 
 Commands:
   agent       Run the LLM agent
-  loop        Run an ACP loop worker
   acp serve   Run the ACP HTTP server
   scan        Run the scan pipeline
   gogo        Run gogo scanner
@@ -274,7 +287,7 @@ Examples:
   aiscan scan -i 127.0.0.1 --mode quick --verify=high --llm-api-key KEY --llm-model gpt-4o
   aiscan scan -i 192.168.1.0/24 --mode full
   aiscan acp serve
-  aiscan loop -p "localhost web scanner" -s aiscan --space case-1`
+  aiscan agent --loop -p "localhost web scanner" -s aiscan --space case-1`
 	return parser
 }
 
@@ -401,8 +414,6 @@ func selectedMode(parser *goflags.Parser) runMode {
 	switch active.Name {
 	case "agent":
 		return runModeAgent
-	case "loop":
-		return runModeLoop
 	case "serve":
 		return runModeACPServe
 	case "scan", "gogo", "spray", "zombie", "neutron":
@@ -489,6 +500,21 @@ func truthyFlagValue(value string) bool {
 	}
 }
 
+func hasAgentOneShotInput(opt *Option) bool {
+	if strings.TrimSpace(opt.Prompt) != "" || opt.TaskFile != "" || len(opt.Inputs) > 0 {
+		return true
+	}
+	return !stdinIsTerminal()
+}
+
+func stdinIsTerminal() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
 func resolveTask(opt *Option) (string, error) {
 	prompt := strings.TrimSpace(opt.Prompt)
 	if prompt != "" {
@@ -510,8 +536,7 @@ func resolveTask(opt *Option) (string, error) {
 		return task, nil
 	}
 
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) == 0 {
+	if !stdinIsTerminal() {
 		data, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			return "", fmt.Errorf("read stdin: %w", err)

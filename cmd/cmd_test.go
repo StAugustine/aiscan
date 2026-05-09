@@ -1,13 +1,33 @@
 package cmd
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/chainreactors/aiscan/pkg/agent"
+	"github.com/chainreactors/aiscan/pkg/app"
+	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
+	"github.com/chainreactors/aiscan/pkg/tool"
 	"github.com/chainreactors/aiscan/skills"
 )
+
+type fakeConsoleProvider struct {
+	requests int
+}
+
+func (p *fakeConsoleProvider) Name() string { return "fake" }
+
+func (p *fakeConsoleProvider) ChatCompletion(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
+	p.requests++
+	return &provider.ChatCompletionResponse{
+		Choices: []provider.Choice{{
+			Message: provider.NewTextMessage("assistant", "ok"),
+		}},
+	}, nil
+}
 
 func TestParseCLIScanExtractsLLMAndPassesScannerArgs(t *testing.T) {
 	parsed, err := parseCLI([]string{
@@ -36,6 +56,29 @@ func TestParseCLIScanExtractsLLMAndPassesScannerArgs(t *testing.T) {
 	}
 	if opt.CyberhubURL != "http://hub:8080" || opt.CyberhubKey != "HUBKEY" {
 		t.Fatalf("scanner options = %#v", opt.ScannerOptions)
+	}
+}
+
+func TestParseCLIAgentAcceptsBareLLMAliases(t *testing.T) {
+	parsed, err := parseCLI([]string{
+		"agent",
+		"--base-url", "https://api.deepseek.com",
+		"--api-key", "KEY",
+		"--model", "deepseek-v4-pro",
+	})
+	if err != nil {
+		t.Fatalf("parseCLI() error = %v", err)
+	}
+	if parsed.Mode != runModeAgent {
+		t.Fatalf("mode = %s, want %s", parsed.Mode, runModeAgent)
+	}
+	opt := parsed.Option
+	if opt.BaseURL != "https://api.deepseek.com" || opt.APIKey != "KEY" || opt.Model != "deepseek-v4-pro" {
+		t.Fatalf("llm options = %#v", opt.LLMOptions)
+	}
+	cfg := providerConfig(&opt)
+	if cfg.Provider != "deepseek" {
+		t.Fatalf("provider = %q, want deepseek", cfg.Provider)
 	}
 }
 
@@ -151,11 +194,12 @@ func TestScannerAIIntentInjectsCommandSkill(t *testing.T) {
 	}
 }
 
-func TestParseCLILoopCommand(t *testing.T) {
+func TestParseCLIAgentLoopFlag(t *testing.T) {
 	parsed, err := parseCLI([]string{
 		"--debug",
 		"--cyberhub-mode", "override",
-		"loop",
+		"agent",
+		"--loop",
 		"-p", "scan localhost",
 		"-s", "aiscan",
 		"--space", "case-1",
@@ -164,15 +208,90 @@ func TestParseCLILoopCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLI() error = %v", err)
 	}
-	if parsed.Mode != runModeLoop {
-		t.Fatalf("mode = %s, want %s", parsed.Mode, runModeLoop)
+	if parsed.Mode != runModeAgent {
+		t.Fatalf("mode = %s, want %s", parsed.Mode, runModeAgent)
 	}
 	opt := parsed.Option
-	if !opt.Debug || opt.Prompt != "scan localhost" || opt.Space != "case-1" || opt.Model != "gpt-4o" || opt.CyberhubMode != "override" {
+	if !opt.Debug || !opt.Loop || opt.Prompt != "scan localhost" || opt.Space != "case-1" || opt.Model != "gpt-4o" || opt.CyberhubMode != "override" {
 		t.Fatalf("option = %#v", opt)
 	}
 	if !reflect.DeepEqual(opt.Skills, []string{"aiscan"}) {
 		t.Fatalf("skills = %#v", opt.Skills)
+	}
+}
+
+func TestParseCLILoopCommandRemoved(t *testing.T) {
+	parsed, err := parseCLI([]string{"loop"})
+	if err == nil && parsed.Mode != runModeNoCommand {
+		t.Fatalf("mode = %s, want no command or parse error", parsed.Mode)
+	}
+}
+
+func TestAgentConsoleArgsForLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantArgs []string
+	}{
+		{name: "empty", input: "  ", wantArgs: nil},
+		{name: "prompt", input: " scan localhost ", wantArgs: []string{agentPromptCommandName, "scan localhost"}},
+		{name: "quoted prompt is preserved", input: `explain "scan result"`, wantArgs: []string{agentPromptCommandName, `explain "scan result"`}},
+		{name: "help", input: "/help", wantArgs: []string{"/help"}},
+		{name: "reset", input: "/reset", wantArgs: []string{"/reset"}},
+		{name: "continue", input: "/continue", wantArgs: []string{"/continue"}},
+		{name: "exit", input: "/exit", wantArgs: []string{"/exit"}},
+		{name: "quit", input: "/quit", wantArgs: []string{"/quit"}},
+		{name: "skill slash command preserves prompt", input: `/scan explain "scan result"`, wantArgs: []string{"/scan", `explain "scan result"`}},
+		{name: "unknown slash command", input: "/unknown", wantArgs: []string{"/unknown"}},
+		{name: "legacy skill command", input: "/skill:scan check target", wantArgs: []string{agentPromptCommandName, "/skill:scan check target"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotArgs, err := agentConsoleArgsForLine(tt.input)
+			if err != nil {
+				t.Fatalf("agentConsoleArgsForLine() error = %v", err)
+			}
+			if !reflect.DeepEqual(gotArgs, tt.wantArgs) {
+				t.Fatalf("agentConsoleArgsForLine() = %#v, want %#v", gotArgs, tt.wantArgs)
+			}
+		})
+	}
+}
+
+func TestAgentConsoleRegistersSkillsAsSlashCommands(t *testing.T) {
+	store, diagnostics := skills.LoadEmbeddedStore()
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	repl := &agentConsole{application: &app.App{Skills: store}}
+	root := repl.rootCommand()
+
+	for _, name := range []string{"aiscan", "scan", "gogo", "spray", "zombie", "neutron"} {
+		cmd, _, err := root.Find([]string{"/" + name, "test"})
+		if err != nil {
+			t.Fatalf("find /%s error = %v", name, err)
+		}
+		if cmd == nil || cmd.Name() != "/"+name {
+			t.Fatalf("find /%s = %#v", name, cmd)
+		}
+	}
+}
+
+func TestAgentConsolePromptCommandRunsAgent(t *testing.T) {
+	store, diagnostics := skills.LoadEmbeddedStore()
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v", diagnostics)
+	}
+	llm := &fakeConsoleProvider{}
+	session := agent.New(llm, tool.NewToolRegistry(), agent.WithMaxTurns(1))
+	repl := newAgentConsole(context.Background(), &Option{}, &app.App{Skills: store}, session)
+
+	if err := repl.executeArgs(context.Background(), []string{agentPromptCommandName, "hello"}); err != nil {
+		t.Fatalf("executeArgs() error = %v", err)
+	}
+	if llm.requests != 1 {
+		t.Fatalf("provider requests = %d, want 1", llm.requests)
 	}
 }
 

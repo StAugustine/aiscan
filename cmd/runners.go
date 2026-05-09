@@ -22,6 +22,21 @@ import (
 )
 
 func runAgentMode(ctx context.Context, option *Option, logger telemetry.Logger) error {
+	if option.Loop {
+		return runLoop(ctx, option, logger)
+	}
+	if !hasAgentOneShotInput(option) {
+		return runInteractiveAgentMode(ctx, option, logger)
+	}
+	return runAgentOneShotMode(ctx, option, logger)
+}
+
+type agentRuntime struct {
+	application  *app.App
+	systemPrompt string
+}
+
+func newAgentRuntime(ctx context.Context, option *Option, logger telemetry.Logger) (*agentRuntime, error) {
 	application, err := app.New(ctx, appConfig(option, runtimeFeatures{
 		ProviderEnabled:     true,
 		ToolsEnabled:        true,
@@ -29,26 +44,17 @@ func runAgentMode(ctx context.Context, option *Option, logger telemetry.Logger) 
 		VerifyMinPriority:   "high",
 	}, logger))
 	if err != nil {
-		return fmt.Errorf("init app: %w", err)
+		return nil, fmt.Errorf("init app: %w", err)
 	}
-	defer application.Close()
 	applyResolvedProviderOptions(option, application.ProviderConfig)
 
 	for _, diagnostic := range application.SkillDiagnostics {
 		logger.Warnf("skill %s: %s", diagnostic.Path, diagnostic.Message)
 	}
 
-	task, err := resolveTask(option)
-	if err != nil {
-		return err
-	}
-	task = skills.ExpandCommand(task, application.Skills)
-	task, err = applySelectedSkills(task, option.Skills, application.Skills)
-	if err != nil {
-		return err
-	}
 	if err := registerACPTools(ctx, application, option); err != nil {
-		return fmt.Errorf("init acp tools: %w", err)
+		application.Close()
+		return nil, fmt.Errorf("init acp tools: %w", err)
 	}
 
 	systemPrompt := agent.BuildSystemPrompt(&agent.PromptConfig{
@@ -57,13 +63,35 @@ func runAgentMode(ctx context.Context, option *Option, logger telemetry.Logger) 
 		Skills:      application.Skills.Skills,
 	})
 	logger.Debugf("system prompt length: %d chars", len(systemPrompt))
+	return &agentRuntime{application: application, systemPrompt: systemPrompt}, nil
+}
+
+func runAgentOneShotMode(ctx context.Context, option *Option, logger telemetry.Logger) error {
+	task, err := resolveTask(option)
+	if err != nil {
+		return err
+	}
+
+	runtime, err := newAgentRuntime(ctx, option, logger)
+	if err != nil {
+		return err
+	}
+	defer runtime.application.Close()
+
+	application := runtime.application
+	task = skills.ExpandCommand(task, application.Skills)
+	task, err = applySelectedSkills(task, option.Skills, application.Skills)
+	if err != nil {
+		return err
+	}
+
 	logger.Importantf("agent status=starting max_turns=%d timeout=%ds", option.MaxTurns, option.Timeout)
 	logger.Importantf("agent task=%q", task)
 
 	result, err := agent.Run(ctx, task, application.Tools,
 		agent.WithProvider(application.Provider),
 		agent.WithMaxTurns(option.MaxTurns),
-		agent.WithSystemPrompt(systemPrompt),
+		agent.WithSystemPrompt(runtime.systemPrompt),
 		agent.WithModel(option.Model),
 		agent.WithStream(true),
 		agent.WithLogger(logger),
