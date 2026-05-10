@@ -6,9 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/aiscan/pkg/agent"
-	"github.com/chainreactors/aiscan/pkg/telemetry"
-	"github.com/chainreactors/aiscan/pkg/tool"
 	"github.com/chainreactors/parsers"
 )
 
@@ -20,29 +17,29 @@ func (c *Command) agentVerifyCapability(flags flags) (capability, bool) {
 	return capability{
 		Name:   capAgentVerify,
 		Worker: 1,
-		AcceptEvents: func(event event) bool {
-			if event.Kind != eventFinding || event.Finding == nil {
+		Accept: func(e event) bool {
+			if e.Kind != eventFinding || e.Finding == nil {
 				return false
 			}
-			if event.Finding.Kind() == findingVerification {
+			if e.Finding.Kind() == findingVerification {
 				return false
 			}
-			return event.Finding.Priority().atLeast(minPriority)
+			return e.Finding.Priority().atLeast(minPriority)
 		},
-		RunEventKey: func(event event) string {
-			if event.Finding == nil {
+		RunKey: func(e event) string {
+			if e.Finding == nil {
 				return ""
 			}
-			return capAgentVerify + "|" + string(event.Finding.Kind()) + "|" + event.Finding.Key()
+			return capAgentVerify + "|" + string(e.Finding.Kind()) + "|" + e.Finding.Key()
 		},
-		RunEvent: func(ctx context.Context, event event, emit emitFunc) {
-			c.runAgentVerifyCapability(ctx, flags, event, emit)
+		Run: func(ctx context.Context, e event, emit emitFunc) {
+			c.runAgentVerifyCapability(ctx, flags, e, emit)
 		},
 	}, true
 }
 
 func (c *Command) runAgentVerifyCapability(ctx context.Context, flags flags, event event, emit emitFunc) {
-	if c.verification.Provider == nil {
+	if c.verifyFunc == nil {
 		emit(findingEvent(capAgentVerify, verificationFinding{
 			OriginalKey:      findingKey(event.Finding),
 			OriginalKind:     findingKindOf(event.Finding),
@@ -64,14 +61,6 @@ func (c *Command) runAgentVerifyCapability(ctx context.Context, flags flags, eve
 	verifyCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	maxTurns := flags.VerifyTurns
-	if maxTurns <= 0 {
-		maxTurns = c.verification.MaxTurns
-	}
-	if maxTurns <= 0 {
-		maxTurns = 3
-	}
-
 	model := strings.TrimSpace(c.verification.Model)
 	prompt := buildVerificationPrompt(event)
 	systemPrompt := strings.TrimSpace(c.verification.SystemPrompt)
@@ -79,16 +68,9 @@ func (c *Command) runAgentVerifyCapability(ctx context.Context, flags flags, eve
 		systemPrompt = defaultVerificationSystemPrompt()
 	}
 
-	result, err := agent.Run(verifyCtx, prompt, tool.NewToolRegistry(),
-		agent.WithProvider(c.verification.Provider),
-		agent.WithModel(model),
-		agent.WithMaxTurns(maxTurns),
-		agent.WithMaxTokens(1200),
-		agent.WithSystemPrompt(systemPrompt),
-		agent.WithLogger(telemetry.NopLogger()),
-	)
+	result, err := c.verifyFunc(verifyCtx, prompt, systemPrompt, model, 1200)
 	if err != nil {
-		c.logger.Warnf("scan capability=%s status=failed error=%q", capAgentVerify, err)
+		c.logger.Warnf("scan %s failed %q", capAgentVerify, err)
 		emit(findingEvent(capAgentVerify, verificationFinding{
 			OriginalKey:      findingKey(event.Finding),
 			OriginalKind:     findingKindOf(event.Finding),
@@ -223,10 +205,10 @@ func findingTarget(finding finding) string {
 func findingEvidence(finding finding) string {
 	switch f := finding.(type) {
 	case fingerprintFinding:
-		return fmt.Sprintf("fingerprints=%s", strings.Join(parsers.NormalizeNames(f.Fingers), ","))
+		return strings.TrimSpace("fingerprint " + strings.Join(parsers.NormalizeNames(f.Fingers), ","))
 	case weakpassFinding:
 		if f.Result != nil {
-			return strings.TrimSpace(f.Result.Format(parsers.ZombieFormatWeakpassFinding))
+			return strings.Join(weakpassFields(f.Result), " ")
 		}
 	case vulnFinding:
 		return f.Message

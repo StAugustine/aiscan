@@ -20,46 +20,29 @@ const (
 type emitFunc func(event)
 
 type capability struct {
-	Name         string
-	Accepts      map[targetKind]struct{}
-	AcceptEvents func(event) bool
-	Worker       int
-	RunKey       func(target) string
-	RunEventKey  func(event) string
-	Run          func(context.Context, target, emitFunc)
-	RunEvent     func(context.Context, event, emitFunc)
+	Name   string
+	Accept func(event) bool
+	Worker int
+	RunKey func(event) string
+	Run    func(context.Context, event, emitFunc)
 }
 
-func (c capability) accepts(target target) bool {
-	if target == nil {
-		return false
-	}
-	_, ok := c.Accepts[target.Kind()]
-	return ok
-}
-
-func (c capability) acceptsEvent(event event) bool {
-	if c.AcceptEvents == nil {
-		return false
-	}
-	return c.AcceptEvents(event)
-}
-
-func (c capability) keyFor(target target) string {
-	if target == nil {
-		return ""
-	}
+func (c capability) keyFor(e event) string {
 	if c.RunKey != nil {
-		return c.RunKey(target)
+		return c.RunKey(e)
 	}
-	return c.Name + "|" + string(target.Kind()) + "|" + target.Key()
+	return c.Name + "|" + e.key()
 }
 
-func (c capability) eventKeyFor(event event) string {
-	if c.RunEventKey != nil {
-		return c.RunEventKey(event)
+func acceptsTarget(kinds ...targetKind) func(event) bool {
+	set := targetInputs(kinds...)
+	return func(e event) bool {
+		if e.Kind != eventTarget || e.Target == nil {
+			return false
+		}
+		_, ok := set[e.Target.Kind()]
+		return ok
 	}
-	return c.Name + "|" + event.key()
 }
 
 func targetInputs(kinds ...targetKind) map[targetKind]struct{} {

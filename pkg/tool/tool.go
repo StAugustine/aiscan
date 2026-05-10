@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	"github.com/chainreactors/aiscan/pkg/provider"
-	"github.com/chainreactors/aiscan/pkg/registry"
 )
 
 type Tool interface {
@@ -16,11 +15,33 @@ type Tool interface {
 }
 
 type ToolRegistry struct {
-	*registry.OrderedRegistry[Tool]
+	items map[string]Tool
+	order []string
 }
 
 func NewToolRegistry() *ToolRegistry {
-	return &ToolRegistry{OrderedRegistry: registry.New[Tool]()}
+	return &ToolRegistry{items: make(map[string]Tool)}
+}
+
+func (r *ToolRegistry) Register(t Tool) {
+	name := t.Name()
+	if _, exists := r.items[name]; !exists {
+		r.order = append(r.order, name)
+	}
+	r.items[name] = t
+}
+
+func (r *ToolRegistry) Get(name string) (Tool, bool) {
+	t, ok := r.items[name]
+	return t, ok
+}
+
+func (r *ToolRegistry) All() []Tool {
+	result := make([]Tool, 0, len(r.order))
+	for _, name := range r.order {
+		result = append(result, r.items[name])
+	}
+	return result
 }
 
 func (r *ToolRegistry) Definitions() []provider.ToolDefinition {

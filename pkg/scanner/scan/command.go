@@ -15,6 +15,7 @@ import (
 type Command struct {
 	engines      *engines.Set
 	verification VerificationConfig
+	verifyFunc   VerifyFunc
 	logger       telemetry.Logger
 }
 
@@ -44,7 +45,6 @@ type flags struct {
 	MaxNeutronPerFP int      `long:"max-neutron-per-finger" description:"Maximum neutron templates per fingerprint" default:"20"`
 	BroadPOC        bool     `long:"broad-poc" description:"Run neutron POC checks even when no fingerprint matched"`
 	Verify          string   `long:"verify" description:"LLM verification mode: off, low, medium, high, critical" default:"off"`
-	VerifyTurns     int      `long:"verify-turns" description:"Maximum agent turns per verification" default:"3"`
 	VerifyTimeout   int      `long:"verify-timeout" description:"Timeout in seconds per verification" default:"120"`
 }
 
@@ -94,7 +94,6 @@ Options:
       --max-neutron-per-finger  Maximum neutron templates per fingerprint (default: 20)
       --broad-poc   Run neutron POC checks even when no fingerprint matched
       --verify      LLM verification mode: off, low, medium, high, critical (default: off)
-      --verify-turns    Maximum agent turns per verification (default: 3)
       --verify-timeout  Timeout seconds per verification (default: 120)
 Profiles:
   quick: gogo -p all -v, spray check/finger/common/crawl/bak/active with recon, weakpass, fingerprint-based POC

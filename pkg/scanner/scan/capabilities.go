@@ -31,13 +31,13 @@ func (c *Command) buildCapabilities(flags flags, opts scanOptions, profile profi
 		}
 	}
 	if opts.hasDiscoveryOverrides() && !gogoBuilt {
-		c.logger.Warnf("scan capability=%s option=port action=ignored reason=unavailable", capGogoPortscan)
+		c.logger.Warnf("scan %s port ignored unavailable", capGogoPortscan)
 	}
 	if opts.hasWebOverrides() && !sprayBuilt {
-		c.logger.Warnf("scan capability=web_probe options=dict,rule,word,default-dict,advance action=ignored reason=unavailable")
+		c.logger.Warnf("scan web_probe dict,rule,word,default-dict,advance ignored unavailable")
 	}
 	if opts.hasWeakpassOverrides() && !weakpassBuilt {
-		c.logger.Warnf("scan capability=%s options=user,pwd action=ignored reason=unavailable", capZombieWeakpass)
+		c.logger.Warnf("scan %s user,pwd ignored unavailable", capZombieWeakpass)
 	}
 	if verificationEnabled(flags.Verify) {
 		if cap, ok := c.agentVerifyCapability(flags); ok {
@@ -59,11 +59,11 @@ var defaultCapabilitySpecs = []capabilitySpec{
 		Available: hasGogo,
 		Build: func(c *Command, _ flags, opts scanOptions, profile profile) capability {
 			return capability{
-				Name:    capGogoPortscan,
-				Accepts: targetInputs(targetScan),
-				Worker:  4,
-				Run: func(ctx context.Context, target target, emit emitFunc) {
-					c.runPortDiscoveryCapability(ctx, opts.Discovery, profile, target, emit)
+				Name:   capGogoPortscan,
+				Accept: acceptsTarget(targetScan),
+				Worker: 4,
+				Run: func(ctx context.Context, e event, emit emitFunc) {
+					c.runPortDiscoveryCapability(ctx, opts.Discovery, profile, e.Target, emit)
 				},
 			}
 		},
@@ -75,11 +75,11 @@ var defaultCapabilitySpecs = []capabilitySpec{
 		Available: alwaysAvailable,
 		Build: func(_ *Command, _ flags, _ scanOptions, profile profile) capability {
 			return capability{
-				Name:    capCoreWeb,
-				Accepts: targetInputs(targetWebProbe),
-				Worker:  2,
-				Run: func(ctx context.Context, target target, emit emitFunc) {
-					runWebResultAnalysisCapability(ctx, profile, target, emit)
+				Name:   capCoreWeb,
+				Accept: acceptsTarget(targetWebProbe),
+				Worker: 2,
+				Run: func(ctx context.Context, e event, emit emitFunc) {
+					runWebResultAnalysisCapability(ctx, profile, e.Target, emit)
 				},
 			}
 		},
@@ -100,11 +100,11 @@ var defaultCapabilitySpecs = []capabilitySpec{
 		Available: hasZombie,
 		Build: func(c *Command, flags flags, opts scanOptions, _ profile) capability {
 			return capability{
-				Name:    capZombieWeakpass,
-				Accepts: targetInputs(targetWeakpass),
-				Worker:  4,
-				Run: func(ctx context.Context, target target, emit emitFunc) {
-					c.runWeakpassCapability(ctx, flags, opts.Credentials, target, emit)
+				Name:   capZombieWeakpass,
+				Accept: acceptsTarget(targetWeakpass),
+				Worker: 4,
+				Run: func(ctx context.Context, e event, emit emitFunc) {
+					c.runWeakpassCapability(ctx, flags, opts.Credentials, e.Target, emit)
 				},
 			}
 		},
@@ -114,11 +114,11 @@ var defaultCapabilitySpecs = []capabilitySpec{
 		Available: hasNeutron,
 		Build: func(c *Command, flags flags, _ scanOptions, _ profile) capability {
 			return capability{
-				Name:    capNeutronPOC,
-				Accepts: targetInputs(targetPOC),
-				Worker:  4,
-				Run: func(ctx context.Context, target target, emit emitFunc) {
-					c.runPOCCapability(ctx, flags, target, emit)
+				Name:   capNeutronPOC,
+				Accept: acceptsTarget(targetPOC),
+				Worker: 4,
+				Run: func(ctx context.Context, e event, emit emitFunc) {
+					c.runPOCCapability(ctx, flags, e.Target, emit)
 				},
 			}
 		},
@@ -137,11 +137,11 @@ func sprayCapabilitySpec(name string, workers int, opts sprayCheckOptions) capab
 
 func sprayCapability(flags flags, web webOptions, name string, workers int, opts sprayCheckOptions, run func(context.Context, flags, webOptions, target, string, sprayCheckOptions, emitFunc)) capability {
 	return capability{
-		Name:    name,
-		Accepts: targetInputs(targetWeb),
-		Worker:  workers,
-		Run: func(ctx context.Context, target target, emit emitFunc) {
-			run(ctx, flags, web, target, name, opts, emit)
+		Name:   name,
+		Accept: acceptsTarget(targetWeb),
+		Worker: workers,
+		Run: func(ctx context.Context, e event, emit emitFunc) {
+			run(ctx, flags, web, e.Target, name, opts, emit)
 		},
 	}
 }

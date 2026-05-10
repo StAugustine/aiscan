@@ -34,7 +34,7 @@ type pipeline struct {
 	capabilities   []capability
 	sink           eventSink
 	events         chan event
-	queues         map[string]chan capabilityInput
+	queues         map[string]chan event
 	dispatcherDone chan struct{}
 	workersDone    sync.WaitGroup
 	mu             sync.Mutex
@@ -45,18 +45,13 @@ type pipeline struct {
 	debug          bool
 }
 
-type capabilityInput struct {
-	target target
-	event  event
-}
-
 func newPipeline(ctx context.Context, capabilities []capability, sink eventSink, debug bool) *pipeline {
 	p := &pipeline{
 		ctx:            ctx,
 		capabilities:   capabilities,
 		sink:           sink,
 		events:         make(chan event, 1024),
-		queues:         make(map[string]chan capabilityInput, len(capabilities)),
+		queues:         make(map[string]chan event, len(capabilities)),
 		dispatcherDone: make(chan struct{}),
 		seenEvents:     make(map[string]struct{}),
 		seenRuns:       make(map[string]struct{}),
@@ -86,24 +81,16 @@ func (p *pipeline) start() {
 		if workers <= 0 {
 			workers = 1
 		}
-		queue := make(chan capabilityInput, 256)
+		queue := make(chan event, 256)
 		p.queues[cap.Name] = queue
 		for i := 0; i < workers; i++ {
 			p.workersDone.Add(1)
-			go func(cap capability, queue <-chan capabilityInput) {
+			go func(cap capability, queue <-chan event) {
 				defer p.workersDone.Done()
 				for input := range queue {
-					event := input.event
-					if event.Kind == "" && input.target != nil {
-						event = targetEvent(cap.Name, "", input.target)
-					}
-					p.observe(pipelineEventCapabilityStart, cap.Name, event)
-					if input.target != nil && cap.Run != nil {
-						cap.Run(p.ctx, input.target, p.Submit)
-					} else if cap.RunEvent != nil {
-						cap.RunEvent(p.ctx, input.event, p.Submit)
-					}
-					p.observe(pipelineEventCapabilityDone, cap.Name, event)
+					p.observe(pipelineEventCapabilityStart, cap.Name, input)
+					cap.Run(p.ctx, input, p.Submit)
+					p.observe(pipelineEventCapabilityDone, cap.Name, input)
 					p.done()
 				}
 			}(cap, queue)
@@ -149,11 +136,10 @@ func (p *pipeline) dispatch(event event) {
 
 	p.observe(pipelineEventAccept, "", event)
 	for _, cap := range p.capabilities {
-		input, ok := p.inputForCapability(cap, event)
-		if !ok {
+		if cap.Accept == nil || !cap.Accept(event) {
 			continue
 		}
-		runKey := p.runKeyForCapability(cap, input)
+		runKey := cap.keyFor(event)
 		if runKey == "" {
 			continue
 		}
@@ -164,31 +150,11 @@ func (p *pipeline) dispatch(event event) {
 		p.observe(pipelineEventDispatch, cap.Name, event)
 		p.add()
 		select {
-		case p.queues[cap.Name] <- input:
+		case p.queues[cap.Name] <- event:
 		case <-p.ctx.Done():
 			p.done()
 		}
 	}
-}
-
-func (p *pipeline) inputForCapability(cap capability, event event) (capabilityInput, bool) {
-	if event.Kind == eventTarget && event.Target != nil && cap.accepts(event.Target) {
-		return capabilityInput{target: event.Target, event: event}, true
-	}
-	if event.Kind == eventFinding && event.Finding != nil && event.Finding.Kind() == findingVerification {
-		return capabilityInput{}, false
-	}
-	if cap.acceptsEvent(event) {
-		return capabilityInput{event: event}, true
-	}
-	return capabilityInput{}, false
-}
-
-func (p *pipeline) runKeyForCapability(cap capability, input capabilityInput) string {
-	if input.target != nil {
-		return cap.keyFor(input.target)
-	}
-	return cap.eventKeyFor(input.event)
 }
 
 func (p *pipeline) add() {

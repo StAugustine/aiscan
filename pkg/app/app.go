@@ -5,6 +5,7 @@ import (
 	"os"
 
 	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
+	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/scanner"
 	"github.com/chainreactors/aiscan/pkg/scanner/engines"
@@ -35,7 +36,6 @@ type ScannerConfig struct {
 	CyberhubMode        string
 	VerificationEnabled bool
 	VerifyMinPriority   string
-	VerifyMaxTurns      int
 	VerifyTimeout       int
 	VerifySystemPrompt  string
 }
@@ -138,7 +138,17 @@ func initScannerRegistry(ctx context.Context, cfg ScannerConfig, llmProvider pro
 	}
 	var opts []scan.Option
 	if cfg.VerificationEnabled && llmProvider != nil {
-		opts = append(opts, scan.WithVerificationConfig(scanVerificationConfig(cfg, llmProvider, model)))
+		p := llmProvider
+		opts = append(opts, scan.WithVerifyFunc(func(ctx context.Context, prompt, systemPrompt, model string, maxTokens int) (string, error) {
+			return agent.Run(ctx, prompt, tool.NewToolRegistry(),
+				agent.WithProvider(p),
+				agent.WithModel(model),
+				agent.WithMaxTokens(maxTokens),
+				agent.WithSystemPrompt(systemPrompt),
+				agent.WithLogger(telemetry.NopLogger()),
+			)
+		}))
+		opts = append(opts, scan.WithVerificationConfig(scanVerificationConfig(cfg, model)))
 	}
 	opts = append(opts, scan.WithLogger(logger))
 	scanner.RegisterAllWithLogger(scannerReg, engineSet, logger, opts...)
@@ -189,21 +199,15 @@ func newACPClient(cfg ACPConfig) (acpclient.API, error) {
 	return acpclient.NewClient(cfg.URL, cfg.NodeID)
 }
 
-func scanVerificationConfig(cfg ScannerConfig, llmProvider provider.Provider, model string) scan.VerificationConfig {
-	maxTurns := cfg.VerifyMaxTurns
-	if maxTurns <= 0 {
-		maxTurns = 3
-	}
+func scanVerificationConfig(cfg ScannerConfig, model string) scan.VerificationConfig {
 	timeout := cfg.VerifyTimeout
 	if timeout <= 0 {
 		timeout = 120
 	}
 	return scan.VerificationConfig{
-		Provider:     llmProvider,
 		Model:        model,
 		Enable:       cfg.VerificationEnabled,
 		MinPriority:  cfg.VerifyMinPriority,
-		MaxTurns:     maxTurns,
 		Timeout:      timeout,
 		SystemPrompt: cfg.VerifySystemPrompt,
 	}

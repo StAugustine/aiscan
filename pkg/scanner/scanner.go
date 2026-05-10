@@ -7,7 +7,6 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/chainreactors/aiscan/pkg/registry"
 	"github.com/chainreactors/aiscan/pkg/scanner/scan"
 )
 
@@ -23,11 +22,42 @@ type StreamingCommand interface {
 }
 
 type ScannerRegistry struct {
-	*registry.OrderedRegistry[PseudoCommand]
+	items map[string]PseudoCommand
+	order []string
 }
 
 func NewScannerRegistry() *ScannerRegistry {
-	return &ScannerRegistry{OrderedRegistry: registry.New[PseudoCommand]()}
+	return &ScannerRegistry{items: make(map[string]PseudoCommand)}
+}
+
+func (r *ScannerRegistry) Register(cmd PseudoCommand) {
+	name := cmd.Name()
+	if _, exists := r.items[name]; !exists {
+		r.order = append(r.order, name)
+	}
+	r.items[name] = cmd
+}
+
+func (r *ScannerRegistry) Get(name string) (PseudoCommand, bool) {
+	cmd, ok := r.items[name]
+	return cmd, ok
+}
+
+func (r *ScannerRegistry) Has(name string) bool {
+	_, ok := r.items[name]
+	return ok
+}
+
+func (r *ScannerRegistry) All() []PseudoCommand {
+	result := make([]PseudoCommand, 0, len(r.order))
+	for _, name := range r.order {
+		result = append(result, r.items[name])
+	}
+	return result
+}
+
+func (r *ScannerRegistry) Names() []string {
+	return append([]string(nil), r.order...)
 }
 
 func (r *ScannerRegistry) ConfigureScan(opts ...scan.Option) {
