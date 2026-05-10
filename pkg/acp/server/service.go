@@ -29,6 +29,26 @@ func (s *Service) Hub() *Hub {
 	return s.hub
 }
 
+func (s *Service) ListSpaces(ctx context.Context) ([]acp.SpaceInfo, error) {
+	spaces, err := s.store.ListSpaces()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]acp.SpaceInfo, 0, len(spaces))
+	for _, space := range spaces {
+		info, err := s.spaceInfo(space)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, info)
+	}
+	return result, nil
+}
+
+func (s *Service) ListNodes(ctx context.Context) ([]acp.Node, error) {
+	return s.store.ListNodes()
+}
+
 func (s *Service) RegisterNode(ctx context.Context, body acp.NodeCreate) (acp.Node, error) {
 	if strings.TrimSpace(body.Name) == "" {
 		return acp.Node{}, acp.ProtocolError(http.StatusUnprocessableEntity, "name is required")

@@ -41,6 +41,75 @@ func (c *Client) NodeID() string {
 	return c.nodeID
 }
 
+func (c *Client) ListSpaces(ctx context.Context) ([]acp.SpaceInfo, error) {
+	var spaces []acp.SpaceInfo
+	if err := c.do(ctx, http.MethodGet, "/spaces", nil, nil, &spaces); err != nil {
+		return nil, err
+	}
+	return spaces, nil
+}
+
+func (c *Client) ListNodes(ctx context.Context) ([]acp.Node, error) {
+	var nodes []acp.Node
+	if err := c.do(ctx, http.MethodGet, "/nodes", nil, nil, &nodes); err != nil {
+		return nil, err
+	}
+	return nodes, nil
+}
+
+func (c *Client) GetSpaceInfo(ctx context.Context, spaceID string) (acp.SpaceInfo, error) {
+	var info acp.SpaceInfo
+	if err := c.do(ctx, http.MethodGet, "/spaces/"+url.PathEscape(spaceID), nil, nil, &info); err != nil {
+		return acp.SpaceInfo{}, err
+	}
+	return info, nil
+}
+
+func (c *Client) ResolveSpace(ctx context.Context, nameOrID string) (acp.SpaceInfo, error) {
+	info, err := c.GetSpaceInfo(ctx, nameOrID)
+	if err == nil {
+		return info, nil
+	}
+	if pe, ok := err.(*acp.Error); !ok || pe.Status != http.StatusNotFound {
+		return acp.SpaceInfo{}, err
+	}
+	spaces, err := c.ListSpaces(ctx)
+	if err != nil {
+		return acp.SpaceInfo{}, err
+	}
+	for _, s := range spaces {
+		if s.Name == nameOrID {
+			return s, nil
+		}
+	}
+	return acp.SpaceInfo{}, acp.ProtocolError(http.StatusNotFound, "space %q not found", nameOrID)
+}
+
+func (c *Client) ReadPublic(ctx context.Context, spaceID string, opts acp.ReadOptions) ([]acp.Message, error) {
+	values := url.Values{}
+	if opts.MessageID != "" {
+		values.Set("message_id", opts.MessageID)
+	}
+	if opts.After != "" {
+		values.Set("after", opts.After)
+	}
+	if opts.Limit > 0 {
+		values.Set("limit", strconv.Itoa(opts.Limit))
+	}
+	if opts.All {
+		values.Set("all", "true")
+	}
+	endpoint := "/spaces/" + url.PathEscape(spaceID) + "/messages"
+	if encoded := values.Encode(); encoded != "" {
+		endpoint += "?" + encoded
+	}
+	var messages []acp.Message
+	if err := c.do(ctx, http.MethodGet, endpoint, nil, nil, &messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
 func (c *Client) RegisterNode(ctx context.Context, name string, meta map[string]any) (acp.Node, error) {
 	var node acp.Node
 	if err := c.do(ctx, http.MethodPost, "/nodes", nil, acp.NodeCreate{Name: name, Meta: meta}, &node); err != nil {

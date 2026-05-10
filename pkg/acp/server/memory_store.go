@@ -39,6 +39,26 @@ func (s *MemoryStore) GetNode(nodeID string) (acp.Node, bool, error) {
 	return node, ok, nil
 }
 
+func (s *MemoryStore) ListNodes() ([]acp.Node, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]acp.Node, 0, len(s.nodes))
+	for _, node := range s.nodes {
+		result = append(result, node)
+	}
+	return result, nil
+}
+
+func (s *MemoryStore) ListSpaces() ([]acp.Space, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	result := make([]acp.Space, 0, len(s.spaces))
+	for _, space := range s.spaces {
+		result = append(result, space)
+	}
+	return result, nil
+}
+
 func (s *MemoryStore) PutSpaceIfAbsent(space acp.Space) (acp.Space, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -47,13 +47,13 @@ type ScannerOptions struct {
 }
 
 type AgentOptions struct {
-	Prompt   string   `short:"p" long:"prompt" description:"Natural language task for the agent"`
-	Inputs   []string `short:"i" long:"input" description:"Target input: IP, URL, IP:port, or CIDR. Can specify multiple"`
-	Skills   []string `short:"s" long:"skill" description:"Embedded skill to apply. Can specify multiple"`
-	TaskFile string   `long:"task-file" description:"File containing task description"`
-	Loop     bool     `long:"loop" description:"Run as an ACP loop worker instead of local agent mode"`
-	MaxTurns int      `long:"max-turns" description:"Maximum agent loop iterations" default:"50"`
-	Timeout  int      `long:"timeout" description:"Overall timeout in seconds" default:"3600"`
+	Prompt    string   `short:"p" long:"prompt" description:"Natural language task for the agent"`
+	Inputs    []string `short:"i" long:"input" description:"Target input: IP, URL, IP:port, or CIDR. Can specify multiple"`
+	Skills    []string `short:"s" long:"skill" description:"Embedded skill to apply. Can specify multiple"`
+	TaskFile  string   `long:"task-file" description:"File containing task description"`
+	Loop      bool     `long:"loop" description:"Run as an ACP loop worker instead of local agent mode"`
+	Heartbeat int      `long:"heartbeat" description:"Run an ACP heartbeat agent turn every N minutes in agent --loop (0 disables)" default:"0"`
+	Timeout   int      `long:"timeout" description:"Overall timeout in seconds" default:"3600"`
 }
 
 type ACPOptions struct {
@@ -62,6 +62,7 @@ type ACPOptions struct {
 	ACPNodeName string `long:"acp-node-name" description:"ACP node name when auto-registering"`
 	ACPDB       string `long:"acp-db" description:"ACP SQLite database path for 'aiscan acp serve'" default:"./acp.db"`
 	Space       string `long:"space" description:"ACP space name for 'aiscan agent --loop'" default:"default"`
+	ACPJSON     bool   `long:"json" description:"Output ACP query results in JSON format"`
 }
 
 type MiscOptions struct {
@@ -73,32 +74,66 @@ type MiscOptions struct {
 
 type cliOptions struct {
 	Option
-	Agent   struct{}   `command:"agent" description:"Run the LLM agent"`
-	ACP     acpCommand `command:"acp" description:"ACP server commands"`
-	Scan    struct{}   `command:"scan" description:"Run the scan pipeline"`
-	Gogo    struct{}   `command:"gogo" description:"Run gogo scanner"`
-	Spray   struct{}   `command:"spray" description:"Run spray scanner"`
-	Zombie  struct{}   `command:"zombie" description:"Run zombie weakpass scanner"`
-	Neutron struct{}   `command:"neutron" description:"Run neutron POC scanner"`
+	Agent    struct{}   `command:"agent" description:"Run the LLM agent"`
+	ACP      acpCommand `command:"acp" description:"ACP server commands"`
+	Scan     struct{}   `command:"scan" description:"Run the scan pipeline"`
+	Cyberhub struct{}   `command:"cyberhub" description:"Search Cyberhub fingerprints and POCs"`
+	Gogo     struct{}   `command:"gogo" description:"Run gogo scanner"`
+	Spray    struct{}   `command:"spray" description:"Run spray scanner"`
+	Zombie   struct{}   `command:"zombie" description:"Run zombie weakpass scanner"`
+	Neutron  struct{}   `command:"neutron" description:"Run neutron POC scanner"`
 }
 
 type acpCommand struct {
-	Serve struct{} `command:"serve" description:"Run the ACP HTTP server"`
+	Serve    struct{}       `command:"serve" description:"Run the ACP HTTP server"`
+	Spaces   struct{}       `command:"spaces" description:"List all ACP spaces"`
+	Messages acpMessagesCmd `command:"messages" description:"List start messages in a space"`
+	Context  acpContextCmd  `command:"context" description:"View message thread/context"`
+	Nodes    acpNodesCmd    `command:"nodes" description:"List nodes"`
+}
+
+type acpMessagesCmd struct {
+	Positional struct {
+		Space string `positional-arg-name:"space"`
+	} `positional-args:"yes" required:"yes"`
+}
+
+type acpContextCmd struct {
+	Positional struct {
+		Space     string `positional-arg-name:"space"`
+		MessageID string `positional-arg-name:"message-id"`
+	} `positional-args:"yes" required:"yes"`
+}
+
+type acpNodesCmd struct {
+	Positional struct {
+		Space string `positional-arg-name:"space"`
+	} `positional-args:"yes"`
 }
 
 type runMode string
 
 const (
-	runModeAgent     runMode = "agent"
-	runModeACPServe  runMode = "acp serve"
-	runModeScanner   runMode = "scanner"
-	runModeNoCommand runMode = ""
+	runModeAgent       runMode = "agent"
+	runModeACPServe    runMode = "acp serve"
+	runModeACPSpaces   runMode = "acp spaces"
+	runModeACPMessages runMode = "acp messages"
+	runModeACPContext  runMode = "acp context"
+	runModeACPNodes    runMode = "acp nodes"
+	runModeScanner     runMode = "scanner"
+	runModeNoCommand   runMode = ""
 )
+
+type acpClientArgs struct {
+	Space     string
+	MessageID string
+}
 
 type parsedCLI struct {
 	Option      Option
 	Mode        runMode
 	ScannerArgs []string
+	ACPArgs     acpClientArgs
 	Help        bool
 }
 
@@ -118,7 +153,7 @@ func AiScan() {
 		return
 	}
 	if parsed.Mode == runModeNoCommand {
-		fmt.Fprintln(os.Stderr, "error: missing subcommand: use agent, acp serve, scan, gogo, spray, zombie, or neutron")
+		fmt.Fprintln(os.Stderr, "error: missing subcommand: use agent, acp serve, scan, cyberhub, gogo, spray, zombie, or neutron")
 		os.Exit(1)
 	}
 
@@ -139,6 +174,11 @@ func AiScan() {
 	case runModeACPServe:
 		if err := runACPServe(ctx, &option, logger); err != nil {
 			logger.Errorf("acp server failed: %s", err)
+			os.Exit(1)
+		}
+	case runModeACPSpaces, runModeACPMessages, runModeACPContext, runModeACPNodes:
+		if err := runACPClientCommand(ctx, parsed.Mode, &option, parsed.ACPArgs, logger); err != nil {
+			logger.Errorf("acp command failed: %s", err)
 			os.Exit(1)
 		}
 	case runModeScanner:
@@ -193,7 +233,9 @@ func parseCLI(args []string) (parsedCLI, error) {
 		scannerArgs := append([]string{scannerName}, scannerRest...)
 		return parsedCLI{Option: option, Mode: mode, ScannerArgs: scannerArgs}, nil
 	}
-	return parsedCLI{Option: option, Mode: mode}, nil
+
+	acpArgs := extractACPArgs(&cli, mode)
+	return parsedCLI{Option: option, Mode: mode, ACPArgs: acpArgs}, nil
 }
 
 func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsedCLI, error) {
@@ -272,13 +314,18 @@ func newCLIParser(cli *cliOptions, options goflags.Options) *goflags.Parser {
 aiscan - Agentic Security Scanner powered by LLM
 
 Commands:
-  agent       Run the LLM agent
-  acp serve   Run the ACP HTTP server
-  scan        Run the scan pipeline
-  gogo        Run gogo scanner
-  spray       Run spray scanner
-  zombie      Run zombie weakpass scanner
-  neutron     Run neutron POC scanner
+  agent          Run the LLM agent
+  acp serve      Run the ACP HTTP server
+  acp spaces     List all ACP spaces
+  acp messages   List start messages in a space
+  acp context    View message thread/context
+  acp nodes      List nodes
+  scan           Run the scan pipeline
+  cyberhub       Search Cyberhub fingerprints and POCs
+  gogo           Run gogo scanner
+  spray          Run spray scanner
+  zombie         Run zombie weakpass scanner
+  neutron        Run neutron POC scanner
 
 Examples:
   aiscan agent -p "find web services and check vulnerabilities" -i 192.168.1.0/24
@@ -287,7 +334,10 @@ Examples:
   aiscan scan -i 127.0.0.1 --mode quick --verify=high --llm-api-key KEY --llm-model gpt-4o
   aiscan scan -i 192.168.1.0/24 --mode full
   aiscan acp serve
-  aiscan agent --loop -p "localhost web scanner" -s aiscan --space case-1`
+  aiscan acp spaces --acp-url http://127.0.0.1:8765
+  aiscan acp messages default --acp-url http://127.0.0.1:8765
+  aiscan agent --loop -p "localhost web scanner" -s aiscan --space case-1
+  aiscan agent --loop --heartbeat 5 --space case-1 -p "coordinate next scan steps"`
 	return parser
 }
 
@@ -367,9 +417,9 @@ var scannerKnownFlags = []knownFlag{
 	{names: []string{"--llm-api-key", "--api-key"}, arity: 1, apply: func(o *Option, v string) { o.APIKey = v }},
 	{names: []string{"--llm-model", "--model"}, arity: 1, apply: func(o *Option, v string) { o.Model = v }},
 	{names: []string{"--llm-proxy", "--proxy"}, arity: 1, apply: func(o *Option, v string) { o.Proxy = v }},
-	{names: []string{"--max-turns"}, arity: 1, apply: func(o *Option, v string) {
-		if n, e := strconv.Atoi(v); e == nil && n > 0 {
-			o.MaxTurns = n
+	{names: []string{"--heartbeat"}, arity: 1, apply: func(o *Option, v string) {
+		if n, e := strconv.Atoi(v); e == nil && n >= 0 {
+			o.Heartbeat = n
 		}
 	}},
 }
@@ -397,7 +447,7 @@ func argsAfterCommand(args []string, command string) []string {
 
 func isScannerCommandName(name string) bool {
 	switch name {
-	case "scan", "gogo", "spray", "zombie", "neutron":
+	case "scan", "cyberhub", "gogo", "spray", "zombie", "neutron":
 		return true
 	}
 	return false
@@ -408,18 +458,44 @@ func selectedMode(parser *goflags.Parser) runMode {
 	if active == nil {
 		return runModeNoCommand
 	}
-	if active.Name == "acp" && active.Active != nil && active.Active.Name == "serve" {
-		return runModeACPServe
+	if active.Name == "acp" && active.Active != nil {
+		switch active.Active.Name {
+		case "serve":
+			return runModeACPServe
+		case "spaces":
+			return runModeACPSpaces
+		case "messages":
+			return runModeACPMessages
+		case "context":
+			return runModeACPContext
+		case "nodes":
+			return runModeACPNodes
+		}
 	}
 	switch active.Name {
 	case "agent":
 		return runModeAgent
 	case "serve":
 		return runModeACPServe
-	case "scan", "gogo", "spray", "zombie", "neutron":
+	case "scan", "cyberhub", "gogo", "spray", "zombie", "neutron":
 		return runModeScanner
 	}
 	return runModeNoCommand
+}
+
+func extractACPArgs(cli *cliOptions, mode runMode) acpClientArgs {
+	switch mode {
+	case runModeACPMessages:
+		return acpClientArgs{Space: cli.ACP.Messages.Positional.Space}
+	case runModeACPContext:
+		return acpClientArgs{
+			Space:     cli.ACP.Context.Positional.Space,
+			MessageID: cli.ACP.Context.Positional.MessageID,
+		}
+	case runModeACPNodes:
+		return acpClientArgs{Space: cli.ACP.Nodes.Positional.Space}
+	}
+	return acpClientArgs{}
 }
 
 func selectedScanner(parser *goflags.Parser) string {
@@ -428,7 +504,7 @@ func selectedScanner(parser *goflags.Parser) string {
 		return ""
 	}
 	switch active.Name {
-	case "scan", "gogo", "spray", "zombie", "neutron":
+	case "scan", "cyberhub", "gogo", "spray", "zombie", "neutron":
 		return active.Name
 	}
 	return ""
@@ -579,7 +655,7 @@ func isDirectScannerCommand(rest []string) bool {
 		return false
 	}
 	switch rest[0] {
-	case "scan", "gogo", "spray", "zombie", "neutron":
+	case "scan", "cyberhub", "gogo", "spray", "zombie", "neutron":
 		return true
 	}
 	return false

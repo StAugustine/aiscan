@@ -90,6 +90,46 @@ func (s *SQLiteStore) GetNode(nodeID string) (acp.Node, bool, error) {
 	return scanNode(row)
 }
 
+func (s *SQLiteStore) ListNodes() ([]acp.Node, error) {
+	rows, err := s.db.Query(`SELECT id, name, meta_json FROM nodes ORDER BY name, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []acp.Node
+	for rows.Next() {
+		var node acp.Node
+		var metaJSON string
+		if err := rows.Scan(&node.ID, &node.Name, &metaJSON); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(metaJSON), &node.Meta); err != nil {
+			return nil, err
+		}
+		result = append(result, node)
+	}
+	return result, rows.Err()
+}
+
+func (s *SQLiteStore) ListSpaces() ([]acp.Space, error) {
+	rows, err := s.db.Query(`SELECT id, name FROM spaces ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []acp.Space
+	for rows.Next() {
+		var space acp.Space
+		if err := rows.Scan(&space.ID, &space.Name); err != nil {
+			return nil, err
+		}
+		result = append(result, space)
+	}
+	return result, rows.Err()
+}
+
 func (s *SQLiteStore) PutSpaceIfAbsent(space acp.Space) (acp.Space, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

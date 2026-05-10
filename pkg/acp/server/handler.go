@@ -52,6 +52,16 @@ func (h *Handler) serveNodes(w http.ResponseWriter, r *http.Request, segments []
 		return
 	}
 
+	if len(segments) == 1 && r.Method == http.MethodGet {
+		nodes, err := h.service.ListNodes(r.Context())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, nodes)
+		return
+	}
+
 	if len(segments) == 2 && r.Method == http.MethodGet {
 		node, err := h.service.GetNode(r.Context(), segments[1])
 		if err != nil {
@@ -77,6 +87,16 @@ func (h *Handler) serveSpaces(w http.ResponseWriter, r *http.Request, segments [
 			return
 		}
 		writeJSON(w, http.StatusOK, info)
+		return
+	}
+
+	if len(segments) == 1 && r.Method == http.MethodGet {
+		spaces, err := h.service.ListSpaces(r.Context())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, spaces)
 		return
 	}
 
@@ -168,6 +188,7 @@ func (h *Handler) sse(w http.ResponseWriter, r *http.Request, spaceID, messageID
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
 
 	ch, unsubscribe := h.service.Hub().Subscribe(spaceID)
 	defer unsubscribe()

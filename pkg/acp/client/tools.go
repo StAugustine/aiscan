@@ -128,7 +128,22 @@ func (t *SpaceTool) Execute(ctx context.Context, arguments string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return encodeToolResult(info)
+	allMessages, err := t.base.client.Read(ctx, info.ID, acp.ReadOptions{All: true})
+	if err != nil {
+		return encodeToolResult(info)
+	}
+	var startMessages []acp.Message
+	for _, m := range allMessages {
+		if len(m.Refs.Messages) == 0 && len(m.Refs.Nodes) == 0 {
+			startMessages = append(startMessages, m)
+		}
+	}
+	return encodeToolResult(spaceResult{SpaceInfo: info, StartMessages: startMessages})
+}
+
+type spaceResult struct {
+	acp.SpaceInfo
+	StartMessages []acp.Message `json:"start_messages"`
 }
 
 type SendTool struct {
