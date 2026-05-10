@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/app"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
@@ -28,6 +29,7 @@ type agentConsole struct {
 	session     *agent.Agent
 	console     *console.Console
 	menu        *console.Menu
+	output      *agentOutput
 }
 
 func runInteractiveAgentMode(ctx context.Context, option *Option, logger telemetry.Logger) error {
@@ -43,21 +45,23 @@ func runInteractiveAgentMode(ctx context.Context, option *Option, logger telemet
 	}
 
 	session := agent.New(application.Provider, application.Tools,
-		agent.WithMaxTurns(option.MaxTurns),
 		agent.WithSystemPrompt(runtime.systemPrompt),
 		agent.WithModel(option.Model),
-		agent.WithStream(true),
-		agent.WithLogger(logger),
+		agent.WithStream(false),
+		agent.WithLogger(telemetry.NopLogger()),
 	)
 
 	repl := newAgentConsole(ctx, option, application, session)
-	logger.Importantf("agent mode=interactive status=starting max_turns=%d timeout=%ds", option.MaxTurns, option.Timeout)
 	return repl.start()
 }
 
 func newAgentConsole(ctx context.Context, option *Option, application *app.App, session *agent.Agent) *agentConsole {
 	c := console.New("aiscan")
 	c.NewlineAfter = true
+	output := newAgentOutput(option)
+	if session != nil {
+		session.Subscribe(output.HandleEvent)
+	}
 
 	menu := c.NewMenu("agent")
 	menu.Prompt().Primary = func() string { return "aiscan> " }
@@ -77,6 +81,7 @@ func newAgentConsole(ctx context.Context, option *Option, application *app.App, 
 		session:     session,
 		console:     c,
 		menu:        menu,
+		output:      output,
 	}
 	menu.SetCommands(repl.rootCommand)
 	menu.Command = repl.rootCommand()
@@ -85,7 +90,9 @@ func newAgentConsole(ctx context.Context, option *Option, application *app.App, 
 }
 
 func (r *agentConsole) start() error {
-	fmt.Fprintln(os.Stderr, "aiscan interactive agent. Type /help for commands, /exit to quit.")
+	if r.output == nil || !r.output.quiet {
+		fmt.Fprintln(os.Stderr, "aiscan interactive agent. Type /help for commands, /exit to quit.")
+	}
 	for {
 		if err := r.ctx.Err(); err != nil {
 			return err
@@ -150,6 +157,7 @@ func (r *agentConsole) rootCommand() *cobra.Command {
 		r.continueCommand(),
 		r.exitCommand(),
 	)
+	root.AddCommand(r.acpCommands()...)
 	root.AddCommand(r.skillCommands()...)
 	return root
 }
@@ -183,7 +191,7 @@ func (r *agentConsole) resetCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		Run: func(_ *cobra.Command, _ []string) {
 			r.session.Reset()
-			fmt.Fprintln(os.Stdout, "context reset")
+			fmt.Fprintln(os.Stdout, "Context reset.")
 		},
 	}
 }
@@ -194,6 +202,7 @@ func (r *agentConsole) continueCommand() *cobra.Command {
 		Short: "Continue without a new prompt",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			r.ensureOutput().Start("continue", "")
 			result, err := r.session.Continue(cmd.Context())
 			if err != nil {
 				return err
@@ -248,7 +257,7 @@ func (r *agentConsole) runPrompt(ctx context.Context, input string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stderr, "agent status=running")
+	r.ensureOutput().Start("prompt", input)
 	result, err := r.session.Prompt(ctx, prompt)
 	if err != nil {
 		return err
@@ -263,7 +272,7 @@ func (r *agentConsole) runSkill(ctx context.Context, skill skillpkg.Skill, input
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "agent status=running skill=%s\n", skill.Name)
+	r.ensureOutput().Start("skill "+skill.Name, input)
 	result, err := r.session.Prompt(ctx, prompt)
 	if err != nil {
 		return err
@@ -274,10 +283,86 @@ func (r *agentConsole) runSkill(ctx context.Context, skill skillpkg.Skill, input
 
 func (r *agentConsole) printResult(result *agent.Result) {
 	if result == nil || strings.TrimSpace(result.Output) == "" {
-		fmt.Fprintln(os.Stderr, "agent status=completed output=empty")
+		r.ensureOutput().Empty()
 		return
 	}
-	printResultBlock("assistant", result.Output)
+	r.ensureOutput().Final(result.Output)
+}
+
+func (r *agentConsole) ensureOutput() *agentOutput {
+	if r.output == nil {
+		r.output = newAgentOutput(r.option)
+	}
+	return r.output
+}
+
+func (r *agentConsole) acpClient() (*acpclient.Client, error) {
+	acpURL := r.option.ACPURL
+	if acpURL == "" {
+		return nil, fmt.Errorf("ACP not configured: use --acp-url")
+	}
+	return acpclient.NewClient(acpURL, "")
+}
+
+func (r *agentConsole) acpCommands() []*cobra.Command {
+	return []*cobra.Command{
+		{
+			Use:   "/spaces",
+			Short: "List all ACP spaces",
+			Args:  cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				client, err := r.acpClient()
+				if err != nil {
+					return err
+				}
+				return runACPSpaces(cmd.Context(), client, r.option)
+			},
+		},
+		{
+			Use:   "/messages <space>",
+			Short: "List start messages in a space",
+			Args:  cobra.ExactArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				client, err := r.acpClient()
+				if err != nil {
+					return err
+				}
+				return runACPMessages(cmd.Context(), client, r.option, acpClientArgs{Space: args[0]})
+			},
+		},
+		{
+			Use:   "/context <space> <message-id>",
+			Short: "View message thread/context",
+			Args:  cobra.ExactArgs(2),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				client, err := r.acpClient()
+				if err != nil {
+					return err
+				}
+				return runACPContext(cmd.Context(), client, r.option, acpClientArgs{Space: args[0], MessageID: args[1]})
+			},
+		},
+		{
+			Use:   "/nodes [space]",
+			Short: "List nodes (optionally scoped to a space)",
+			Args:  cobra.MaximumNArgs(1),
+			RunE: func(cmd *cobra.Command, args []string) error {
+				client, err := r.acpClient()
+				if err != nil {
+					return err
+				}
+				var a acpClientArgs
+				if len(args) > 0 {
+					a.Space = args[0]
+				}
+				return runACPNodes(cmd.Context(), client, r.option, a)
+			},
+		},
+	}
+}
+
+var acpConsoleCommands = map[string]bool{
+	"/spaces": true, "/messages": true, "/context": true, "/nodes": true,
 }
 
 func agentConsoleArgsForLine(line string) ([]string, error) {
@@ -288,11 +373,18 @@ func agentConsoleArgsForLine(line string) ([]string, error) {
 	if !strings.HasPrefix(text, "/") || strings.HasPrefix(text, "/skill:") {
 		return []string{agentPromptCommandName, text}, nil
 	}
-	command, args, ok := strings.Cut(text, " ")
+	command, rest, ok := strings.Cut(text, " ")
 	if !ok {
 		return []string{text}, nil
 	}
-	return []string{command, strings.TrimSpace(args)}, nil
+	if acpConsoleCommands[command] {
+		result := []string{command}
+		for _, field := range strings.Fields(rest) {
+			result = append(result, field)
+		}
+		return result, nil
+	}
+	return []string{command, strings.TrimSpace(rest)}, nil
 }
 
 func agentConsoleHistoryPath() string {
