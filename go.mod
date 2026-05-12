@@ -3,6 +3,7 @@ module github.com/chainreactors/aiscan
 go 1.24.0
 
 require (
+	github.com/chainreactors/ioa v0.0.0-00010101000000-000000000000
 	github.com/chainreactors/fingers v1.2.1-0.20260508113754-7e42ea56a879
 	github.com/chainreactors/gogo/v2 v2.14.2-0.20260508165113-815356852650
 	github.com/chainreactors/logs v0.0.0-20260508055944-c678762ed15c
@@ -140,6 +141,7 @@ require (
 )
 
 replace (
+	github.com/chainreactors/ioa => ../internet-of-agent
 	github.com/reeflective/console => ../malice-network/external/console
 	github.com/reeflective/readline => ../malice-network/external/readline
 )

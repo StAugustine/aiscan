@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/pkg/acp"
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
-	acpserver "github.com/chainreactors/aiscan/pkg/acp/server"
+	"github.com/chainreactors/ioa"
+	acpclient "github.com/chainreactors/ioa/client"
+	ioaserver "github.com/chainreactors/ioa/server"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/tool"
 )
 
 func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
-	service := acpserver.NewService(acpserver.NewMemoryStore())
-	server := httptest.NewServer(acpserver.NewHandler(service))
+	service := ioaserver.NewService(ioaserver.NewMemoryStore())
+	server := httptest.NewServer(ioaserver.NewHandler(service))
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -38,7 +38,7 @@ func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
 	}
 
 	workerClients := make([]*acpclient.Client, 3)
-	workerNodes := make([]acp.Node, 3)
+	workerNodes := make([]ioa.Node, 3)
 	providers := make([]*taskProvider, 3)
 	for i := 0; i < 3; i++ {
 		client, err := acpclient.NewClient(server.URL, "")
@@ -66,7 +66,6 @@ func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
 			Tools:            tool.NewToolRegistry(),
 			SystemPrompt:     "test loop agent",
 			Model:            "test-model",
-			MaxTurns:         1,
 			NodeName:         workerNodes[i].Name,
 			SpaceName:        "case-e2e",
 			SpaceDescription: "worker",
@@ -82,7 +81,7 @@ func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
 		_, err := controller.Send(ctx, space.ID, map[string]any{
 			"type": "task",
 			"task": fmt.Sprintf("task-%d", i+1),
-		}, &acp.Ref{Nodes: []string{node.ID}})
+		}, &ioa.Ref{Nodes: []string{node.ID}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -90,7 +89,7 @@ func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
 
 	deadline := time.After(5 * time.Second)
 	for {
-		all, err := controller.Read(ctx, space.ID, acp.ReadOptions{All: true})
+		all, err := controller.Read(ctx, space.ID, ioa.ReadOptions{All: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -117,8 +116,8 @@ func TestThreeLoopClientsCollaborateThroughACP(t *testing.T) {
 }
 
 func TestThreeLoopClientsReplyToBroadcastHello(t *testing.T) {
-	service := acpserver.NewService(acpserver.NewMemoryStore())
-	server := httptest.NewServer(acpserver.NewHandler(service))
+	service := ioaserver.NewService(ioaserver.NewMemoryStore())
+	server := httptest.NewServer(ioaserver.NewHandler(service))
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -151,7 +150,6 @@ func TestThreeLoopClientsReplyToBroadcastHello(t *testing.T) {
 			Tools:            tool.NewToolRegistry(),
 			SystemPrompt:     "test loop agent",
 			Model:            "test-model",
-			MaxTurns:         1,
 			NodeName:         providers[i].name,
 			SpaceName:        "default",
 			SpaceDescription: "worker",
@@ -175,7 +173,7 @@ func TestThreeLoopClientsReplyToBroadcastHello(t *testing.T) {
 
 	deadline := time.After(5 * time.Second)
 	for {
-		related, err := controller.Read(ctx, space.ID, acp.ReadOptions{MessageID: hello.ID})
+		related, err := controller.Read(ctx, space.ID, ioa.ReadOptions{MessageID: hello.ID})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -197,8 +195,8 @@ func TestThreeLoopClientsReplyToBroadcastHello(t *testing.T) {
 }
 
 func TestLoopAnnouncesNodeProfile(t *testing.T) {
-	service := acpserver.NewService(acpserver.NewMemoryStore())
-	server := httptest.NewServer(acpserver.NewHandler(service))
+	service := ioaserver.NewService(ioaserver.NewMemoryStore())
+	server := httptest.NewServer(ioaserver.NewHandler(service))
 	defer server.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -216,7 +214,6 @@ func TestLoopAnnouncesNodeProfile(t *testing.T) {
 		Tools:            tool.NewToolRegistry(),
 		SystemPrompt:     "test loop agent",
 		Model:            "test-model",
-		MaxTurns:         1,
 		NodeName:         "worker-profile",
 		SpaceName:        "default",
 		SpaceDescription: "profile worker",
@@ -240,14 +237,14 @@ func TestLoopAnnouncesNodeProfile(t *testing.T) {
 	if _, err := controller.RegisterNode(ctx, "controller", nil); err != nil {
 		t.Fatal(err)
 	}
-	var space acp.SpaceInfo
+	var space ioa.SpaceInfo
 	deadline := time.After(5 * time.Second)
 	for {
 		space, err = controller.Space(ctx, "default", "controller")
 		if err != nil {
 			t.Fatal(err)
 		}
-		messages, err := controller.Read(ctx, space.ID, acp.ReadOptions{All: true})
+		messages, err := controller.Read(ctx, space.ID, ioa.ReadOptions{All: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,6 +274,123 @@ func TestLoopAnnouncesNodeProfile(t *testing.T) {
 	}
 }
 
+func TestLoopHeartbeatRunsAgentWithACPContext(t *testing.T) {
+	service := ioaserver.NewService(ioaserver.NewMemoryStore())
+	server := httptest.NewServer(ioaserver.NewHandler(service))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	controller, err := acpclient.NewClient(server.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.RegisterNode(ctx, "controller", nil); err != nil {
+		t.Fatal(err)
+	}
+	space, err := controller.Space(ctx, "heartbeat-case", "controller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, err := controller.Send(ctx, space.ID, map[string]any{
+		"type": "note",
+		"text": "existing context",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	worker, err := acpclient.NewClient(server.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	llm := &taskProvider{name: "heartbeat-worker", reply: "heartbeat done"}
+	runCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	runner := New(Config{
+		Client:                worker,
+		Provider:              llm,
+		Tools:                 tool.NewToolRegistry(),
+		SystemPrompt:          "test loop agent",
+		Model:                 "test-model",
+		NodeName:              "heartbeat-worker",
+		SpaceName:             "heartbeat-case",
+		SpaceDescription:      "worker",
+		PollInterval:          100 * time.Millisecond,
+		HeartbeatInterval:     50 * time.Millisecond,
+		HeartbeatContextLimit: 20,
+		Prompt:                "watch the case",
+		Network:               map[string]any{"test": true},
+	})
+	go func() {
+		_ = runner.Run(runCtx)
+	}()
+
+	deadline := time.After(5 * time.Second)
+	for {
+		all, err := controller.Read(ctx, space.ID, ioa.ReadOptions{All: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, msg := range all {
+			if msg.Content["type"] != "heartbeat_result" || msg.Content["status"] != "done" {
+				continue
+			}
+			output, _ := msg.Content["output"].(string)
+			if output != "heartbeat done" {
+				t.Fatalf("heartbeat output = %q", output)
+			}
+			if len(msg.Refs.Messages) != 1 || !hasMessageWithType(all, msg.Refs.Messages[0], "heartbeat") {
+				t.Fatalf("heartbeat result refs = %#v; messages=%#v", msg.Refs, all)
+			}
+			tasks := llm.tasks()
+			if len(tasks) == 0 {
+				t.Fatal("provider did not receive heartbeat prompt")
+			}
+			prompt := tasks[len(tasks)-1]
+			for _, want := range []string{"ACP heartbeat", space.ID, note.ID, "existing context", "watch the case"} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("heartbeat prompt missing %q:\n%s", want, prompt)
+				}
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for heartbeat; messages=%#v", all)
+		default:
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
+func TestTaskFromMessageIgnoresTypedNonTasks(t *testing.T) {
+	if task, ok := taskFromMessage(ioa.Message{Content: map[string]any{
+		"type":   "node_profile",
+		"prompt": "worker intent",
+	}}); ok || task != "" {
+		t.Fatalf("taskFromMessage() = %q, %v; want no task", task, ok)
+	}
+	if task, ok := taskFromMessage(ioa.Message{Content: map[string]any{
+		"type": "heartbeat",
+		"task": "not a task",
+	}}); ok || task != "" {
+		t.Fatalf("taskFromMessage() = %q, %v; want no task", task, ok)
+	}
+	if task, ok := taskFromMessage(ioa.Message{Content: map[string]any{
+		"prompt": "legacy prompt",
+	}}); !ok || task != "legacy prompt" {
+		t.Fatalf("taskFromMessage() = %q, %v; want legacy prompt", task, ok)
+	}
+	if task, ok := taskFromMessage(ioa.Message{Content: map[string]any{
+		"type":    "task",
+		"content": "typed task",
+	}}); !ok || task != "typed task" {
+		t.Fatalf("taskFromMessage() = %q, %v; want typed task", task, ok)
+	}
+}
+
 type taskProvider struct {
 	name  string
 	reply string
@@ -286,7 +400,7 @@ type taskProvider struct {
 	calls int
 }
 
-func findProfile(messages []acp.Message) *acp.Message {
+func findProfile(messages []ioa.Message) *ioa.Message {
 	for i := range messages {
 		if messages[i].Content["type"] == "node_profile" {
 			return &messages[i]
@@ -329,7 +443,7 @@ func lastUserContent(messages []provider.ChatMessage) string {
 	return ""
 }
 
-func countResults(messages []acp.Message) int {
+func countResults(messages []ioa.Message) int {
 	count := 0
 	for _, msg := range messages {
 		if msg.Content["type"] == "result" && msg.Content["status"] == "done" {
@@ -342,7 +456,7 @@ func countResults(messages []acp.Message) int {
 	return count
 }
 
-func countHelloResults(messages []acp.Message, helloID string) int {
+func countHelloResults(messages []ioa.Message, helloID string) int {
 	count := 0
 	for _, msg := range messages {
 		if msg.Content["type"] == "result" && msg.Content["status"] == "done" && containsRef(msg.Refs.Messages, helloID) {
@@ -355,7 +469,7 @@ func countHelloResults(messages []acp.Message, helloID string) int {
 	return count
 }
 
-func countStatus(messages []acp.Message, status string) int {
+func countStatus(messages []ioa.Message, status string) int {
 	count := 0
 	for _, msg := range messages {
 		if msg.Content["type"] == "status" && msg.Content["status"] == status {
@@ -368,6 +482,15 @@ func countStatus(messages []acp.Message, status string) int {
 func containsRef(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMessageWithType(messages []ioa.Message, id, typ string) bool {
+	for _, msg := range messages {
+		if msg.ID == id && msg.Content["type"] == typ {
 			return true
 		}
 	}

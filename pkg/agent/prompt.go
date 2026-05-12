@@ -50,13 +50,13 @@ You work autonomously — analyze, plan, and execute using the provided tools un
 		sb.WriteString(fmt.Sprintf("### %s\n%s\n\n", t.Name(), t.Description()))
 	}
 
-	if hasACPTools(tools) {
-		sb.WriteString(`## ACP Collaboration
+	if hasIOATools(tools) {
+		sb.WriteString(`## IOA Collaboration
 
-ACP tools provide shared message spaces for coordination with other nodes:
-- Use acp_space to create or join a collaboration space and capture the returned space id.
-- Use acp_send to publish structured findings, questions, or task updates.
-- Use acp_read to read messages addressed to this node, or pass all=true when full space context is needed.
+IOA tools provide shared message spaces for coordination with other nodes:
+- Use ioa_space to create or join a collaboration space and capture the returned space id.
+- Use ioa_send to publish structured findings, questions, or task updates.
+- Use ioa_read to read messages addressed to this node, or pass all=true when full space context is needed.
 
 `)
 	}
@@ -123,17 +123,17 @@ When you have completed the assessment, provide a structured summary including:
 	return sb.String()
 }
 
-func hasACPTools(tools *tool.ToolRegistry) bool {
+func hasIOATools(tools *tool.ToolRegistry) bool {
 	if tools == nil {
 		return false
 	}
-	if _, ok := tools.Get("acp_space"); ok {
+	if _, ok := tools.Get("ioa_space"); ok {
 		return true
 	}
-	if _, ok := tools.Get("acp_send"); ok {
+	if _, ok := tools.Get("ioa_send"); ok {
 		return true
 	}
-	if _, ok := tools.Get("acp_read"); ok {
+	if _, ok := tools.Get("ioa_read"); ok {
 		return true
 	}
 	return false

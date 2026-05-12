@@ -7,8 +7,8 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/chainreactors/aiscan/pkg/acp"
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
+	"github.com/chainreactors/ioa"
+	acpclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 )
 
@@ -19,7 +19,7 @@ func runACPClientCommand(ctx context.Context, mode runMode, option *Option, args
 	}
 	client, err := acpclient.NewClient(acpURL, "")
 	if err != nil {
-		return fmt.Errorf("connect to ACP server: %w", err)
+		return fmt.Errorf("connect to IOA server: %w", err)
 	}
 
 	switch mode {
@@ -61,7 +61,7 @@ func runACPMessages(ctx context.Context, client *acpclient.Client, option *Optio
 	if err != nil {
 		return err
 	}
-	messages, err := client.ReadPublic(ctx, space.ID, acp.ReadOptions{})
+	messages, err := client.ReadPublic(ctx, space.ID, ioa.ReadOptions{})
 	if err != nil {
 		return err
 	}
@@ -85,7 +85,7 @@ func runACPContext(ctx context.Context, client *acpclient.Client, option *Option
 	if err != nil {
 		return err
 	}
-	messages, err := client.ReadPublic(ctx, space.ID, acp.ReadOptions{MessageID: args.MessageID})
+	messages, err := client.ReadPublic(ctx, space.ID, ioa.ReadOptions{MessageID: args.MessageID})
 	if err != nil {
 		return err
 	}

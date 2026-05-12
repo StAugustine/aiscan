@@ -57,12 +57,12 @@ type AgentOptions struct {
 }
 
 type ACPOptions struct {
-	ACPURL      string `long:"acp-url" config:"url" description:"ACP server URL for agent tools"`
-	ACPNodeID   string `long:"acp-node-id" description:"Existing ACP node id for agent tools"`
-	ACPNodeName string `long:"acp-node-name" config:"node_name" description:"ACP node name when auto-registering"`
-	ACPDB       string `long:"acp-db" config:"db" description:"ACP SQLite database path for 'aiscan acp serve'" default:"./acp.db"`
-	Space       string `long:"space" config:"space" description:"ACP space name for 'aiscan agent --loop'" default:"default"`
-	ACPJSON     bool   `long:"json" description:"Output ACP query results in JSON format"`
+	ACPURL      string `long:"acp-url" config:"url" description:"IOA server URL for agent tools"`
+	ACPNodeID   string `long:"acp-node-id" description:"Existing IOA node id for agent tools"`
+	ACPNodeName string `long:"acp-node-name" config:"node_name" description:"IOA node name when auto-registering"`
+	ACPDB       string `long:"acp-db" config:"db" description:"IOA SQLite database path for 'aiscan acp serve'" default:"./ioa.db"`
+	Space       string `long:"space" config:"space" description:"IOA space name for 'aiscan agent --loop'" default:"default"`
+	ACPJSON     bool   `long:"json" description:"Output IOA query results in JSON format"`
 }
 
 type MiscOptions struct {

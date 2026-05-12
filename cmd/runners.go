@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
-	"github.com/chainreactors/aiscan/pkg/acp/servercmd"
+	acpclient "github.com/chainreactors/ioa/client"
+	ioaserver "github.com/chainreactors/ioa/server"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/app"
 	"github.com/chainreactors/aiscan/pkg/loop"
@@ -231,12 +231,10 @@ func runLoop(ctx context.Context, option *Option, logger telemetry.Logger) error
 }
 
 func runACPServe(ctx context.Context, option *Option, logger telemetry.Logger) error {
-	return servercmd.Run(ctx, servercmd.Options{
-		URL:     option.ACPURL,
-		DB:      option.ACPDB,
-		Timeout: option.Timeout,
-		Debug:   option.Debug,
-		Quiet:   option.Quiet,
+	return ioaserver.RunServer(ctx, ioaserver.ServerOptions{
+		URL:    option.ACPURL,
+		DB:     option.ACPDB,
+		Logger: logger,
 	})
 }
 

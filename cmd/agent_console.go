@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
+	acpclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/app"
 	"github.com/chainreactors/aiscan/pkg/telemetry"

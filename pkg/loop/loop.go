@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/aiscan/pkg/acp"
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
+	"github.com/chainreactors/ioa"
+	acpclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
@@ -138,7 +138,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 }
 
-func (r *Runner) announceProfile(ctx context.Context, space acp.SpaceInfo) error {
+func (r *Runner) announceProfile(ctx context.Context, space ioa.SpaceInfo) error {
 	content := map[string]any{
 		"type":        "node_profile",
 		"node_id":     r.cfg.Client.NodeID(),
@@ -164,7 +164,7 @@ func (r *Runner) networkProfile() map[string]any {
 }
 
 func (r *Runner) catchUp(ctx context.Context, spaceID string) error {
-	messages, err := r.cfg.Client.Read(ctx, spaceID, acp.ReadOptions{All: true})
+	messages, err := r.cfg.Client.Read(ctx, spaceID, ioa.ReadOptions{All: true})
 	if err != nil {
 		return err
 	}
@@ -176,8 +176,8 @@ func (r *Runner) catchUp(ctx context.Context, spaceID string) error {
 	return nil
 }
 
-func (r *Runner) runHeartbeat(ctx context.Context, space acp.SpaceInfo) error {
-	messages, err := r.cfg.Client.Read(ctx, space.ID, acp.ReadOptions{All: true, Limit: r.cfg.HeartbeatContextLimit})
+func (r *Runner) runHeartbeat(ctx context.Context, space ioa.SpaceInfo) error {
+	messages, err := r.cfg.Client.Read(ctx, space.ID, ioa.ReadOptions{All: true, Limit: r.cfg.HeartbeatContextLimit})
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,7 @@ func (r *Runner) runHeartbeat(ctx context.Context, space acp.SpaceInfo) error {
 		content["status"] = "error"
 		content["error"] = runErr.Error()
 	}
-	_, sendErr := r.cfg.Client.Send(ctx, space.ID, content, &acp.Ref{Messages: []string{started.ID}})
+	_, sendErr := r.cfg.Client.Send(ctx, space.ID, content, &ioa.Ref{Messages: []string{started.ID}})
 	if runErr != nil {
 		return runErr
 	}
@@ -228,7 +228,7 @@ func (r *Runner) runHeartbeat(ctx context.Context, space acp.SpaceInfo) error {
 	return sendErr
 }
 
-func (r *Runner) heartbeatPrompt(space acp.SpaceInfo, messages []acp.Message) string {
+func (r *Runner) heartbeatPrompt(space ioa.SpaceInfo, messages []ioa.Message) string {
 	contextJSON, err := json.MarshalIndent(messages, "", "  ")
 	if err != nil {
 		contextJSON = []byte("[]")
@@ -240,7 +240,7 @@ func (r *Runner) heartbeatPrompt(space acp.SpaceInfo, messages []acp.Message) st
 	if intent == "" {
 		intent = "No explicit worker intent was configured."
 	}
-	return fmt.Sprintf(`This is an ACP heartbeat turn for an aiscan loop worker.
+	return fmt.Sprintf(`This is an IOA heartbeat turn for an aiscan loop worker.
 
 Space:
 - id: %s
@@ -252,18 +252,18 @@ This node:
 - intent: %s
 - skills: %s
 
-Review the recent ACP context below and decide the next useful step.
-Use ACP tools when you need to read more context, send coordination messages, or assign tasks to other nodes.
+Review the recent IOA context below and decide the next useful step.
+Use IOA tools when you need to read more context, send coordination messages, or assign tasks to other nodes.
 If this worker should act now, use the available local tools directly in this heartbeat turn.
 If no action is needed, say that briefly and do not repeat completed work.
 Do not send heartbeat, status, result, or node_profile messages as new tasks.
-When creating ACP tasks for other nodes, use content like {"type":"task","task":"..."} and target refs.nodes when a specific node should handle it.
+When creating IOA tasks for other nodes, use content like {"type":"task","task":"..."} and target refs.nodes when a specific node should handle it.
 
-Recent ACP messages, oldest to newest:
+Recent IOA messages, oldest to newest:
 %s`, space.ID, space.Name, r.cfg.Client.NodeID(), r.cfg.NodeName, intent, strings.Join(cleanStrings(r.cfg.Skills), ", "), string(contextJSON))
 }
 
-func (r *Runner) handleMessage(ctx context.Context, spaceID string, msg acp.Message) error {
+func (r *Runner) handleMessage(ctx context.Context, spaceID string, msg ioa.Message) error {
 	task, ok := taskFromMessage(msg)
 	if !ok {
 		return nil
@@ -284,7 +284,7 @@ func (r *Runner) handleMessage(ctx context.Context, spaceID string, msg acp.Mess
 		"status":  "started",
 		"task":    task,
 		"node_id": r.cfg.Client.NodeID(),
-	}, &acp.Ref{Messages: []string{msg.ID}})
+	}, &ioa.Ref{Messages: []string{msg.ID}})
 	if err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func (r *Runner) handleMessage(ctx context.Context, spaceID string, msg acp.Mess
 	} else {
 		content["status"] = "done"
 	}
-	_, sendErr := r.cfg.Client.Send(ctx, spaceID, content, &acp.Ref{Messages: []string{msg.ID, started.ID}})
+	_, sendErr := r.cfg.Client.Send(ctx, spaceID, content, &ioa.Ref{Messages: []string{msg.ID, started.ID}})
 	if runErr != nil {
 		return runErr
 	}
@@ -323,14 +323,14 @@ func (r *Runner) markProcessed(messageID string) bool {
 	return true
 }
 
-func isTaskForNode(msg acp.Message, nodeID string) bool {
+func isTaskForNode(msg ioa.Message, nodeID string) bool {
 	if len(msg.Refs.Nodes) == 0 {
 		return len(msg.Refs.Messages) == 0
 	}
 	return slices.Contains(msg.Refs.Nodes, nodeID)
 }
 
-func taskFromMessage(msg acp.Message) (string, bool) {
+func taskFromMessage(msg ioa.Message) (string, bool) {
 	if typ, ok := msg.Content["type"].(string); ok && typ != "" && typ != "task" {
 		return "", false
 	}

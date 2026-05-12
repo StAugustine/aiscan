@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/pkg/acp"
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
-	acpserver "github.com/chainreactors/aiscan/pkg/acp/server"
+	"github.com/chainreactors/ioa"
+	acpclient "github.com/chainreactors/ioa/client"
+	ioaserver "github.com/chainreactors/ioa/server"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/tool"
 )
@@ -35,8 +35,8 @@ func TestRealLLMLoopRepliesThroughACP(t *testing.T) {
 		model = "deepseek-v4-pro"
 	}
 
-	service := acpserver.NewService(acpserver.NewMemoryStore())
-	server := httptest.NewServer(acpserver.NewHandler(service))
+	service := ioaserver.NewService(ioaserver.NewMemoryStore())
+	server := httptest.NewServer(ioaserver.NewHandler(service))
 	defer server.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
@@ -64,7 +64,6 @@ func TestRealLLMLoopRepliesThroughACP(t *testing.T) {
 		Tools:            tool.NewToolRegistry(),
 		SystemPrompt:     "You are a concise test worker. When asked to reply, answer with exactly: loop",
 		Model:            model,
-		MaxTurns:         1,
 		Stream:           false,
 		NodeName:         "real-llm-worker",
 		SpaceName:        "default",
@@ -99,7 +98,7 @@ func TestRealLLMLoopRepliesThroughACP(t *testing.T) {
 
 	deadline := time.After(90 * time.Second)
 	for {
-		related, err := controller.Read(ctx, space.ID, acp.ReadOptions{MessageID: hello.ID})
+		related, err := controller.Read(ctx, space.ID, ioa.ReadOptions{MessageID: hello.ID})
 		if err != nil {
 			t.Fatal(err)
 		}

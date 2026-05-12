@@ -1,5 +1,7 @@
 package provider
 
+import "github.com/chainreactors/ioa"
+
 type ChatMessage struct {
 	Role             string     `json:"role"`
 	Content          *string    `json:"content,omitempty"`
@@ -38,16 +40,9 @@ type FunctionCallDelta struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
-type ToolDefinition struct {
-	Type     string             `json:"type"`
-	Function FunctionDefinition `json:"function"`
-}
+type ToolDefinition = ioa.ToolDefinition
 
-type FunctionDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
-}
+type FunctionDefinition = ioa.FunctionDefinition
 
 type ChatCompletionRequest struct {
 	Model       string           `json:"model"`

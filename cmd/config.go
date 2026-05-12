@@ -92,7 +92,7 @@ func mergeOption(dst, src *Option) {
 	if (dst.Space == "" || dst.Space == "default") && src.Space != "" {
 		dst.Space = src.Space
 	}
-	if (dst.ACPDB == "" || dst.ACPDB == "./acp.db") && src.ACPDB != "" {
+	if (dst.ACPDB == "" || dst.ACPDB == "./ioa.db") && src.ACPDB != "" {
 		dst.ACPDB = src.ACPDB
 	}
 }

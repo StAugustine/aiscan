@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	acpclient "github.com/chainreactors/aiscan/pkg/acp/client"
+	acpclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/scanner"
@@ -179,8 +179,8 @@ func (a *App) InitACP(ctx context.Context, cfg ACPConfig) error {
 		a.ACPStreamClient = streamClient
 	}
 	if cfg.RegisterTools && a.Tools != nil {
-		for _, acpTool := range acpclient.NewTools(client, acpclient.ToolOptions{NodeName: cfg.NodeName, NodeMeta: cfg.NodeMeta}) {
-			a.Tools.Register(acpTool)
+		for _, t := range acpclient.NewTools(client, acpclient.ToolOptions{NodeName: cfg.NodeName, NodeMeta: cfg.NodeMeta}) {
+			a.Tools.Register(t)
 		}
 	}
 	if cfg.AutoRegister && client.NodeID() == "" {
