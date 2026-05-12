@@ -19,19 +19,19 @@ import (
 const Version = "0.1.0"
 
 type Option struct {
-	LLMOptions     `group:"LLM Options"`
-	ScannerOptions `group:"Scanner Options"`
-	AgentOptions   `group:"Agent Options"`
-	ACPOptions     `group:"ACP Options"`
-	MiscOptions    `group:"Miscellaneous Options"`
+	LLMOptions     `group:"LLM Options" config:"llm"`
+	ScannerOptions `group:"Scanner Options" config:"cyberhub"`
+	AgentOptions   `group:"Agent Options" config:"agent"`
+	ACPOptions     `group:"ACP Options" config:"acp"`
+	MiscOptions    `group:"Miscellaneous Options" config:"misc"`
 }
 
 type LLMOptions struct {
-	Provider      string `long:"llm-provider" description:"LLM provider name (openai, deepseek, openrouter, ollama, etc.)"`
-	BaseURL       string `long:"llm-base-url" description:"LLM API base URL"`
-	APIKey        string `long:"llm-api-key" description:"LLM API key (or set env: OPENAI_API_KEY, AISCAN_API_KEY)"`
-	Model         string `long:"llm-model" description:"LLM model name"`
-	Proxy         string `long:"llm-proxy" description:"HTTP proxy for LLM API"`
+	Provider      string `long:"llm-provider" config:"provider" description:"LLM provider name (openai, deepseek, openrouter, ollama, etc.)"`
+	BaseURL       string `long:"llm-base-url" config:"base_url" description:"LLM API base URL"`
+	APIKey        string `long:"llm-api-key" config:"api_key" description:"LLM API key (or set env: OPENAI_API_KEY, AISCAN_API_KEY)"`
+	Model         string `long:"llm-model" config:"model" description:"LLM model name"`
+	Proxy         string `long:"llm-proxy" config:"proxy" description:"HTTP proxy for LLM API"`
 	ProviderAlias string `long:"provider" description:"Alias for --llm-provider"`
 	BaseURLAlias  string `long:"base-url" description:"Alias for --llm-base-url"`
 	APIKeyAlias   string `long:"api-key" description:"Alias for --llm-api-key"`
@@ -41,9 +41,9 @@ type LLMOptions struct {
 }
 
 type ScannerOptions struct {
-	CyberhubURL  string `long:"cyberhub-url" description:"Cyberhub server URL for loading fingers/templates"`
-	CyberhubKey  string `long:"cyberhub-key" description:"Cyberhub API key"`
-	CyberhubMode string `long:"cyberhub-mode" description:"Cyberhub resource mode: merge or override"`
+	CyberhubURL  string `long:"cyberhub-url" config:"url" description:"Cyberhub server URL for loading fingers/templates"`
+	CyberhubKey  string `long:"cyberhub-key" config:"key" description:"Cyberhub API key"`
+	CyberhubMode string `long:"cyberhub-mode" config:"mode" description:"Cyberhub resource mode: merge or override"`
 }
 
 type AgentOptions struct {
@@ -53,23 +53,25 @@ type AgentOptions struct {
 	TaskFile  string   `long:"task-file" description:"File containing task description"`
 	Loop      bool     `long:"loop" description:"Run as an ACP loop worker instead of local agent mode"`
 	Heartbeat int      `long:"heartbeat" description:"Run an ACP heartbeat agent turn every N minutes in agent --loop (0 disables)" default:"0"`
-	Timeout   int      `long:"timeout" description:"Overall timeout in seconds" default:"3600"`
+	Timeout   int      `long:"timeout" config:"timeout" description:"Overall timeout in seconds" default:"3600"`
 }
 
 type ACPOptions struct {
-	ACPURL      string `long:"acp-url" description:"ACP server URL for agent tools"`
+	ACPURL      string `long:"acp-url" config:"url" description:"ACP server URL for agent tools"`
 	ACPNodeID   string `long:"acp-node-id" description:"Existing ACP node id for agent tools"`
-	ACPNodeName string `long:"acp-node-name" description:"ACP node name when auto-registering"`
-	ACPDB       string `long:"acp-db" description:"ACP SQLite database path for 'aiscan acp serve'" default:"./acp.db"`
-	Space       string `long:"space" description:"ACP space name for 'aiscan agent --loop'" default:"default"`
+	ACPNodeName string `long:"acp-node-name" config:"node_name" description:"ACP node name when auto-registering"`
+	ACPDB       string `long:"acp-db" config:"db" description:"ACP SQLite database path for 'aiscan acp serve'" default:"./acp.db"`
+	Space       string `long:"space" config:"space" description:"ACP space name for 'aiscan agent --loop'" default:"default"`
 	ACPJSON     bool   `long:"json" description:"Output ACP query results in JSON format"`
 }
 
 type MiscOptions struct {
-	Debug   bool `long:"debug" description:"Enable debug logging"`
-	Quiet   bool `short:"q" long:"quiet" description:"Quiet mode"`
-	NoColor bool `long:"no-color" description:"Disable ANSI colors in scanner output"`
-	Version bool `long:"version" description:"Print version and exit"`
+	ConfigFile string `short:"c" long:"config" description:"Path to config file (default: ./config.yaml, ~/.config/aiscan/config.yaml)"`
+	InitConfig bool   `long:"init" description:"Generate default config.yaml and exit"`
+	Debug      bool   `long:"debug" config:"debug" description:"Enable debug logging"`
+	Quiet      bool   `short:"q" long:"quiet" config:"quiet" description:"Quiet mode"`
+	NoColor    bool   `long:"no-color" config:"no_color" description:"Disable ANSI colors in scanner output"`
+	Version    bool   `long:"version" description:"Print version and exit"`
 }
 
 type cliOptions struct {
@@ -149,6 +151,14 @@ func AiScan() {
 		fmt.Printf("aiscan v%s\n", Version)
 		return
 	}
+	if option.InitConfig {
+		if err := os.WriteFile(defaultConfigName, []byte(InitDefaultConfig()), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %s\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stdout, "Config file generated: %s\n", defaultConfigName)
+		return
+	}
 	if parsed.Help {
 		return
 	}
@@ -157,6 +167,9 @@ func AiScan() {
 		os.Exit(1)
 	}
 
+	if cfgPath := loadAndApplyConfig(&option); cfgPath != "" && option.Debug {
+		fmt.Fprintf(os.Stderr, "loaded config: %s\n", cfgPath)
+	}
 	applyDefaults(&option)
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: os.Stderr})
 
@@ -398,6 +411,7 @@ type knownFlag struct {
 }
 
 var scannerKnownFlags = []knownFlag{
+	{names: []string{"--config", "-c"}, arity: 1, apply: func(o *Option, v string) { o.ConfigFile = v }},
 	{names: []string{"--cyberhub-url"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubURL = v }},
 	{names: []string{"--cyberhub-key"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubKey = v }},
 	{names: []string{"--cyberhub-mode"}, arity: 1, apply: func(o *Option, v string) { o.CyberhubMode = v }},

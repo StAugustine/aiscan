@@ -1,24 +1,40 @@
 # aiscan 使用文档
 
-本文档面向 `v0.0.1` 及后续 GitHub Release 发布的二进制版本。
+本文档基于 `v0.1.0` 源码编写，面向 GitHub Release 发布的二进制版本。
 
 aiscan 是一个 agentic security scanner：它既可以像普通 CLI 一样直接运行扫描器，也可以让 LLM agent 根据自然语言目标选择工具、执行扫描、读取证据并输出结论。请只在明确授权的目标上使用。
 
-## 快速开始
+---
+
+## 目录
+
+- [安装](#安装)
+- [命令结构](#命令结构)
+- [全局参数](#全局参数)
+- [LLM Provider 配置](#llm-provider-配置)
+- [scan：自动扫描流水线](#scan自动扫描流水线)
+- [agent：自然语言扫描代理](#agent自然语言扫描代理)
+- [scanner 的 --ai 模式](#scanner-的---ai-模式)
+- [gogo：服务发现](#gogo服务发现)
+- [spray：Web 探测和指纹](#sprayweb-探测和指纹)
+- [zombie：弱口令检测](#zombie弱口令检测)
+- [neutron：POC 检测](#neutronpoc-检测)
+- [cyberhub：资源查询](#cyberhub资源查询)
+- [ACP：协作模式](#acp协作模式)
+- [Cyberhub 资源服务](#cyberhub-资源服务)
+- [输出与格式](#输出与格式)
+- [场景选择建议](#场景选择建议)
+- [常见问题](#常见问题)
+
+---
+
+## 安装
 
 下载最新正式版本：
 
 ```text
 https://github.com/chainreactors/aiscan/releases/latest
 ```
-
-`v0.0.1` 发布地址：
-
-```text
-https://github.com/chainreactors/aiscan/releases/tag/v0.0.1
-```
-
-选择对应平台的资产：
 
 | 系统 | 架构 | 文件 |
 | --- | --- | --- |
@@ -28,45 +44,56 @@ https://github.com/chainreactors/aiscan/releases/tag/v0.0.1
 | macOS | Apple Silicon | `aiscan_darwin_arm64` |
 | Windows | amd64 | `aiscan_windows_amd64.exe` |
 
-Linux amd64 安装示例：
+Linux amd64：
 
 ```bash
-curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/download/v0.0.1/aiscan_linux_amd64
-curl -L -o aiscan_checksums.txt https://github.com/chainreactors/aiscan/releases/download/v0.0.1/aiscan_checksums.txt
-sha256sum -c aiscan_checksums.txt --ignore-missing
+curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_linux_amd64
 chmod +x aiscan
 sudo mv aiscan /usr/local/bin/aiscan
 aiscan --version
 ```
 
-macOS Apple Silicon 安装示例：
+macOS Apple Silicon：
 
 ```bash
-curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/download/v0.0.1/aiscan_darwin_arm64
+curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_darwin_arm64
 chmod +x aiscan
 xattr -d com.apple.quarantine aiscan 2>/dev/null || true
 sudo mv aiscan /usr/local/bin/aiscan
 aiscan --version
 ```
 
-Windows PowerShell 示例：
+Windows PowerShell：
 
 ```powershell
-$Version = "v0.0.1"
-$Base = "https://github.com/chainreactors/aiscan/releases/download/$Version"
-Invoke-WebRequest "$Base/aiscan_windows_amd64.exe" -OutFile aiscan.exe
-Invoke-WebRequest "$Base/aiscan_checksums.txt" -OutFile aiscan_checksums.txt
-Get-FileHash .\aiscan.exe -Algorithm SHA256
+Invoke-WebRequest "https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_windows_amd64.exe" -OutFile aiscan.exe
 .\aiscan.exe --version
 ```
 
+---
+
 ## 命令结构
 
-基本形式：
-
-```bash
+```text
 aiscan [全局参数] <subcommand> [子命令参数]
 ```
+
+子命令一览：
+
+| 命令 | 类型 | 功能 |
+| --- | --- | --- |
+| `agent` | agentic | LLM agent；无任务输入时进入交互式 CLI，`--loop` 时作为 ACP worker |
+| `scan` | pipeline | 自动扫描流水线，串联 gogo → spray → zombie → neutron → 可选 AI 验证 |
+| `gogo` | scanner | 主机存活、端口、服务、banner 和指纹发现 |
+| `spray` | scanner | Web 探测、HTTP 指纹、常见文件、爬取和路径检查 |
+| `zombie` | scanner | 授权弱口令检测 |
+| `neutron` | scanner | 模板化 POC 检测 |
+| `cyberhub` | query | 查询已加载的指纹和 POC 模板 |
+| `acp serve` | service | 启动 ACP HTTP server |
+| `acp spaces` | query | 列出 ACP 空间 |
+| `acp messages` | query | 列出空间中的起始消息 |
+| `acp context` | query | 查看消息上下文/线程 |
+| `acp nodes` | query | 列出节点 |
 
 查看帮助：
 
@@ -76,43 +103,74 @@ aiscan scan -h
 aiscan neutron -h
 ```
 
-主要 subcommand：
+---
 
-| 命令 | 类型 | 功能 |
+## 全局参数
+
+全局参数放在子命令之前，也可以放在 scanner 子命令之后（aiscan 会自动提取）。
+
+### LLM 参数
+
+| 参数 | 别名 | 说明 |
 | --- | --- | --- |
-| `agent` | agentic | 运行 LLM agent；无任务输入时进入交互式 CLI，`--loop` 时作为 ACP worker 挂起监听 |
-| `scan` | deterministic pipeline | 自动扫描流水线，串联发现、Web 探测、弱口令、POC 和可选 AI 验证 |
-| `gogo` | scanner | 主机存活、端口、服务、banner 和指纹发现 |
-| `spray` | scanner | Web 探测、HTTP 指纹、常见文件、爬取和路径检查 |
-| `zombie` | scanner | 授权弱口令检测 |
-| `neutron` | scanner | 模板化 POC 检测 |
-| `acp serve` | service | 启动 ACP HTTP server，用于多 agent/worker 协作 |
+| `--llm-provider` | `--provider` | LLM provider 名称 |
+| `--llm-base-url` | `--base-url` | LLM API base URL |
+| `--llm-api-key` | `--api-key` | LLM API key |
+| `--llm-model` | `--model` | 模型名称（默认 `gpt-4o`） |
+| `--llm-proxy` | `--proxy` | 访问 LLM API 的 HTTP proxy |
+| `--ai` | | 对 scanner 输出使用 LLM 分析 |
 
-常用全局参数：
+### Agent 参数
 
 | 参数 | 说明 |
 | --- | --- |
-| `--llm-provider` | LLM provider 名称，例如 `openai`、`deepseek`、`openrouter`、`ollama` |
-| `--llm-base-url` | LLM API base URL |
-| `--llm-api-key` | LLM API key |
-| `--llm-model` | 模型名称 |
-| `--llm-proxy` | 访问 LLM API 的 HTTP proxy |
-| `--ai` | 直接 scanner 输出后，用 LLM 按相关 skill 再分析一次 |
+| `-p, --prompt` | 自然语言任务描述 |
+| `-i, --input` | 目标输入（IP、URL、IP:port、CIDR），可重复 |
+| `-s, --skill` | 指定 skill 名称，可重复 |
+| `--task-file` | 从文件读取任务描述 |
+| `--loop` | 作为 ACP loop worker 运行 |
+| `--heartbeat <分钟>` | loop 模式下 heartbeat 间隔（0 表示关闭，默认 0） |
+| `--timeout <秒>` | 整体超时（默认 3600） |
+
+### Scanner 参数
+
+| 参数 | 说明 |
+| --- | --- |
 | `--cyberhub-url` | Cyberhub 资源服务 URL |
 | `--cyberhub-key` | Cyberhub API key |
-| `--cyberhub-mode` | Cyberhub 资源模式：`merge` 或 `override` |
+| `--cyberhub-mode` | 资源模式：`merge`（默认）或 `override` |
+
+### ACP 参数
+
+| 参数 | 说明 |
+| --- | --- |
+| `--acp-url` | ACP server URL |
+| `--acp-node-id` | 已有 ACP 节点 ID |
+| `--acp-node-name` | 注册时使用的节点名（默认自动生成） |
+| `--acp-db` | ACP SQLite 数据库路径（默认 `./acp.db`） |
+| `--space` | ACP 空间名（默认 `default`） |
+| `--json` | ACP 查询结果以 JSON 输出 |
+
+### 通用参数
+
+| 参数 | 说明 |
+| --- | --- |
 | `--debug` | 输出调试日志 |
 | `-q, --quiet` | 减少日志输出 |
-| `--no-color` | 禁用扫描输出颜色 |
-| `--timeout` | 整体超时时间，单位秒 |
+| `--no-color` | 禁用 ANSI 颜色 |
+| `--version` | 输出版本号并退出 |
 
-注意：顶层参数和 scanner 参数可能同名。例如 `aiscan agent -p` 是自然语言 prompt，`aiscan gogo -p` 是端口参数。
+> 注意：顶层参数和 scanner 子命令参数可能同名。例如 `aiscan agent -p` 是自然语言 prompt，`aiscan gogo -p` 是端口参数。aiscan 会根据子命令自动区分。
 
-## LLM Provider
+---
+
+## LLM Provider 配置
 
 `agent`、`agent --loop`、`scan --verify` 和 scanner 的 `--ai` 模式需要 LLM provider。
 
-默认 provider 是 `openai`，默认模型是 `gpt-4o`。可以通过参数或环境变量配置 API key。
+默认 provider 是 `openai`，默认模型是 `gpt-4o`。aiscan 可以从 `--llm-base-url` 自动推断 provider（如 URL 包含 `deepseek.com` 则推断为 `deepseek`）。
+
+### 支持的 Provider
 
 | Provider | 默认 Base URL | API Key 环境变量 |
 | --- | --- | --- |
@@ -124,44 +182,56 @@ aiscan neutron -h
 | `anthropic` | `https://api.anthropic.com/v1` | `ANTHROPIC_API_KEY` |
 | `ollama` | `http://localhost:11434/v1` | 不需要 |
 
-也可以统一设置：
+统一 fallback 环境变量：
 
 ```bash
 export AISCAN_API_KEY="..."
 ```
 
-OpenAI 示例：
+API key 解析优先级：`--llm-api-key` > Provider 对应环境变量 > `AISCAN_API_KEY`。
+
+### 示例
+
+OpenAI：
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 aiscan agent --llm-model gpt-4o -p "发现 Web 服务并检查高风险漏洞" -i 192.168.1.0/24
 ```
 
-DeepSeek 示例：
+DeepSeek：
 
 ```bash
 export DEEPSEEK_API_KEY="..."
 aiscan agent --llm-provider deepseek --llm-model deepseek-chat -p "枚举服务并输出风险摘要" -i 10.0.0.0/24
 ```
 
-Ollama 示例：
+Ollama 本地模型：
 
 ```bash
 ollama run llama3
 aiscan agent --llm-provider ollama --llm-model llama3 --llm-base-url http://localhost:11434/v1 -p "检查这个站点" -i http://target.example
 ```
 
-如果 API 需要代理：
+通过代理访问 API：
 
 ```bash
 aiscan agent --llm-proxy http://127.0.0.1:7890 -p "检查目标暴露面" -i http://target.example
 ```
 
+任意 OpenAI 兼容 API：
+
+```bash
+aiscan agent --llm-base-url https://my-proxy.example/v1 --llm-api-key "$MY_KEY" --llm-model my-model -p "扫描目标" -i 10.0.0.0/24
+```
+
+---
+
 ## scan：自动扫描流水线
 
-`scan` 是最常用的 deterministic 自动扫描入口。它不依赖 LLM 也能运行，适合批量资产发现、Web 探测、弱口令检查和 POC 初筛。
+`scan` 是最常用的自动扫描入口。它按 capability 驱动的事件流水线自动串联所有扫描器，不依赖 LLM 也能运行。
 
-基本用法：
+### 基本用法
 
 ```bash
 aiscan scan -i <target> [options]
@@ -170,227 +240,278 @@ aiscan scan -i <target> [options]
 输入可以是 URL、IP、IP:port、CIDR，也可以用文件：
 
 ```bash
-aiscan scan -i 127.0.0.1 --mode quick
+aiscan scan -i 127.0.0.1
 aiscan scan -i http://target.example --mode quick
 aiscan scan -i 192.168.1.0/24 --mode full
 aiscan scan -l targets.txt --mode full
 ```
 
-扫描流程：
+### 扫描流程
 
 ```text
-输入目标 -> gogo 发现服务 -> spray 探测 Web -> zombie 弱口令 -> neutron POC -> 可选 agent_verify
+输入目标 → gogo 端口发现 → spray Web 探测/指纹/常见文件/爬取 → zombie 弱口令 → neutron POC → 可选 agent_verify
 ```
 
-`scan` 的能力会通过事件队列串联。例如 gogo 发现 HTTP 服务后，Web 目标会进入 spray；spray 识别到指纹后，相关指纹会用于 neutron 选择 POC；弱口令和 POC 发现可以再进入 AI 验证。
+各阶段通过事件队列串联。例如 gogo 发现 HTTP 服务后，Web 目标自动进入 spray；spray 识别到指纹后，指纹用于 neutron 选择 POC；发现可以进入 AI 验证。
 
-### quick 和 full
+### quick 和 full 模式
 
 | 模式 | 说明 |
 | --- | --- |
-| `quick` | 默认模式。包含端口发现、Web 探测、指纹、常见路径、备份文件、主动 Web 检查、弱口令和基于指纹的 POC |
-| `full` | 在 quick 基础上增加更深的 crawl 和 spray brute 默认字典探测，耗时更长 |
+| `quick` | **默认模式**。gogo 端口扫描（ports=all）、spray check/finger/common/backup/active/crawl（depth 1）、弱口令、基于指纹的 POC |
+| `full` | 在 quick 基础上增加 spray brute（默认字典探测）和更深的 crawl（depth 2） |
 
-示例：
+quick 模式的 capability：
 
-```bash
-aiscan scan -i 10.0.0.0/24 --mode quick
-aiscan scan -i 10.0.0.0/24 --mode full
-```
+| Capability | 说明 |
+| --- | --- |
+| `gogo_portscan` | 端口扫描，默认 ports=all |
+| `spray_check` | Web 基础探测 |
+| `spray_finger` | HTTP 指纹识别 |
+| `core_web` | Web 结果关联分析 |
+| `spray_common` | 常见路径/文件探测 |
+| `spray_backup` | 备份文件检测 |
+| `spray_active` | 主动 Web 检查 |
+| `spray_crawl` | 网页爬取（depth 1） |
+| `zombie_weakpass` | 弱口令检测 |
+| `neutron_poc` | 基于指纹的 POC 检测 |
 
-### 发现和探测参数
+full 模式额外增加：
 
-指定端口集合：
+| Capability | 说明 |
+| --- | --- |
+| `spray_brute` | 默认字典路径爆破 |
 
-```bash
-aiscan scan -i 192.168.1.0/24 --port top100
-aiscan scan -i 192.168.1.0/24 --ports 80,443,8080
-```
+### scan 参数
 
-控制并发和超时：
+| 参数 | 说明 | 默认值 |
+| --- | --- | --- |
+| `-i, --input` | 目标，可重复 | |
+| `-l, --list` | 目标文件 | |
+| `--mode` | 扫描模式：`quick` 或 `full` | `quick` |
+| `--thread` | 总并发预算，自动分配给各引擎 | `1000` |
+| `--timeout` | 每个探测的超时秒数 | `5` |
+| `--ports` | gogo 端口集合（quick 默认 `all`，full 默认 `-`） | |
+| `--port` | 端口参数，覆盖 `--ports` | |
+| `--dict` | spray 字典文件，可重复 | |
+| `--rule` | spray 变形规则文件，可重复 | |
+| `--word` | spray 词汇生成 DSL | |
+| `--default-dict` | 使用 spray 默认字典 | |
+| `--advance` | 启用 spray advance 插件 | |
+| `--user` | 弱口令用户名，可重复 | |
+| `--pwd` | 弱口令密码，可重复 | |
+| `--zombie-top` | 使用 top N 默认弱口令 | |
+| `--max-neutron-per-finger` | 每个指纹最大 neutron 模板数 | `20` |
+| `--broad-poc` | 无指纹时也运行 POC | |
+| `--verify` | AI 验证模式：`off`, `low`, `medium`, `high`, `critical` | `off` |
+| `--verify-timeout` | 单次验证超时秒数 | `120` |
+| `-j, --json` | JSON Lines 输出 | |
+| `--report` | Markdown 报告输出 | |
+| `-f, --file` | 输出写入文件（不含 ANSI 颜色） | |
+| `--no-color` | 禁用终端颜色 | |
+| `--debug` | 打印事件流水线 trace | |
 
-```bash
-aiscan scan -i 192.168.1.0/24 --threads 300 --timeout 5
-aiscan scan -i http://target.example --spray-threads 20
-```
+并发分配策略（`--thread` 默认 1000）：
 
-启用自定义 Web 字典和规则：
-
-```bash
-aiscan scan -i http://target.example --dict paths.txt --rule rules.txt
-aiscan scan -i http://target.example --default-dict
-```
-
-### 弱口令和 POC
-
-弱口令检测：
-
-```bash
-aiscan scan -i 127.0.0.1 --user admin --pwd admin123
-aiscan scan -l targets.txt --mode full --zombie-top 5
-aiscan scan -i 10.0.0.0/24 --zombie-threads 50
-```
-
-POC 检测默认基于指纹选择模板。没有指纹时也要运行 POC，可以开启 broad POC：
-
-```bash
-aiscan scan -i http://target.example --broad-poc
-```
-
-限制每个指纹最多使用的 neutron 模板数量：
-
-```bash
-aiscan scan -i http://target.example --max-neutron-per-finger 10
-```
-
-### 输出格式
-
-终端友好输出：
-
-```bash
-aiscan scan -i 127.0.0.1 --mode quick
-```
-
-JSON Lines 输出：
-
-```bash
-aiscan scan -i 127.0.0.1 --mode quick -j
-```
-
-Markdown 报告：
-
-```bash
-aiscan scan -i 127.0.0.1 --mode quick --report
-```
-
-写入文件：
-
-```bash
-aiscan scan -i 127.0.0.1 --mode quick -f result.txt
-```
-
-禁用颜色和打开调试：
-
-```bash
-aiscan scan -i 127.0.0.1 --no-color
-aiscan scan -i 127.0.0.1 --mode quick --debug
-```
+| 引擎 | 分配比例 | 默认并发 |
+| --- | --- | --- |
+| gogo | 80% | 500/次 |
+| spray | 10% | 20/次 |
+| zombie | 10% | 100/次 |
+| neutron | 10% | - |
 
 ### AI 验证
 
-`scan --verify=<priority>` 会启用 `agent_verify`，只对达到指定优先级的发现进行 LLM 验证。
+`scan --verify=<priority>` 启用 `agent_verify`，对达到指定优先级的发现进行 LLM 验证。
 
-可选值：
+验证模式：
 
-```text
-off, low, medium, high, critical
-```
+| 值 | 说明 |
+| --- | --- |
+| `off` | 关闭验证（CLI 显式传 `--verify` 时的默认值） |
+| `low` | 验证所有优先级 |
+| `medium` | 验证 medium 及以上 |
+| `high` | 验证 high 及以上 |
+| `critical` | 仅验证 critical |
+| `auto` | 编译时默认值；等效于 `high`，但 LLM 不可用时自动跳过 |
 
-示例：
+> 当未显式传 `--verify` 时，aiscan 使用编译时 `auto` 默认策略：尝试以 `high` 优先级启用验证。如果 LLM provider 未配置，验证会被跳过，扫描主体仍可运行。
 
 ```bash
 aiscan scan -i http://target.example --mode quick --verify=high --llm-api-key "$OPENAI_API_KEY" --llm-model gpt-4o
-aiscan scan -i http://target.example --mode full --verify=critical --verify-turns 2 --verify-timeout 90
+aiscan scan -i http://target.example --mode full --verify=critical --verify-timeout 90
+aiscan scan -i http://target.example --verify=off
 ```
 
-如果没有显式传 `--verify`，aiscan 的默认策略是尝试启用高优先级验证；当 LLM provider 未配置时，验证会被跳过，扫描主体仍可运行。
+### scan 示例
+
+```bash
+# 快速扫描
+aiscan scan -i 192.168.1.0/24
+
+# 完整扫描
+aiscan scan -i 192.168.1.0/24 --mode full
+
+# 指定端口
+aiscan scan -i 192.168.1.0/24 --port top100
+
+# 自定义弱口令
+aiscan scan -i 127.0.0.1 --user admin --pwd admin123
+
+# 自定义字典
+aiscan scan -i http://target.example --dict paths.txt --rule rules.txt
+
+# 无指纹时也做 POC
+aiscan scan -i http://target.example --broad-poc
+
+# JSON Lines 输出
+aiscan scan -i 127.0.0.1 -j
+
+# Markdown 报告
+aiscan scan -i 127.0.0.1 --report
+
+# 输出到文件
+aiscan scan -i 127.0.0.1 -f result.txt
+```
+
+---
 
 ## agent：自然语言扫描代理
 
-`agent` 是 aiscan 的 agentic 模式。它会构造系统提示词，加载内置工具、扫描器使用说明和 skills，然后由 LLM 在多轮循环中选择工具、执行命令、读取证据并输出最终报告。
+`agent` 是 aiscan 的 agentic 模式。它构造系统提示词，加载内置工具、扫描器文档和 skills，由 LLM 在多轮循环中选择工具、执行命令、读取证据并输出最终报告。
 
-直接运行 `aiscan agent` 且不提供 `-p`、`--task-file`、stdin pipe 或 `-i` 时，会进入交互式 CLI。REPL 基于 console/readline，支持命令历史和补全；会话上下文会保留，适合连续追问、调整扫描目标或让 agent 继续分析已有结果。
+### 运行模式
 
-```bash
-aiscan agent --llm-model gpt-4o
-```
+agent 有三种运行模式，根据输入自动选择：
 
-交互式 CLI 支持：
-
-| 命令 | 说明 |
+| 条件 | 模式 |
 | --- | --- |
-| `/help` | 显示交互命令 |
-| `/reset` | 清空当前会话上下文 |
-| `/continue` | 不追加新 prompt，让 agent 尝试继续当前上下文 |
-| `/exit`, `/quit` | 退出交互式 CLI |
-| `/<skill-name> ...` | 直接调用内置 skill，例如 `/scan 检查这个网段`、`/gogo 枚举端口` |
+| 提供 `-p`、`--task-file`、`-i` 或 stdin pipe | One-shot：执行任务后退出 |
+| 指定 `--loop` | Loop worker：连接 ACP server，监听任务 |
+| 无任何输入 | 交互式 CLI（REPL） |
 
-内置 skill 会自动注册为 REPL 命令，类似 Claude Code 的斜杠命令体验。当前包括 `/aiscan`、`/scan`、`/gogo`、`/spray`、`/zombie`、`/neutron`。这些命令会把对应 skill 内容和命令后的自然语言参数一起注入当前 agent 会话。旧形式 `/skill:<name> ...` 仍然兼容。
-
-基本形式：
+### One-shot 模式
 
 ```bash
 aiscan agent -p "<任务描述>" -i <target>
 ```
 
-示例：
-
 ```bash
-aiscan agent -p "发现 Web 服务并检查高风险漏洞，最后给出可复现证据" -i 192.168.1.0/24
-```
+# 基本用法
+aiscan agent -p "发现 Web 服务并检查高风险漏洞，给出可复现证据" -i 192.168.1.0/24
 
-多个输入：
-
-```bash
+# 多个目标
 aiscan agent -p "枚举服务并输出风险摘要" -i 10.0.0.10 -i http://10.0.0.20
-```
 
-从文件读取任务描述：
-
-```bash
+# 从文件读取任务
 aiscan agent --task-file task.md -i 192.168.1.0/24
-```
 
-控制 agent 运行边界：
+# 仅提供目标（自动生成扫描任务）
+aiscan agent -i http://target.example
 
-```bash
-aiscan agent -p "检查目标暴露面" -i 10.0.0.0/24 --max-turns 20 --timeout 1800
-```
-
-使用特定 skill：
-
-```bash
+# 指定 skill
 aiscan agent -s scan -s neutron -p "先做快速扫描，再分析高危 POC 命中" -i http://target.example
+
+# 从 stdin 读取任务
+echo "检查这个网段的暴露面" | aiscan agent -i 192.168.1.0/24
 ```
 
-`agent` 适合：
+### 交互式 CLI
 
-- 任务描述不完全确定，需要 agent 自己选择扫描路径；
-- 需要把多个扫描器结果串起来解释；
-- 需要生成面向人的摘要、复现步骤或后续建议；
-- 需要接入 ACP，把远程 worker 或协作空间作为工具使用。
-
-不适合：
-
-- 大范围无约束扫描；
-- 对时间和输出格式要求严格的批处理；
-- 没有 LLM provider 的环境。
-
-## agentic scanner 模式：`--ai`
-
-直接 scanner 命令加 `--ai` 时，aiscan 会先执行 scanner，再让 LLM 根据该 scanner 的 skill 解释结果。
-
-示例：
+直接运行 `aiscan agent` 且不提供任何输入时，进入交互式 REPL。支持命令历史和补全，会话上下文保留，适合连续追问。
 
 ```bash
+aiscan agent --llm-model gpt-4o
+```
+
+交互式命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `/help` | 显示交互命令 |
+| `/reset` | 清空会话上下文 |
+| `/continue` | 不追加新 prompt，让 agent 继续当前上下文 |
+| `/exit`, `/quit` | 退出 |
+| `/<skill-name> [prompt]` | 调用内置 skill |
+| `/spaces` | 列出 ACP 空间（需 `--acp-url`） |
+| `/messages <space>` | 列出空间消息（需 `--acp-url`） |
+| `/context <space> <id>` | 查看消息上下文（需 `--acp-url`） |
+| `/nodes [space]` | 列出节点（需 `--acp-url`） |
+
+内置 skill 自动注册为 REPL 命令。当前包括 `/aiscan`、`/scan`、`/gogo`、`/spray`、`/zombie`、`/neutron`。输入普通文本（非 `/` 开头）会直接作为 prompt 发送给 agent。
+
+```text
+aiscan> 扫描 192.168.1.0/24 的 Web 服务
+aiscan> /scan 检查这个网段的高危漏洞
+aiscan> /neutron 用 critical 级别 POC 检查 http://target.example
+aiscan> /continue
+```
+
+### Skills
+
+aiscan 内置一组 skill，为 agent 提供特定扫描器的使用指南和工作流程。
+
+| Skill | 说明 |
+| --- | --- |
+| `aiscan` | 核心机制和工具调用规则 |
+| `scan` | 扫描流水线编排 |
+| `gogo` | 主机/端口发现 |
+| `spray` | Web 探测 |
+| `zombie` | 弱口令检测 |
+| `neutron` | POC 检测 |
+
+通过 `-s` 参数指定 skill：
+
+```bash
+aiscan agent -s aiscan -s scan -p "全面扫描这个网段" -i 10.0.0.0/24
+```
+
+### agent 适合
+
+- 任务描述不完全确定，需要 agent 自己选择扫描路径
+- 需要把多个扫描器结果串起来解释
+- 需要生成面向人的摘要、复现步骤或后续建议
+- 需要接入 ACP 进行多 worker 协作
+
+### agent 不适合
+
+- 大范围无约束扫描
+- 对时间和输出格式要求严格的批处理
+- 没有 LLM provider 的环境
+
+---
+
+## scanner 的 --ai 模式
+
+直接 scanner 命令加 `--ai` 时，aiscan 会先执行 scanner，再让 LLM 解释结果。对 `scan` 以外的 scanner（gogo、spray、zombie、neutron），`--ai` 会启动一个完整的 scanner agent，agent 可以使用工具进一步分析输出。对 `scan` 命令，`--ai` 在扫描完成后进行低成本的 LLM 总结。
+
+```bash
+# gogo 结果由 agent 分析（可调用工具）
 aiscan --ai -p "只提取高风险暴露面，并给出证据" gogo -i 192.168.1.0/24 -p top100
+
+# spray 结果分析
 aiscan --ai -p "判断这些 Web 指纹是否值得进一步验证" spray -u http://target.example --finger
+
+# neutron 结果分析
 aiscan --ai -p "解释命中的 POC 影响和复现条件" neutron -u http://target.example -s critical,high
+
+# scan 结果总结
+aiscan --ai scan -i http://target.example --mode quick
 ```
 
-对 `scan` 使用 AI 验证时，优先使用 `--verify`：
+`--ai` 会自动加载对应 scanner 的 skill。也可以额外指定 skill：
 
 ```bash
-aiscan scan -i http://target.example --verify=high --llm-model gpt-4o
+aiscan --ai --skill scan gogo -i 192.168.1.0/24 -p all
 ```
 
-`--ai` 更适合对 scanner 输出做总结、解释和筛选；`scan --verify` 更适合对发现进行自动化证据验证。
+> `--ai` 更适合对 scanner 输出做总结、解释和筛选；`scan --verify` 更适合对发现进行自动化证据验证。两者可以组合使用。
+
+---
 
 ## gogo：服务发现
 
-`gogo` 用于主机、端口、服务、banner 和指纹发现。
-
-常见用法：
+`gogo` 用于主机、端口、服务、banner 和指纹发现。参数直接传递给底层 gogo 引擎。
 
 ```bash
 aiscan gogo -i 192.168.1.0/24 -p top100
@@ -398,13 +519,13 @@ aiscan gogo -i 10.0.0.10 -p 80,443,8080
 aiscan gogo -i targets.txt -p all
 ```
 
-输出可作为后续 `spray`、`zombie`、`neutron` 的输入线索。对于多数任务，优先使用 `scan` 自动串联，而不是手动拆分。
+输出可作为后续 `spray`、`zombie`、`neutron` 的输入线索。对于多数任务，优先使用 `scan` 自动串联。
+
+---
 
 ## spray：Web 探测和指纹
 
 `spray` 用于 Web 目标探测、HTTP 指纹、常见文件、路径和 crawl。
-
-常见用法：
 
 ```bash
 aiscan spray -u http://target.example
@@ -412,13 +533,13 @@ aiscan spray -u http://target.example --finger
 aiscan spray -l urls.txt --finger
 ```
 
-aiscan 包装的 spray 默认会附加非交互参数，避免进度条影响 agent 输出。
+aiscan 包装的 spray 默认附加 `--no-bar --no-stat` 参数，避免进度条影响输出。
+
+---
 
 ## zombie：弱口令检测
 
 `zombie` 用于授权弱口令检测。
-
-常见用法：
 
 ```bash
 aiscan zombie -i ssh://127.0.0.1:22 --top 3
@@ -426,23 +547,13 @@ aiscan zombie -i ssh://admin@127.0.0.1:22 -p admin123
 aiscan zombie -l services.txt --top 10
 ```
 
-注意 `zombie -p` 是密码参数，不是 agent prompt。
+> 注意 `zombie -p` 是密码参数，不是 agent prompt。
+
+---
 
 ## neutron：POC 检测
 
 `neutron` 用于模板化 POC 执行，支持按 ID、tag、severity、fingerprint 和模板路径过滤。
-
-常见用法：
-
-```bash
-aiscan neutron -u http://target.example -s critical,high
-aiscan neutron -u http://target.example --finger nginx --max-per-finger 20
-aiscan neutron -l targets.txt --tags cve,rce -c 10 --rate-limit 20
-aiscan neutron -u http://target.example -t ./pocs --id shiro-detect -j -o findings.jsonl
-aiscan neutron -u http://target.example --template-list
-```
-
-常用参数：
 
 | 参数 | 说明 |
 | --- | --- |
@@ -458,10 +569,50 @@ aiscan neutron -u http://target.example --template-list
 | `--rate-limit` | 每秒执行上限 |
 | `-j, --json` | JSON Lines 输出 |
 | `-o, --output` | 写入文件 |
+| `--template-list` | 列出匹配模板 |
 
-## ACP：服务和协作模式
+```bash
+aiscan neutron -u http://target.example -s critical,high
+aiscan neutron -u http://target.example --finger nginx --max-per-finger 20
+aiscan neutron -l targets.txt --tags cve,rce -c 10 --rate-limit 20
+aiscan neutron -u http://target.example -t ./pocs --id shiro-detect -j -o findings.jsonl
+aiscan neutron -u http://target.example --template-list
+```
 
-ACP 是 aiscan 的协作层。`acp serve` 启动本地 HTTP server 和 SQLite store；`agent --loop` 连接到 server，在指定 space 中注册 worker、发布自身能力，并监听任务消息。
+---
+
+## cyberhub：资源查询
+
+`cyberhub` 子命令用于查询和搜索已加载的指纹和 POC 模板。
+
+```text
+cyberhub list [finger|poc|all] [options]
+cyberhub search [finger|poc|all] <query> [options]
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `-t, --type` | 资源类型：`finger`、`poc`、`all` |
+| `-q, --query` | 搜索关键词 |
+| `--tag` | 按 tag 过滤，可逗号分隔或重复 |
+| `--protocol` | 指纹协议过滤：`http` 或 `tcp` |
+| `--finger` | 按指纹名过滤 POC，可逗号分隔或重复 |
+| `-s, --severity` | 按严重性过滤 POC，可逗号分隔或重复 |
+| `--limit` | 最大输出行数（默认 50，0 表示全部） |
+| `-j, --json` | JSON Lines 输出 |
+
+```bash
+aiscan cyberhub list finger --limit 20
+aiscan cyberhub search finger nginx
+aiscan cyberhub list poc --severity critical,high
+aiscan cyberhub search poc spring --tag rce -j
+```
+
+---
+
+## ACP：协作模式
+
+ACP（Agent Collaboration Protocol）是 aiscan 的协作层。`acp serve` 启动本地 HTTP server 和 SQLite store；`agent --loop` 连接 server 注册 worker 并监听任务。
 
 ### 启动 ACP server
 
@@ -477,52 +628,61 @@ aiscan acp serve
 aiscan acp serve --acp-url http://127.0.0.1:8765 --acp-db ./acp.db
 ```
 
-常用参数：
-
-| 参数 | 说明 |
-| --- | --- |
-| `--acp-url` | ACP server listen URL |
-| `--acp-db` | SQLite 数据库路径 |
-| `--timeout` | server 运行总超时 |
-| `--debug` | 调试日志 |
-| `--quiet` | 减少日志 |
-
 ### 启动 loop worker
 
-`agent --loop` 需要 LLM provider。它会连接 ACP server，注册节点，进入指定 space，监听任务并执行 agentic 工作流。
+`agent --loop` 连接 ACP server，注册节点，进入指定 space，监听任务并执行 agentic 工作流。
 
 ```bash
+# 基本 loop worker
 aiscan agent --loop --acp-url http://127.0.0.1:8765 --space case-1 --llm-model gpt-4o
-```
 
-带初始 intent：
-
-```bash
+# 带初始 intent 和 skill
 aiscan agent --loop --acp-url http://127.0.0.1:8765 --space case-1 -p "负责内网 Web 资产扫描和漏洞验证" -s aiscan -s scan
-```
 
-指定节点名：
-
-```bash
+# 指定节点名
 aiscan agent --loop --acp-url http://127.0.0.1:8765 --space case-1 --acp-node-name web-scanner-1
+
+# 启用 heartbeat（每 5 分钟主动运行一次 agent）
+aiscan agent --loop --acp-url http://127.0.0.1:8765 --space case-1 --heartbeat 5 -p "负责持续观察 ACP 上下文并协调下一步扫描"
 ```
+
+`--heartbeat <分钟>` 让 loop worker 每隔 N 分钟主动运行一次 agent。heartbeat 读取最近 ACP 消息，把 space、node、intent 和上下文交给 agent 决定下一步。agent 可以执行本地工具，也可以通过 ACP 工具发送协调消息或给其他节点分配 task。
+
+不指定 `--acp-url` 时，loop 模式默认连接 `http://127.0.0.1:8765`。
 
 ### agent 接入 ACP 工具
 
-`agent` 传入 `--acp-url` 后，会向 ACP server 注册节点和工具，让 agent 能使用 ACP 相关工具。
+`agent` 传入 `--acp-url` 后，会向 ACP server 注册节点和工具，让 agent 能使用 ACP 相关工具（`acp_space`、`acp_send`、`acp_read`）。
 
 ```bash
 aiscan agent --acp-url http://127.0.0.1:8765 -p "在 case-1 中协调扫描任务" -i http://target.example
 ```
 
-ACP 适合：
+### ACP 客户端查询
 
-- 多个 aiscan worker 长期运行；
-- 把任务按 space 组织；
-- agent 和 worker 通过 server 协作；
-- 需要持久化消息和节点状态。
+```bash
+# 列出所有空间
+aiscan acp spaces --acp-url http://127.0.0.1:8765
 
-## Cyberhub 资源
+# 列出空间消息
+aiscan acp messages default --acp-url http://127.0.0.1:8765
+
+# 查看消息上下文
+aiscan acp context default <message-id> --acp-url http://127.0.0.1:8765
+
+# 列出所有节点
+aiscan acp nodes --acp-url http://127.0.0.1:8765
+
+# 列出空间内节点
+aiscan acp nodes case-1 --acp-url http://127.0.0.1:8765
+
+# JSON 输出
+aiscan acp spaces --acp-url http://127.0.0.1:8765 --json
+```
+
+---
+
+## Cyberhub 资源服务
 
 aiscan 可以从 Cyberhub 加载指纹、模板等扫描资源。
 
@@ -530,28 +690,52 @@ aiscan 可以从 Cyberhub 加载指纹、模板等扫描资源。
 aiscan scan -i http://target.example --cyberhub-url http://127.0.0.1:9000 --cyberhub-key "$CYBERHUB_KEY"
 ```
 
-资源模式：
-
 | 模式 | 说明 |
 | --- | --- |
 | `merge` | 默认。合并内置资源和 Cyberhub 资源 |
 | `override` | 使用 Cyberhub 资源覆盖内置资源 |
 
-## 输出选择建议
+---
+
+## 输出与格式
+
+`scan` 命令支持多种输出格式：
+
+| 参数 | 格式 | 说明 |
+| --- | --- | --- |
+| （默认） | 终端友好 | 带颜色的结构化文本，实时流式输出 |
+| `-j, --json` | JSON Lines | 适合机器处理 |
+| `--report` | Markdown | 结构化报告 |
+| `-f, --file <路径>` | 文件 | 输出写入文件，自动去除 ANSI 颜色 |
+| `--no-color` | | 禁用终端颜色 |
+
+`scan` 默认使用流式输出（边扫描边显示结果）。使用 `-j` 或 `--report` 时关闭流式输出，等待扫描完成后一次性输出。
+
+其他 scanner（gogo、spray、zombie、neutron）的输出格式由各自参数控制。
+
+agent 输出会通过 Markdown 渲染（终端支持时），`--no-color` 可禁用。
+
+---
+
+## 场景选择建议
 
 | 目标 | 推荐命令 |
 | --- | --- |
-| 快速资产发现和风险初筛 | `aiscan scan -i <target> --mode quick` |
+| 快速资产发现和风险初筛 | `aiscan scan -i <target>` |
 | 深入扫描和更多 Web 路径 | `aiscan scan -i <target> --mode full` |
 | 自动解释结果和生成结论 | `aiscan agent -p "<任务>" -i <target>` |
-| 对确定 scanner 输出做 AI 摘要 | `aiscan --ai -p "<意图>" <scanner> ...` |
+| 对 scanner 输出做 AI 摘要 | `aiscan --ai -p "<意图>" <scanner> ...` |
+| 查询已加载的指纹和 POC | `aiscan cyberhub list poc --severity critical` |
 | 机器读取结果 | `aiscan scan -i <target> -j` |
 | 人读报告 | `aiscan scan -i <target> --report` |
 | 多 worker 协作 | `aiscan acp serve` + `aiscan agent --loop` |
+| 交互式探索 | `aiscan agent` |
+
+---
 
 ## 常见问题
 
-### `agent` 报 provider 未配置
+### agent 报 provider 未配置
 
 `agent` 必须有可用 LLM provider。设置对应环境变量或显式传入 `--llm-api-key`。
 
@@ -560,9 +744,11 @@ export OPENAI_API_KEY="sk-..."
 aiscan agent --llm-model gpt-4o -p "检查目标" -i http://target.example
 ```
 
-### `scan --verify` 没有产生 AI 验证
+### scan --verify 没有产生 AI 验证
 
-检查是否配置了 LLM provider，并确认发现的风险优先级达到了 `--verify` 指定阈值。
+1. 检查是否配置了 LLM provider
+2. 确认发现的风险优先级达到了 `--verify` 指定阈值
+3. 未显式传 `--verify` 时默认策略为 `auto`（等效 `high`），如果 provider 不可用会静默跳过
 
 ```bash
 aiscan scan -i http://target.example --verify=low --llm-api-key "$OPENAI_API_KEY"
@@ -578,18 +764,25 @@ aiscan scan -i 127.0.0.1 -f result.txt --no-color
 
 ### 扫描太慢
 
-降低范围，减少端口和字典，或使用 quick 模式：
+降低并发或范围：
 
 ```bash
-aiscan scan -i 192.168.1.0/24 --mode quick --port top100 --threads 200
+aiscan scan -i 192.168.1.0/24 --port top100 --thread 500
 ```
 
-### 需要固定版本
+### --ai 需要 LLM 但 scan 不需要
 
-使用 GitHub Release 中的正式版本 URL，不要依赖 nightly：
+`--ai` 对所有 scanner 都需要 LLM provider。`scan` 的核心流水线不依赖 LLM；`scan --verify` 在 LLM 不可用时会自动跳过验证。
 
-```text
-https://github.com/chainreactors/aiscan/releases/tag/v0.0.1
+### cyberhub 没有结果
+
+检查 `--cyberhub-url` 和 `--cyberhub-key` 是否正确配置，以及 Cyberhub 服务是否可达：
+
+```bash
+aiscan cyberhub list finger --cyberhub-url http://127.0.0.1:9000 --cyberhub-key "$CYBERHUB_KEY"
 ```
 
-Nightly 构建只用于验证最新主分支。
+### 信号处理
+
+- 第一次 Ctrl+C：优雅关闭，完成当前工作后退出
+- 第二次 Ctrl+C：强制退出
