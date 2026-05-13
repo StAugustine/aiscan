@@ -84,6 +84,10 @@ func mergeOption(dst, src *Option) {
 	dst.APIKey = resolveString(dst.APIKey, src.APIKey)
 	dst.Model = resolveString(dst.Model, src.Model)
 	dst.Proxy = resolveString(dst.Proxy, src.Proxy)
+	if !dst.Vision && src.Vision {
+		dst.Vision = true
+	}
+	mergeVisionOptions(dst, src)
 	dst.CyberhubURL = resolveString(dst.CyberhubURL, src.CyberhubURL)
 	dst.CyberhubKey = resolveString(dst.CyberhubKey, src.CyberhubKey)
 	dst.CyberhubMode = resolveString(dst.CyberhubMode, src.CyberhubMode)
@@ -95,6 +99,17 @@ func mergeOption(dst, src *Option) {
 	if (dst.ACPDB == "" || dst.ACPDB == "./ioa.db") && src.ACPDB != "" {
 		dst.ACPDB = src.ACPDB
 	}
+}
+
+func mergeVisionOptions(dst, src *Option) {
+	if !dst.VisionEnabled && src.VisionEnabled {
+		dst.VisionEnabled = true
+	}
+	dst.VisionProvider = resolveString(dst.VisionProvider, src.VisionProvider)
+	dst.VisionBaseURL = resolveString(dst.VisionBaseURL, src.VisionBaseURL)
+	dst.VisionAPIKey = resolveString(dst.VisionAPIKey, src.VisionAPIKey)
+	dst.VisionModel = resolveString(dst.VisionModel, src.VisionModel)
+	dst.VisionProxy = resolveString(dst.VisionProxy, src.VisionProxy)
 }
 
 func InitDefaultConfig() string {
@@ -120,6 +135,19 @@ llm:
   # 模型名称
   model: ""
   # 访问 LLM API 的 HTTP proxy
+  proxy: ""
+  # 显式启用 vision 工具。仅在模型/endpoint 支持 OpenAI-compatible multimodal chat 时开启。
+  vision: false
+
+# 独立 Vision Provider 配置
+# 留空并启用 vision 时复用 llm 配置；填写任一字段时 vision tool 使用这里的独立 endpoint。
+vision:
+  enabled: false
+  # openai, openrouter, ollama, etc.（留空时可从 base_url 推断）
+  provider: ""
+  base_url: ""
+  api_key: ""
+  model: ""
   proxy: ""
 
 # Cyberhub 资源服务
