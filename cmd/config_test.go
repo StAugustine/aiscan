@@ -80,6 +80,14 @@ llm:
   provider: deepseek
   model: deepseek-chat
   base_url: https://api.deepseek.com/v1
+  vision: true
+vision:
+  enabled: true
+  provider: openrouter
+  base_url: https://openrouter.ai/api/v1
+  api_key: vision-key
+  model: qwen/qwen3.6-flash
+  proxy: http://127.0.0.1:7890
 cyberhub:
   url: http://hub:9000
   key: testkey
@@ -110,6 +118,24 @@ acp:
 			t.Errorf("%s: got %q, want %q", c.field, c.got, c.want)
 		}
 	}
+	if !opt.Vision {
+		t.Error("Vision: got false, want true")
+	}
+	if !opt.VisionEnabled {
+		t.Error("VisionEnabled: got false, want true")
+	}
+	visionChecks := []struct{ field, got, want string }{
+		{"VisionProvider", opt.VisionProvider, "openrouter"},
+		{"VisionBaseURL", opt.VisionBaseURL, "https://openrouter.ai/api/v1"},
+		{"VisionAPIKey", opt.VisionAPIKey, "vision-key"},
+		{"VisionModel", opt.VisionModel, "qwen/qwen3.6-flash"},
+		{"VisionProxy", opt.VisionProxy, "http://127.0.0.1:7890"},
+	}
+	for _, c := range visionChecks {
+		if c.got != c.want {
+			t.Errorf("%s: got %q, want %q", c.field, c.got, c.want)
+		}
+	}
 }
 
 // TestLoadConfigEmptyFieldsAreZero verifies empty YAML values don't produce
@@ -136,6 +162,50 @@ cyberhub:
 	}
 	if opt.CyberhubURL != "" {
 		t.Errorf("CyberhubURL should be empty, got %q", opt.CyberhubURL)
+	}
+}
+
+func TestAppConfigUsesIndependentVisionProvider(t *testing.T) {
+	option := Option{
+		LLMOptions: LLMOptions{
+			Provider: "deepseek",
+			BaseURL:  "https://api.deepseek.com/v1",
+			APIKey:   "main-key",
+			Model:    "deepseek-v4-pro",
+		},
+		VisionOptions: VisionOptions{
+			VisionBaseURL: "https://openrouter.ai/api/v1",
+			VisionAPIKey:  "vision-key",
+			VisionModel:   "qwen/qwen3.6-flash",
+		},
+	}
+
+	cfg := appConfig(&option, runtimeFeatures{ProviderEnabled: true, ToolsEnabled: true}, nil)
+	if !cfg.Tools.VisionEnabled {
+		t.Fatal("vision tool should be enabled when independent vision config is set")
+	}
+	if !cfg.Vision.Enabled {
+		t.Fatal("independent vision provider config should be enabled")
+	}
+	if cfg.Vision.Config.Provider != "openrouter" {
+		t.Fatalf("vision provider = %q, want openrouter", cfg.Vision.Config.Provider)
+	}
+	if cfg.Vision.Config.BaseURL != "https://openrouter.ai/api/v1" ||
+		cfg.Vision.Config.APIKey != "vision-key" ||
+		cfg.Vision.Config.Model != "qwen/qwen3.6-flash" {
+		t.Fatalf("vision config = %#v", cfg.Vision.Config)
+	}
+}
+
+func TestAppConfigVisionCanFallbackToMainProvider(t *testing.T) {
+	option := Option{LLMOptions: LLMOptions{Vision: true}}
+
+	cfg := appConfig(&option, runtimeFeatures{ProviderEnabled: true, ToolsEnabled: true}, nil)
+	if !cfg.Tools.VisionEnabled {
+		t.Fatal("vision tool should be enabled")
+	}
+	if cfg.Vision.Enabled {
+		t.Fatal("independent vision provider should stay disabled without vision-specific config")
 	}
 }
 
@@ -352,7 +422,7 @@ llm:
 	}
 	// model not in custom config → stays empty (default config NOT loaded)
 	if option.Model != "" {
-		t.Errorf("Model: got %q, want empty (-c replaces default config, not merges)", option.Model, )
+		t.Errorf("Model: got %q, want empty (-c replaces default config, not merges)", option.Model)
 	}
 }
 

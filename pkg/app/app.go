@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 
-	acpclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/provider"
 	"github.com/chainreactors/aiscan/pkg/scanner"
@@ -14,10 +14,12 @@ import (
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/tool"
 	"github.com/chainreactors/aiscan/skills"
+	acpclient "github.com/chainreactors/ioa/client"
 )
 
 type Config struct {
 	Provider ProviderConfig
+	Vision   ProviderConfig
 	Scanner  ScannerConfig
 	Tools    ToolConfig
 	ACP      *ACPConfig
@@ -41,8 +43,9 @@ type ScannerConfig struct {
 }
 
 type ToolConfig struct {
-	Enabled     bool
-	BashTimeout int
+	Enabled       bool
+	BashTimeout   int
+	VisionEnabled bool
 }
 
 type ACPConfig struct {
@@ -57,6 +60,7 @@ type ACPConfig struct {
 type App struct {
 	Provider         provider.Provider
 	ProviderConfig   provider.ProviderConfig
+	VisionConfig     provider.ProviderConfig
 	Scanner          *scanner.ScannerRegistry
 	Engines          *engines.Set
 	Tools            *tool.ToolRegistry
@@ -92,8 +96,24 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 
 	app.Scanner, app.Engines = initScannerRegistry(ctx, cfg.Scanner, app.Provider, app.ProviderConfig.Model, logger)
 
+	var visionCfg *provider.ProviderConfig
+	if cfg.Tools.Enabled && cfg.Tools.VisionEnabled && cfg.Vision.Enabled {
+		resolved, err := provider.Resolve(&cfg.Vision.Config)
+		if err != nil {
+			if !cfg.Vision.Optional {
+				return nil, fmt.Errorf("vision provider: %w", err)
+			}
+			logger.Debugf("vision provider not configured: %s", err)
+		} else {
+			app.VisionConfig = *resolved
+			visionCfg = &app.VisionConfig
+		}
+	} else if cfg.Tools.Enabled && cfg.Tools.VisionEnabled && app.Provider != nil {
+		visionCfg = &app.ProviderConfig
+	}
+
 	if cfg.Tools.Enabled {
-		app.Tools = initToolRegistry(cfg.Tools, app.Skills, app.Scanner)
+		app.Tools = initToolRegistry(cfg.Tools, app.Skills, app.Scanner, app.Engines, visionCfg)
 	}
 
 	if cfg.ACP != nil {
@@ -107,7 +127,17 @@ func New(ctx context.Context, cfg Config) (*App, error) {
 }
 
 func (a *App) Close() {
-	if a != nil && a.Engines != nil {
+	if a == nil {
+		return
+	}
+	if a.Tools != nil {
+		for _, t := range a.Tools.All() {
+			if closer, ok := t.(interface{ Close() }); ok {
+				closer.Close()
+			}
+		}
+	}
+	if a.Engines != nil {
 		a.Engines.Close()
 	}
 }
@@ -155,7 +185,7 @@ func initScannerRegistry(ctx context.Context, cfg ScannerConfig, llmProvider pro
 	return scannerReg, engineSet
 }
 
-func initToolRegistry(cfg ToolConfig, skillStore *skills.Store, scannerReg *scanner.ScannerRegistry) *tool.ToolRegistry {
+func initToolRegistry(cfg ToolConfig, skillStore *skills.Store, scannerReg *scanner.ScannerRegistry, engineSet *engines.Set, providerCfg *provider.ProviderConfig) *tool.ToolRegistry {
 	workDir, _ := os.Getwd()
 	timeout := cfg.BashTimeout
 	if timeout <= 0 {
@@ -166,6 +196,14 @@ func initToolRegistry(cfg ToolConfig, skillStore *skills.Store, scannerReg *scan
 	toolReg.Register(tool.NewWriteTool(workDir))
 	toolReg.Register(tool.NewGlobTool(workDir))
 	toolReg.Register(tool.NewBashTool(workDir, timeout, scannerReg))
+	toolReg.Register(tool.NewWebSearchTool())
+	toolReg.Register(tool.NewWebFetchTool())
+	if engineSet != nil && engineSet.Resources != nil {
+		toolReg.Register(tool.NewCyberhubSearchTool(engineSet.Resources))
+	}
+	if cfg.VisionEnabled && providerCfg != nil && providerCfg.BaseURL != "" {
+		toolReg.Register(tool.NewVisionTool(providerCfg))
+	}
 	return toolReg
 }
 
