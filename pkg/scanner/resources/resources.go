@@ -148,27 +148,38 @@ func defaultGogoConfigs() map[string][]byte {
 }
 
 func defaultSprayConfigs() map[string][]byte {
-	return map[string][]byte{
-		"http":         embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
-		"socket":       embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
-		"port":         embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
-		"spray_rule":   embeddedOrDefault(loadEmbeddedConfig, "spray_rule", []byte("{}")),
-		"spray_dict":   embeddedOrDefault(loadEmbeddedConfig, "spray_dict", []byte("{}")),
-		"spray_common": embeddedOrDefault(loadEmbeddedConfig, "spray_common", []byte("{}")),
-		"extract":      embeddedOrDefault(loadEmbeddedConfig, "extract", []byte("[]")),
+	m := map[string][]byte{
+		"http":    embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
+		"socket":  embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
+		"port":    embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
+		"extract": embeddedOrDefault(loadEmbeddedConfig, "extract", []byte("[]")),
 	}
+	// Include spray-specific keys when generated templates provide them.
+	// When loadEmbeddedConfig returns nil (stub build), these entries are
+	// omitted so that spray falls through to its own embedded defaults.
+	for _, key := range []string{"spray_rule", "spray_dict", "spray_common"} {
+		if data := loadEmbeddedConfig(key); len(data) > 0 {
+			m[key] = data
+		}
+	}
+	return m
 }
 
 func defaultZombieConfigs() map[string][]byte {
-	return map[string][]byte{
-		"http":            embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
-		"socket":          embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
-		"port":            embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
-		"zombie_common":   embeddedOrDefault(loadEmbeddedConfig, "zombie_common", []byte("{}")),
-		"zombie_default":  embeddedOrDefault(loadEmbeddedConfig, "zombie_default", []byte("[]")),
-		"zombie_rule":     embeddedOrDefault(loadEmbeddedConfig, "zombie_rule", []byte("{}")),
-		"zombie_template": embeddedOrDefault(loadEmbeddedConfig, "zombie_template", []byte("[]")),
+	m := map[string][]byte{
+		"http":   embeddedOrDefault(loadEmbeddedConfig, "http", []byte("[]")),
+		"socket": embeddedOrDefault(loadEmbeddedConfig, "socket", []byte("[]")),
+		"port":   embeddedOrDefault(loadEmbeddedConfig, "port", []byte("[]")),
 	}
+	// Include zombie-specific keys when generated templates provide them.
+	// When loadEmbeddedConfig returns nil (stub build), these entries are
+	// omitted so that zombie falls through to its own embedded defaults.
+	for _, key := range []string{"zombie_common", "zombie_default", "zombie_rule", "zombie_template"} {
+		if data := loadEmbeddedConfig(key); len(data) > 0 {
+			m[key] = data
+		}
+	}
+	return m
 }
 
 func embeddedOrDefault(provider func(string) []byte, name string, fallback []byte) []byte {
@@ -262,8 +273,8 @@ func mergeFingers(local, remote fingerslib.Fingers) fingerslib.Fingers {
 }
 
 func splitFingers(items fingerslib.Fingers) (fingerslib.Fingers, fingerslib.Fingers) {
-	var httpFingers fingerslib.Fingers
-	var socketFingers fingerslib.Fingers
+	httpFingers := make(fingerslib.Fingers, 0)
+	socketFingers := make(fingerslib.Fingers, 0)
 	for _, item := range items {
 		if item == nil {
 			continue

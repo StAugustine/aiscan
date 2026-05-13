@@ -27,6 +27,7 @@ builds:
     tags:
       - forceposix
       - emptytemplates
+      - generated_templates
       - noembed
       - osusergo
       - netgo

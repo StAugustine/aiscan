@@ -1,3 +1,5 @@
+//go:build generated_templates
+
 package resources
 
 import (
