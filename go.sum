@@ -127,6 +127,10 @@ github.com/chainreactors/logs v0.0.0-20241030063019-8ca66a3ee307/go.mod h1:6Mv6W
 github.com/chainreactors/logs v0.0.0-20250312104344-9f30fa69d3c9/go.mod h1:6Mv6W70JrtL6VClulZhmMRZnoYpcTahcDTKLMNEjK0o=
 github.com/chainreactors/logs v0.0.0-20260508055944-c678762ed15c h1:6Net2Mgo/qo6ADFBZJWWScKuMfZ0rbzLqSCVDuLKFdc=
 github.com/chainreactors/logs v0.0.0-20260508055944-c678762ed15c/go.mod h1:VrXmYPbNN5AVoo1sc5aeyPVBYqubMdb3KO/tn5rRZpo=
+github.com/chainreactors/malice-network/external/console v0.0.0-20260422184128-e856ed004d32 h1:NU1N1TTk+fmjL/O8Ytvgcg315Rv6fg/R6FrEki7Zcgc=
+github.com/chainreactors/malice-network/external/console v0.0.0-20260422184128-e856ed004d32/go.mod h1:0WsfPVvIAiJ6em/5mSXrd+0zooYWl4HRLO8Gv1dYbfs=
+github.com/chainreactors/malice-network/external/readline v0.0.0-20260422184128-e856ed004d32 h1:Xy4+pp7SbbSH2R0XX9ZB0Xut5Mn8/3MnjiciFPo8rdI=
+github.com/chainreactors/malice-network/external/readline v0.0.0-20260422184128-e856ed004d32/go.mod h1:1EL2klK3SBgPn9BPCKzcENfqTVo4DyOdcjJ3Tb0Y1sc=
 github.com/chainreactors/neutron v0.0.0-20260203032004-95c9e8431214/go.mod h1:CktNFh1I1sNwFI9Ml+t0X/uuEoO4eAW5Dmb/cuzV8BY=
 github.com/chainreactors/neutron v0.0.0-20260416083914-f95401f2b79c h1:b31Lt96Omcv03D5Q3YtGPcDbR6aVqIT7HlMHpGzHZYg=
 github.com/chainreactors/neutron v0.0.0-20260416083914-f95401f2b79c/go.mod h1:Gh/QvVFVB9Gt0OeUrPpKq+kORAIHOD2O5a8MbKmu2IY=
