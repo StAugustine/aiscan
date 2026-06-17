@@ -98,6 +98,15 @@ export interface ServerStatus {
   llm_api_key_configured?: boolean;
   config_path?: string;
   config_loaded: boolean;
+  agents: number;
+}
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  commands?: string[];
+  busy: boolean;
+  connected_at: string;
 }
 
 export interface LLMConfig {
@@ -113,6 +122,10 @@ export interface LLMConfig {
 
 export async function getStatus(): Promise<ServerStatus> {
   return apiJSON('/api/status', 'Failed to load status');
+}
+
+export async function listAgents(): Promise<AgentInfo[]> {
+  return apiJSON('/api/agents', 'Failed to list agents');
 }
 
 export async function getLLMConfig(): Promise<LLMConfig> {

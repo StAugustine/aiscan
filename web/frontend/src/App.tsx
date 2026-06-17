@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
-import { AlertTriangle, CheckCircle2, History, Settings, Shield, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, History, Monitor, Settings, Shield, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import ScanForm from './components/ScanForm'
 import ScanView from './components/ScanView'
 import LLMConfigPanel from './components/LLMConfigPanel'
+import AgentPanel from './components/AgentPanel'
 import ThemeToggle from './components/ThemeToggle'
 import { getStatus } from './api'
 import type { ServerStatus } from './api'
@@ -32,6 +33,7 @@ export default function App() {
   const [analysisAvailable, setAnalysisAvailable] = useState(true)
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null)
   const [llmConfigOpen, setLLMConfigOpen] = useState(false)
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(getInitialSidebarOpen)
 
   const refreshStatus = useCallback(async () => {
@@ -72,6 +74,7 @@ export default function App() {
             status={<StatusPill active={analysisAvailable} />}
             actions={
               <>
+                <AgentsPill count={serverStatus?.agents ?? 0} onClick={() => setAgentPanelOpen(true)} />
                 <Button
                   type="button"
                   variant="outline"
@@ -130,6 +133,12 @@ export default function App() {
               <div className="flex flex-wrap justify-center gap-2">
                 <EmptyStateMetric icon={<History className="h-3.5 w-3.5" />} label="History" value={scanSession.scans.length} />
                 <EmptyStateMetric
+                  icon={<Monitor className="h-3.5 w-3.5" />}
+                  label="Agents"
+                  value={serverStatus?.agents ?? 0}
+                  tone={(serverStatus?.agents ?? 0) > 0 ? 'ready' : 'warning'}
+                />
+                <EmptyStateMetric
                   icon={analysisAvailable ? <CheckCircle2 className="h-3.5 w-3.5" /> : <AlertTriangle className="h-3.5 w-3.5" />}
                   label="LLM"
                   value={analysisAvailable ? 'Ready' : 'Offline'}
@@ -151,7 +160,32 @@ export default function App() {
         onClose={() => setLLMConfigOpen(false)}
         onSaved={refreshStatus}
       />
+      <AgentPanel
+        open={agentPanelOpen}
+        onClose={() => setAgentPanelOpen(false)}
+      />
     </div>
+  )
+}
+
+function AgentsPill({ count, onClick }: { count: number; onClick: () => void }) {
+  const active = count > 0
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={active ? `${count} agent(s) connected` : 'No agents connected'}
+      className={cn(
+        'h-10 shrink-0 items-center gap-2 rounded-md border px-3 text-xs font-medium inline-flex cursor-pointer transition-colors hover:opacity-80',
+        active
+          ? 'border-cyber-400/30 bg-cyber-400/10 text-cyber-700 dark:text-cyber-300'
+          : 'border-yellow-400/30 bg-yellow-400/10 text-yellow-700 dark:text-yellow-300',
+      )}
+    >
+      <Monitor className="h-3.5 w-3.5" />
+      <span className="hidden sm:inline">Agents</span>
+      <span className="font-mono">{count}</span>
+    </button>
   )
 }
 
