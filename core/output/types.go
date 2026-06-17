@@ -3,16 +3,16 @@ package output
 import (
 	"time"
 
-	sdktypes "github.com/chainreactors/sdk/pkg/types"
+	"github.com/chainreactors/parsers"
 )
 
 type Result struct {
-	Summary   Summary                 `json:"summary"`
-	Assets    []Asset                 `json:"assets,omitempty"`
-	Services  []*sdktypes.GOGOResult  `json:"services,omitempty"`
-	WebProbes []*sdktypes.SprayResult `json:"web_probes,omitempty"`
-	Loots     []Loot                  `json:"loots,omitempty"`
-	Errors    []Error                 `json:"errors,omitempty"`
+	Summary   Summary                `json:"summary"`
+	Assets    []Asset                `json:"assets,omitempty"`
+	Services  []*parsers.GOGOResult  `json:"services,omitempty"`
+	WebProbes []*parsers.SprayResult `json:"web_probes,omitempty"`
+	Loots     []Loot                 `json:"loots,omitempty"`
+	Errors    []Error                `json:"errors,omitempty"`
 }
 
 type Summary struct {

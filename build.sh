@@ -106,7 +106,7 @@ aiscan 构建脚本
   --output DIR          输出目录 (默认: dist)
   --embed               嵌入扫描资源（不加 emptytemplates/noembed tag）
   --ioa                 同时编译 ioa server 二进制
-  --profile PROFILE     构建配置: mini (默认, 核心工具) 或 full (browser+recon+ioa)
+  --profile PROFILE     构建配置: agent (~28MB), mini (默认, ~77MB), full (~123MB)
 
 LLM 覆盖（优先级高于 config.yaml）:
   --llm-provider NAME
@@ -141,7 +141,8 @@ Web Search:
   ./build.sh --embed                            # 嵌入资源的完整构建
   ./build.sh -g                                 # 打印 ldflags（用于自定义构建命令）
   ./build.sh --ioa -o linux/amd64               # 同时编译 ioa server
-  ./build.sh --profile full -o linux/amd64      # full 构建 (browser+recon+ioa)
+  ./build.sh --profile agent -o linux/amd64      # agent 构建 (仅 agent REPL + bash, 无内置扫描器)
+  ./build.sh --profile full -o linux/amd64      # full 构建 (全部扫描器 + browser + recon + ioa)
 HELP
             exit 0
             ;;
@@ -238,15 +239,21 @@ echo "profile:  $PROFILE"
 
 # ─── Profile ────────────────────────────────────────────────────
 
+AISCAN_MAIN="./cmd/aiscan"
+
 case "$PROFILE" in
     mini) ;;
+    agent)
+        AISCAN_BIN="aiscan-agent"
+        AISCAN_MAIN="./cmd/agent"
+        ;;
     full)
         EXTRA_TAGS="browser,recon${EXTRA_TAGS:+,$EXTRA_TAGS}"
         BUILD_IOA=true
         AISCAN_BIN="aiscan-full"
         ;;
     *)
-        echo "未知 profile: $PROFILE (可选: mini, full)" >&2
+        echo "未知 profile: $PROFILE (可选: agent, mini, full)" >&2
         exit 1
         ;;
 esac
@@ -303,7 +310,7 @@ read -ra TARGETS <<< "$OSARCH_NORMALIZED"
 echo "编译 aiscan..."
 for target in "${TARGETS[@]}"; do
     IFS='/' read -ra PARTS <<< "$target"
-    build_one "${PARTS[0]}" "${PARTS[1]}" ./cmd/aiscan "$AISCAN_BIN"
+    build_one "${PARTS[0]}" "${PARTS[1]}" "$AISCAN_MAIN" "$AISCAN_BIN"
 done
 
 if [ "$BUILD_IOA" = true ]; then

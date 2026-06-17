@@ -8,31 +8,26 @@ import (
 	"time"
 
 	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/resources"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/agent/truncate"
 	"github.com/chainreactors/aiscan/pkg/commands"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
-	"github.com/chainreactors/aiscan/pkg/tools/scan"
-	"github.com/chainreactors/aiscan/pkg/tools/scan/engine"
 	"github.com/chainreactors/aiscan/skills"
 	ioaclient "github.com/chainreactors/ioa/client"
 	"github.com/chainreactors/ioa/protocols"
-
-	_ "github.com/chainreactors/aiscan/pkg/tools"
 )
 
 type App struct {
-	Provider           agent.Provider
-	ProviderConfig     agent.ProviderConfig
-	ProviderFallbacks  []agent.ProviderEntry
-	Commands           *commands.CommandRegistry
-	Engines            *engine.Set
-	Skills             *skills.Store
-	SkillDiagnostics   []skills.Diagnostic
-	IOAClient          protocols.ClientAPI
-	IOAStreamClient    ioaclient.StreamAPI
-	enginesReady       chan struct{}
+	Provider          agent.Provider
+	ProviderConfig    agent.ProviderConfig
+	ProviderFallbacks []agent.ProviderEntry
+	Commands          *commands.CommandRegistry
+	Engines           any
+	Skills            *skills.Store
+	SkillDiagnostics  []skills.Diagnostic
+	IOAClient         protocols.ClientAPI
+	IOAStreamClient   ioaclient.StreamAPI
+	enginesReady      chan struct{}
 }
 
 func NewApp(ctx context.Context, rc cfg.RuntimeConfig) (*App, error) {
@@ -75,9 +70,9 @@ func NewApp(ctx context.Context, rc cfg.RuntimeConfig) (*App, error) {
 
 	a.enginesReady = make(chan struct{})
 	go func() {
-		es := initEngines(ctx, rc.Scanner, logger)
-		a.Engines = es
-		registerScannerCommands(a.Commands, es, rc.Scanner, rc.Tools, a.Provider, a.ProviderConfig.Model, a.Skills, logger)
+		if ScannerInitFunc != nil {
+			ScannerInitFunc(ctx, a, rc, logger)
+		}
 		close(a.enginesReady)
 	}()
 
@@ -116,8 +111,8 @@ func (a *App) Close() {
 			}
 		}
 	}
-	if a.Engines != nil {
-		a.Engines.Close()
+	if closer, ok := a.Engines.(interface{ Close() }); ok {
+		closer.Close()
 	}
 }
 
@@ -132,29 +127,6 @@ func initProvider(provCfg agent.ProviderConfig, logger telemetry.Logger) (agent.
 		return nil, nil, err
 	}
 	return llmProvider, resolved, nil
-}
-
-func initEngines(ctx context.Context, sc cfg.ScannerConfig, logger telemetry.Logger) *engine.Set {
-	engineSet, err := engine.InitWithOptions(ctx, resources.Options{
-		CyberhubURL: sc.CyberhubURL,
-		APIKey:      sc.CyberhubKey,
-		Mode:        sc.CyberhubMode,
-		Proxy:       sc.Proxy,
-	}, logger)
-	if err != nil {
-		logger.Warnf("scanner engines init error=%q action=continue_without_scanners", err)
-		return nil
-	}
-	recon := engine.ReconOptions{
-		FofaEmail:    sc.FofaEmail,
-		FofaKey:      sc.FofaKey,
-		HunterToken:  sc.HunterToken,
-		HunterAPIKey: sc.HunterAPIKey,
-		IngressProxy: sc.ReconProxy,
-		Limit:        sc.ReconLimit,
-	}
-	engineSet.SetupUncover(recon, logger)
-	return engineSet
 }
 
 func initCoreCommands(rc cfg.RuntimeConfig, llmProvider agent.Provider, skillStore *skills.Store, logger telemetry.Logger) *commands.CommandRegistry {
@@ -172,124 +144,6 @@ func initCoreCommands(rc cfg.RuntimeConfig, llmProvider agent.Provider, skillSto
 	commands.BuildGroup("core", deps, cmdReg)
 	commands.BuildGroup("tools", deps, cmdReg)
 	return cmdReg
-}
-
-func registerScannerCommands(cmdReg *commands.CommandRegistry, engineSet *engine.Set, scanCfg cfg.ScannerConfig, toolCfg cfg.ToolConfig, llmProvider agent.Provider, model string, skillStore *skills.Store, logger telemetry.Logger) {
-	var scanOpts []any
-	if scanCfg.AIEnabled && llmProvider != nil {
-		scanOpts = append(scanOpts, scan.WithParent(agent.NewAgent(agent.Config{
-			Provider: llmProvider,
-			Tools:    cmdReg,
-			Model:    model,
-			Logger:   logger,
-		})))
-		scanOpts = append(scanOpts, scan.WithDeepBrowserFunc(func(ctx context.Context, targetURL string) (string, error) {
-			return collectDeepBrowserArtifacts(ctx, cmdReg, targetURL, logger)
-		}))
-		if skillStore != nil {
-			scanOpts = append(scanOpts, scan.WithSkillReader(func(name string) string {
-				content, ok, err := skillStore.ReadVirtual("aiscan://skills/scan/" + name + ".md")
-				if !ok || err != nil {
-					return ""
-				}
-				return content
-			}))
-		}
-	}
-	scanOpts = append(scanOpts, scan.WithLogger(logger))
-
-	workDir, _ := os.Getwd()
-	deps := &commands.Deps{
-		WorkDir:      workDir,
-		BashTimeout:  toolCfg.BashTimeout,
-		SkillStore:   skillStore,
-		EngineSet:    engineSet,
-		ScannerProxy: scanCfg.Proxy,
-		ScanOpts:     scanOpts,
-		Logger:       logger,
-		Model:        model,
-		TavilyKeys:   toolCfg.TavilyKeys,
-	}
-	if engineSet != nil {
-		deps.Resources = engineSet.Resources
-	}
-	commands.BuildGroup("scanner", deps, cmdReg)
-	commands.BuildGroup("proxy", deps, cmdReg)
-	commands.BuildGroup("ioa", deps, cmdReg)
-	logger.Infof("scanner commands ready: %v", cmdReg.GroupNames("scanner"))
-}
-
-func collectDeepBrowserArtifacts(ctx context.Context, reg *commands.CommandRegistry, targetURL string, logger telemetry.Logger) (string, error) {
-	if reg == nil || !reg.Has("playwright") {
-		return "", fmt.Errorf("playwright command unavailable; rebuild web with browser tag")
-	}
-	targetURL = strings.TrimSpace(targetURL)
-	if targetURL == "" {
-		return "", fmt.Errorf("target URL is empty")
-	}
-
-	session := fmt.Sprintf("deep%d", time.Now().UnixNano())
-	closed := false
-	defer func() {
-		if closed {
-			return
-		}
-		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_, _ = reg.Execute(closeCtx, "playwright close "+session)
-	}()
-
-	script := `(()=>JSON.stringify({url:location.href,title:document.title,forms:[...document.forms].map((f,i)=>({i,action:f.action,method:f.method,inputs:[...f.elements].map(e=>({tag:e.tagName,type:e.type,name:e.name,id:e.id,placeholder:e.placeholder}))})),buttons:[...document.querySelectorAll("button,input[type=button],input[type=submit],a")].slice(0,80).map(e=>({tag:e.tagName,text:(e.innerText||e.value||e.getAttribute("aria-label")||"").trim(),href:e.href||"",type:e.type||"",id:e.id||"",name:e.name||""})),scripts:[...document.scripts].map(s=>s.src).filter(Boolean).slice(0,50),localStorage:Object.keys(localStorage),sessionStorage:Object.keys(sessionStorage)}))()`
-	steps := []struct {
-		name    string
-		command string
-	}{
-		{"open", fmt.Sprintf("playwright open %s --session %s --ttl 0 --op-timeout 8 --record", quoteCommandArg(targetURL), session)},
-		{"network-start", "playwright network " + session + " --start"},
-		{"reload", "playwright reload " + session},
-		{"wait-idle", "playwright wait-for " + session + " --idle"},
-		{"url", "playwright url " + session},
-		{"discover", "playwright discover " + session},
-		{"text-content", "playwright text-content " + session},
-		{"storage-links-scripts", fmt.Sprintf("playwright evaluate %s %s", session, quoteCommandArg(script))},
-		{"network-dump", "playwright network " + session + " --dump"},
-	}
-
-	const stepTimeout = 12 * time.Second
-	var sb strings.Builder
-	sb.WriteString("Target: ")
-	sb.WriteString(targetURL)
-	sb.WriteString("\nSession: ")
-	sb.WriteString(session)
-	sb.WriteString("\n")
-	for _, step := range steps {
-		if err := ctx.Err(); err != nil {
-			appendDeepBrowserStep(&sb, step.name, step.command, "", err)
-			break
-		}
-		out, err := executeRegistryCommand(ctx, reg, step.command, stepTimeout)
-		appendDeepBrowserStep(&sb, step.name, step.command, out, err)
-		if err != nil && logger != nil {
-			logger.Debugf("deep browser step=%s error=%q", step.name, err)
-		}
-		if err != nil {
-			break
-		}
-	}
-
-	closeCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	out, err := executeRegistryCommand(closeCtx, reg, "playwright close "+session, 8*time.Second)
-	cancel()
-	closed = true
-	appendDeepBrowserStep(&sb, "close", "playwright close "+session, out, err)
-
-	artifact := sb.String()
-	if tr := truncate.Head(artifact, truncate.Options{}); tr.Truncated {
-		artifact = tr.Content + fmt.Sprintf(
-			"\n\n[deep browser truncated: showing %d/%d lines (%s of %s)]",
-			tr.OutputLines, tr.TotalLines, truncate.FormatSize(tr.OutputBytes), truncate.FormatSize(tr.TotalBytes))
-	}
-	return artifact, nil
 }
 
 func executeRegistryCommand(ctx context.Context, reg *commands.CommandRegistry, commandLine string, timeout time.Duration) (string, error) {
@@ -397,4 +251,77 @@ func newIOAClient(ioa cfg.IOAConfig) (protocols.ClientAPI, error) {
 		return nil, nil
 	}
 	return ioaclient.NewClient(ioa.URL, ioa.NodeID)
+}
+
+func CollectDeepBrowserArtifacts(ctx context.Context, reg *commands.CommandRegistry, targetURL string, logger telemetry.Logger) (string, error) {
+	if reg == nil || !reg.Has("playwright") {
+		return "", fmt.Errorf("playwright command unavailable; rebuild web with browser tag")
+	}
+	targetURL = strings.TrimSpace(targetURL)
+	if targetURL == "" {
+		return "", fmt.Errorf("target URL is empty")
+	}
+
+	session := fmt.Sprintf("deep%d", time.Now().UnixNano())
+	closed := false
+	defer func() {
+		if closed {
+			return
+		}
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = reg.Execute(closeCtx, "playwright close "+session)
+	}()
+
+	script := `(()=>JSON.stringify({url:location.href,title:document.title,forms:[...document.forms].map((f,i)=>({i,action:f.action,method:f.method,inputs:[...f.elements].map(e=>({tag:e.tagName,type:e.type,name:e.name,id:e.id,placeholder:e.placeholder}))})),buttons:[...document.querySelectorAll("button,input[type=button],input[type=submit],a")].slice(0,80).map(e=>({tag:e.tagName,text:(e.innerText||e.value||e.getAttribute("aria-label")||"").trim(),href:e.href||"",type:e.type||"",id:e.id||"",name:e.name||""})),scripts:[...document.scripts].map(s=>s.src).filter(Boolean).slice(0,50),localStorage:Object.keys(localStorage),sessionStorage:Object.keys(sessionStorage)}))()`
+	steps := []struct {
+		name    string
+		command string
+	}{
+		{"open", fmt.Sprintf("playwright open %s --session %s --ttl 0 --op-timeout 8 --record", quoteCommandArg(targetURL), session)},
+		{"network-start", "playwright network " + session + " --start"},
+		{"reload", "playwright reload " + session},
+		{"wait-idle", "playwright wait-for " + session + " --idle"},
+		{"url", "playwright url " + session},
+		{"discover", "playwright discover " + session},
+		{"text-content", "playwright text-content " + session},
+		{"storage-links-scripts", fmt.Sprintf("playwright evaluate %s %s", session, quoteCommandArg(script))},
+		{"network-dump", "playwright network " + session + " --dump"},
+	}
+
+	const stepTimeout = 12 * time.Second
+	var sb strings.Builder
+	sb.WriteString("Target: ")
+	sb.WriteString(targetURL)
+	sb.WriteString("\nSession: ")
+	sb.WriteString(session)
+	sb.WriteString("\n")
+	for _, step := range steps {
+		if err := ctx.Err(); err != nil {
+			appendDeepBrowserStep(&sb, step.name, step.command, "", err)
+			break
+		}
+		out, err := executeRegistryCommand(ctx, reg, step.command, stepTimeout)
+		appendDeepBrowserStep(&sb, step.name, step.command, out, err)
+		if err != nil && logger != nil {
+			logger.Debugf("deep browser step=%s error=%q", step.name, err)
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	out, err := executeRegistryCommand(closeCtx, reg, "playwright close "+session, 8*time.Second)
+	cancel()
+	closed = true
+	appendDeepBrowserStep(&sb, "close", "playwright close "+session, out, err)
+
+	artifact := sb.String()
+	if tr := truncate.Head(artifact, truncate.Options{}); tr.Truncated {
+		artifact = tr.Content + fmt.Sprintf(
+			"\n\n[deep browser truncated: showing %d/%d lines (%s of %s)]",
+			tr.OutputLines, tr.TotalLines, truncate.FormatSize(tr.OutputBytes), truncate.FormatSize(tr.TotalBytes))
+	}
+	return artifact, nil
 }

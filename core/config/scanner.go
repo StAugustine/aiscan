@@ -2,8 +2,6 @@ package config
 
 import (
 	"strings"
-
-	"github.com/chainreactors/aiscan/pkg/tools/scan"
 )
 
 var ExtraCommands = map[string]bool{}
@@ -13,6 +11,13 @@ var ExtraUsageEntries []string
 var ExtraSummaryEntries []string
 
 var ExtraScannerUsage = map[string]func() string{}
+
+// ScanUsageFunc is set by the scan package init in non-mini builds.
+var ScanUsageFunc func() string
+
+// ScannerEnabled reports whether built-in scanner commands are available.
+// Defaults to true; cmd/agent sets it to false.
+var ScannerEnabled = true
 
 type ScannerCommands struct {
 	Scan    struct{} `command:"scan" description:"Run the scan pipeline"`
@@ -25,6 +30,9 @@ type ScannerCommands struct {
 }
 
 func ScannerCommandAvailable(name string) bool {
+	if !ScannerEnabled {
+		return ExtraCommands[name]
+	}
 	switch name {
 	case "scan", "gogo", "spray", "zombie", "neutron":
 		return true
@@ -34,6 +42,12 @@ func ScannerCommandAvailable(name string) bool {
 }
 
 func ScannerUsageLines() string {
+	if !ScannerEnabled {
+		if len(ExtraUsageEntries) == 0 {
+			return ""
+		}
+		return strings.Join(ExtraUsageEntries, "\n")
+	}
 	base := `  gogo           Run gogo directly
   spray          Run spray directly
   zombie         Run zombie directly
@@ -45,6 +59,13 @@ func ScannerUsageLines() string {
 }
 
 func CLICommandSummary() string {
+	if !ScannerEnabled {
+		base := "agent, ioa serve"
+		if len(ExtraSummaryEntries) == 0 {
+			return base
+		}
+		return base + ", " + strings.Join(ExtraSummaryEntries, ", ")
+	}
 	base := "agent, ioa serve, scan, gogo, spray, zombie, neutron"
 	if len(ExtraSummaryEntries) == 0 {
 		return base
@@ -67,14 +88,32 @@ func IsScannerHelpRequest(args []string) bool {
 func StaticScannerUsage(name string) (string, bool) {
 	switch name {
 	case "scan":
-		return scan.Usage(), true
+		if ScanUsageFunc != nil {
+			return ScanUsageFunc(), true
+		}
+		if !ScannerEnabled {
+			return "", false
+		}
+		return "scan - AI-assisted security scan pipeline\nUsage: scan [options]\n", true
 	case "gogo":
+		if !ScannerEnabled {
+			return "", false
+		}
 		return "gogo - host, port, service, and banner discovery\nUsage: gogo [options]\n", true
 	case "spray":
+		if !ScannerEnabled {
+			return "", false
+		}
 		return "spray - web probing, fingerprints, common files, and crawl checks\nUsage: spray [options]\n", true
 	case "zombie":
+		if !ScannerEnabled {
+			return "", false
+		}
 		return "zombie - weak credential checks for supported services\nUsage: zombie [options]\n", true
 	case "neutron":
+		if !ScannerEnabled {
+			return "", false
+		}
 		return "neutron - POC/vulnerability testing with nuclei-style options\nUsage: neutron -u <target> [options]\n", true
 	default:
 		if fn, ok := ExtraScannerUsage[name]; ok {

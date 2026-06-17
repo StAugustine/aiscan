@@ -12,23 +12,24 @@
 
 ---
 
-**aiscan** 是一个融合 LLM agent 与传统安全扫描引擎的自动化安全扫描器。它既可以像普通 CLI 一样直接运行扫描，也可以让 AI agent 根据自然语言目标自主选择工具、执行扫描、分析证据并输出结论。
+**aiscan** 是一个融合 LLM agent 与传统安全扫描引擎的自动化安全扫描器。提供三种使用模式：**Scan**（确定性流水线扫描，AI 可选辅助）、**Agent**（自然语言驱动的自主安全评估）、**IOA**（多 agent 分布式协作）。
 
 > **请只在明确授权的目标上使用。**
 
 ## Features
 
 - **多阶段扫描流水线** — `scan` 命令自动串联端口发现 → Web 探测 → 弱口令检测 → POC 检测，无需 LLM 也能运行
-- **AI Agent 模式** — 自然语言描述任务，agent 自主选择扫描路径、分析结果、生成结论
-- **内置扫描引擎** — 集成 [gogo](https://github.com/chainreactors/gogo)（端口/服务发现）、[spray](https://github.com/chainreactors/spray)（Web 探测/指纹）、[zombie](https://github.com/chainreactors/zombie)（弱口令）、[neutron](https://github.com/chainreactors/neutron)（POC 检测）
-- **多 LLM 支持** — OpenAI、DeepSeek、Anthropic、OpenRouter、Groq、Moonshot、Ollama 等
-- **AI 增强** — `--verify` 自动验证减少误报，`--sniper` 搜索公开漏洞，`--deep` 深度动态测试
-- **Playwright 浏览器**（full 版）— 交互式浏览器会话、headless 模板引擎、session recorder
-- **TMux 终端** — PTY 交互式会话，agent 可执行长时间任务
-- **Proxy 代理管理** — Clash 订阅 + 多协议支持（trojan/vless/anytls/hy2/ss）
+- **AI Agent 模式** — 自然语言描述任务，agent 自主选择扫描路径、调用工具、分析结果、生成结论
+- **Goal Evaluation** — `-e` 指定评估标准，独立 evaluator LLM 判定任务完成度，fail 时自动注入反馈驱动 agent 重试
+- **IOA 分布式协作** — 多 agent 通过消息空间协同扫描，支持 loop worker 持续监听任务
+- **内置扫描引擎** — [gogo](https://github.com/chainreactors/gogo)（端口/服务）、[spray](https://github.com/chainreactors/spray)（Web/指纹）、[zombie](https://github.com/chainreactors/zombie)（弱口令）、[neutron](https://github.com/chainreactors/neutron)（POC）
+- **多 LLM 支持** — OpenAI、DeepSeek、Anthropic、OpenRouter、Groq、Moonshot、Ollama 等，支持多 provider 容错降级
+- **AI 增强扫描** — `--verify` 验证减少误报，`--sniper` 搜索公开漏洞，`--deep` 深度动态测试
+- **Katana 爬虫**（full 版）— 进程内 katana，支持 standard/headless/hybrid 引擎
+- **Playwright 浏览器**（full 版）— 交互式浏览器会话、headless 引擎
+- **TMux 终端** — agent 可执行长时间后台任务，增量输出自动推送 inbox
+- **Proxy 代理** — Clash 订阅 + 多协议（trojan/vless/anytls/hy2/ss）+ proxy-chain 执行
 - **Passive Recon**（full 版）— FOFA / Hunter 网络空间搜索
-- **分布式协作** — [IOA 架构](docs/ioa.md)支持多 worker 节点通过消息空间协同扫描
-- **多种输出** — 终端实时流式、JSON Lines、Markdown 报告
 
 ## Architecture
 
@@ -38,22 +39,23 @@
 ├──────────┬──────────┬──────────┬──────────┬──────────────────┤
 │   scan   │  agent   │ scanner  │   ioa    │      tools       │
 │ pipeline │ LLM agent│  direct  │  collab  │ tmux/proxy/search│
+│          │ +eval    │          │          │                  │
 ├──────────┴──────────┴──────────┴──────────┴──────────────────┤
-│                  Command Registry & Skills                    │
+│        Command Registry & Skills & Goal Evaluator             │
 ├────────┬────────┬────────┬─────────┬─────────┬───────────────┤
-│  gogo  │ spray  │ zombie │ neutron │playwright│  passive/kata │
-│  port  │  web   │  weak  │   poc   │ browser │  recon/crawl  │
+│  gogo  │ spray  │ zombie │ neutron │playwright│ passive/katana│
+│  port  │  web   │  weak  │   poc   │ browser │ recon / crawl │
 │  scan  │ probe  │  pass  │  check  │ headless│   (full)      │
 ├────────┴────────┴────────┴─────────┴─────────┴───────────────┤
-│           LLM Providers   │    Cyberhub Resources             │
-└────────────────────────────┴──────────────────────────────────┘
+│     LLM Providers (fallback chain)  │  Cyberhub Resources     │
+└─────────────────────────────────────┴─────────────────────────┘
 ```
 
 ## Quick Start
 
 ### 安装
 
-从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载对应平台的二进制文件。提供两个版本：
+从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载对应平台的二进制文件：
 
 - **aiscan** — 基础版，包含 scan/agent/gogo/spray/zombie/neutron
 - **aiscan-full** — 完整版，额外包含 playwright 浏览器、passive recon、katana 爬虫
@@ -75,42 +77,158 @@ sudo mv aiscan /usr/local/bin/
 Invoke-WebRequest "https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_windows_amd64.exe" -OutFile aiscan.exe
 ```
 
-### 扫描（无需 LLM）
+---
+
+## Mode 1: Scan — 确定性扫描流水线
+
+无需 LLM，`scan` 命令自动串联 gogo → spray → zombie → neutron，完成端口发现、Web 探测、弱口令检测和 POC 检测。可选开启 AI 辅助增强。
 
 ```bash
-# 快速扫描：端口发现 → Web 探测 → 弱口令 → POC
+# 快速扫描（默认 quick 模式）
 aiscan scan -i 192.168.1.0/24
 
-# 完整扫描：增加路径爆破和更深爬取
+# 完整扫描：更多端口 + 路径爆破 + 深度爬取
 aiscan scan -i 192.168.1.0/24 --mode full
 
-# AI 增强：验证 + 狙击公开漏洞
-aiscan scan -i http://target.example --verify=high --sniper
+# AI 增强：LLM 验证扫描结果减少误报
+aiscan scan -i http://target.example --verify=high
 
-# 深度测试：对发现的资产进行动态 AI 测试
+# AI 增强：搜索公开 CVE/漏洞
+aiscan scan -i http://target.example --sniper
+
+# AI 增强：深度动态测试
 aiscan scan -i http://target.example --mode full --deep
+
+# 组合使用 + 输出报告
+aiscan scan -i http://target.example --mode full --verify=high --sniper --report
 ```
 
-### Agent 模式（需要 LLM）
+**扫描模式说明：**
+
+| 模式 | 说明 |
+| --- | --- |
+| `quick`（默认） | 快速暴露面发现，HTTP 基础弱口令，指纹匹配 POC |
+| `full` | 更多端口，crawl depth=2，常见备份/目录探测，默认字典 |
+
+**AI 增强标志（需要 LLM 配置）：**
+
+| 标志 | 说明 |
+| --- | --- |
+| `--verify=<level>` | LLM 主动验证扫描发现，减少误报（auto/low/medium/high/critical） |
+| `--sniper` | 对每个指纹搜索公开 CVE/exploit |
+| `--deep` | 对发现的 Web 资产进行 AI 驱动的动态测试 |
+
+---
+
+## Mode 2: Agent — AI 自主安全评估
+
+Agent 模式下 LLM 自主规划扫描路径、调用工具（gogo/spray/zombie/neutron/web_search/fetch/tmux 等）、分析结果并输出结论。
+
+### 一次性任务
+
+```bash
+# 自然语言任务
+aiscan agent -p "扫描目标，发现所有 Web 服务并检查高风险漏洞" -i 192.168.1.0/24
+
+# Goal Evaluation：独立 LLM 评估任务完成度，未达标自动注入反馈驱动重试
+aiscan agent -p "全面扫描目标" -i http://target.example -e "发现所有开放端口并输出服务指纹"
+```
+
+### 交互式 REPL
+
+```bash
+# 进入交互式会话，支持多轮对话
+aiscan agent
+
+# REPL 内置命令
+# /help          — 查看所有命令
+# /provider      — 查看 LLM provider 状态
+# /eval <criteria> — 设置 goal evaluation 标准
+# ! <command>    — 直接执行 bash 或扫描命令（绕过 LLM）
+```
+
+### Agent 工具集
+
+| 工具 | 说明 |
+| --- | --- |
+| `gogo` / `spray` / `zombie` / `neutron` | 扫描器 |
+| `cyberhub` | 指纹和 POC 关联搜索 |
+| `web_search` / `fetch` | 搜索安全情报、抓取网页 |
+| `bash` / `tmux` | 执行命令、管理后台会话 |
+| `proxy` | 代理节点管理、proxy-chain 执行 |
+| `playwright` | 无头浏览器操作（仅 full 版） |
+| `subagent` | 子 agent（sync/async/fork） |
+| `read` / `write` / `glob` | 文件操作 |
+| `finish` | 显式结束任务 |
+
+---
+
+## Mode 3: IOA — 分布式多 Agent 协作
+
+通过 [IOA（Internet of Agents）](docs/ioa.md) 架构，多个 aiscan agent 实例通过消息空间协同工作。
+
+### 启动 IOA Server
+
+```bash
+aiscan ioa serve --ioa-url http://0.0.0.0:8765
+```
+
+### 启动 Loop Worker
+
+```bash
+aiscan agent --loop \
+  --ioa-url http://127.0.0.1:8765 \
+  --ioa-node-name worker-1 \
+  --space pentest-project \
+  -p "scan assigned targets and report findings"
+```
+
+### 查询 IOA 状态
+
+```bash
+aiscan ioa spaces --ioa-url http://127.0.0.1:8765
+aiscan ioa messages <space-name> --ioa-url http://127.0.0.1:8765
+aiscan ioa nodes --ioa-url http://127.0.0.1:8765
+```
+
+---
+
+## LLM 配置
+
+Agent 和 AI 增强功能需要 LLM。通过环境变量或配置文件设置：
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 
-# 自然语言任务
-aiscan agent -p "发现 Web 服务并检查高风险漏洞" -i 192.168.1.0/24
+# 或指定 provider
+aiscan agent --provider deepseek --base-url https://api.deepseek.com --api-key sk-... --model deepseek-v4-pro
+```
 
-# 交互式 REPL
-aiscan agent
+配置文件 `~/.config/aiscan/config.yaml`：
+
+```yaml
+llm:
+  provider: openai
+  api_key: sk-...
+  model: gpt-4o
+
+  # 多 provider 降级链（可选）
+  providers:
+    - provider: deepseek
+      base_url: https://api.deepseek.com
+      api_key: sk-...
+      model: deepseek-v4-pro
 ```
 
 ## Documentation
 
 | 文档 | 说明 |
 | --- | --- |
-| [Quick Start](docs/quickstart.md) | 安装、环境准备、第一次扫描 |
-| [配置指南](docs/configuration.md) | LLM Provider、配置文件、环境变量、Cyberhub 资源 |
-| [使用指南](docs/usage.md) | 命令详解、扫描模式、Agent、输出格式 |
-| [IOA 协作](docs/ioa.md) | 多 Agent 协作架构、Space/Node/Message 模型、Loop Worker、Heartbeat |
+| [Scan 模式详解](docs/scan.md) | 扫描流水线、AI 增强、输出格式 |
+| [Agent 模式详解](docs/agent.md) | Agent 工具集、Goal Evaluation、REPL、信号处理 |
+| [配置指南](docs/configuration.md) | LLM Provider、多 Provider 降级、配置文件、环境变量 |
+| [IOA 协作](docs/ioa.md) | 多 Agent 协作架构、Space/Node/Message 模型 |
+| [CLI 参考](docs/reference.md) | 命令结构、全局参数、扫描器速查、FAQ |
 
 ## Supported Platforms
 

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	cfg "github.com/chainreactors/aiscan/core/config"
 	"github.com/chainreactors/aiscan/pkg/commands"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	gogocmd "github.com/chainreactors/aiscan/pkg/tools/gogo"
@@ -12,6 +13,7 @@ import (
 )
 
 func init() {
+	cfg.ScanUsageFunc = scan.Usage
 	commands.RegisterFactory(commands.Factory{
 		Group: "scanner",
 		Build: func(deps *commands.Deps, reg *commands.CommandRegistry) {
