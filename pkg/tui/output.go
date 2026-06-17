@@ -348,15 +348,15 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 	case agent.EventAgentEnd:
 		o.spinner.Stop()
 		o.agentEnd(event)
-	case agent.EventGoalEvalStart:
+	case agent.EventEvalStart:
 		o.spinner.Stop()
-		o.goalEvalStart(event)
-	case agent.EventGoalEvalEnd:
+		o.evalStart(event)
+	case agent.EventEvalEnd:
 		o.spinner.Stop()
-		o.goalEvalEnd(event)
-	case agent.EventGoalEvalError:
+		o.evalEnd(event)
+	case agent.EventEvalError:
 		o.spinner.Stop()
-		o.goalEvalError(event)
+		o.evalError(event)
 	}
 }
 
@@ -792,11 +792,11 @@ func (o *AgentOutput) agentEnd(event agent.Event) {
 // Goal evaluation output
 // ---------------------------------------------------------------------------
 
-func (o *AgentOutput) goalEvalStart(event agent.Event) {
+func (o *AgentOutput) evalStart(event agent.Event) {
 	if o.Quiet || o.stderr == nil {
 		return
 	}
-	label := fmt.Sprintf("Evaluating goal completion (round %d)...", event.EvalRound+1)
+	label := fmt.Sprintf("Evaluating (round %d)...", event.EvalRound+1)
 	if o.canAnimate() {
 		o.spinner.Start(label)
 	} else {
@@ -804,7 +804,7 @@ func (o *AgentOutput) goalEvalStart(event agent.Event) {
 	}
 }
 
-func (o *AgentOutput) goalEvalEnd(event agent.Event) {
+func (o *AgentOutput) evalEnd(event agent.Event) {
 	if o.Quiet || o.stderr == nil {
 		return
 	}
@@ -817,7 +817,7 @@ func (o *AgentOutput) goalEvalEnd(event agent.Event) {
 	}
 }
 
-func (o *AgentOutput) goalEvalError(event agent.Event) {
+func (o *AgentOutput) evalError(event agent.Event) {
 	if o.Quiet || o.stderr == nil {
 		return
 	}

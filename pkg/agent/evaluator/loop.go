@@ -10,7 +10,7 @@ import (
 
 const defaultMaxEvalRounds = 3
 
-type GoalLoopConfig struct {
+type EvalLoopConfig struct {
 	Evaluator      *Evaluator
 	MaxEvalRounds  int
 	Goal           string
@@ -18,7 +18,7 @@ type GoalLoopConfig struct {
 	Bus            *eventbus.Bus[agent.Event]
 }
 
-func RunWithGoalEval(ctx context.Context, a *agent.Agent, cfg GoalLoopConfig) (*agent.Result, *Verdict, error) {
+func RunWithEval(ctx context.Context, a *agent.Agent, cfg EvalLoopConfig) (*agent.Result, *Verdict, error) {
 	if cfg.MaxEvalRounds <= 0 {
 		cfg.MaxEvalRounds = defaultMaxEvalRounds
 	}
@@ -33,17 +33,17 @@ func RunWithGoalEval(ctx context.Context, a *agent.Agent, cfg GoalLoopConfig) (*
 			return result, nil, nil
 		}
 
-		emitEvalEvent(cfg.Bus, agent.EventGoalEvalStart, attempt, nil)
+		emitEvalEvent(cfg.Bus, agent.EventEvalStart, attempt, nil)
 
 		verdict, evalErr := cfg.Evaluator.Evaluate(
 			ctx, cfg.Goal, cfg.Criteria,
-			result.Messages, result.Output, result.Turns,
+			result.Messages, result.Output, result.Turns, result.ContextTokens,
 		)
 
 		if evalErr != nil {
-			cfg.Evaluator.cfg.Logger.Warnf("goal eval error (round %d): %s", attempt+1, evalErr)
+			cfg.Evaluator.cfg.Logger.Warnf("evaluate error (round %d): %s", attempt+1, evalErr)
 			emitEvalErrorEvent(cfg.Bus, attempt, evalErr)
-			feedback := fmt.Sprintf("Goal evaluation could not determine if the task is complete. Original criteria: %s. Please review your work and continue if the goal is not yet fully achieved.", cfg.Criteria)
+			feedback := fmt.Sprintf("Evaluation could not determine if the task is complete. Original criteria: %s. Please review your work and continue if the goal is not yet fully achieved.", cfg.Criteria)
 			result, err = a.Run(ctx, feedback)
 			if err != nil {
 				return result, nil, err
@@ -51,8 +51,8 @@ func RunWithGoalEval(ctx context.Context, a *agent.Agent, cfg GoalLoopConfig) (*
 			continue
 		}
 
-		emitEvalEvent(cfg.Bus, agent.EventGoalEvalEnd, attempt, verdict)
-		cfg.Evaluator.cfg.Logger.Importantf("goal eval round %d: pass=%v reason=%q", attempt+1, verdict.Pass, verdict.Reason)
+		emitEvalEvent(cfg.Bus, agent.EventEvalEnd, attempt, verdict)
+		cfg.Evaluator.cfg.Logger.Importantf("evaluate round %d: pass=%v inherit_context=%v reason=%q", attempt+1, verdict.Pass, verdict.InheritContext, verdict.Reason)
 
 		if verdict.Pass {
 			return result, verdict, nil
@@ -60,16 +60,22 @@ func RunWithGoalEval(ctx context.Context, a *agent.Agent, cfg GoalLoopConfig) (*
 
 		feedback := verdict.Feedback
 		if feedback == "" {
-			feedback = fmt.Sprintf("Goal not achieved: %s. Please continue.", verdict.Reason)
+			feedback = fmt.Sprintf("Not achieved: %s. Please continue.", verdict.Reason)
 		}
-		cfg.Evaluator.cfg.Logger.Importantf("goal eval: injecting feedback (round %d): %s", attempt+1, feedback)
+
+		if !verdict.InheritContext {
+			cfg.Evaluator.cfg.Logger.Importantf("evaluate: resetting context (round %d)", attempt+1)
+			a.Reset()
+		}
+
+		cfg.Evaluator.cfg.Logger.Importantf("evaluate: injecting feedback (round %d): %s", attempt+1, feedback)
 
 		result, err = a.Run(ctx, feedback)
 		if err != nil {
-			cfg.Evaluator.cfg.Logger.Warnf("goal eval: agent.Run failed after feedback: %s", err)
+			cfg.Evaluator.cfg.Logger.Warnf("evaluate: agent.Run failed after feedback: %s", err)
 			return result, verdict, err
 		}
-		cfg.Evaluator.cfg.Logger.Importantf("goal eval: agent completed after feedback (round %d), stop=%s turns=%d", attempt+1, result.Stop, result.Turns)
+		cfg.Evaluator.cfg.Logger.Importantf("evaluate: agent completed after feedback (round %d), stop=%s turns=%d", attempt+1, result.Stop, result.Turns)
 	}
 
 	return result, nil, nil
@@ -95,7 +101,7 @@ func emitEvalErrorEvent(bus *eventbus.Bus[agent.Event], round int, err error) {
 		return
 	}
 	bus.Emit(agent.Event{
-		Type:      agent.EventGoalEvalError,
+		Type:      agent.EventEvalError,
 		EvalRound: round,
 		EvalError: err.Error(),
 	})

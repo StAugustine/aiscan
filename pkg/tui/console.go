@@ -1102,7 +1102,7 @@ func (r *AgentConsole) renderProviders() string {
 }
 
 func (r *AgentConsole) pseudoCommandNames() []string {
-	if r.appInfo.Commands == nil || r.appInfo.Commands == nil {
+	if r.appInfo.Commands == nil {
 		return nil
 	}
 	return r.appInfo.Commands.Names()

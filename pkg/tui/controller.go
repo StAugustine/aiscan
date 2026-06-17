@@ -90,7 +90,7 @@ func (c *interactiveRunController) buildRunFunc(prompt string) agentRunFunc {
 		if logger == nil {
 			logger = telemetry.NopLogger()
 		}
-		cfg := evaluator.GoalLoopConfig{
+		cfg := evaluator.EvalLoopConfig{
 			Evaluator: evaluator.New(evaluator.Config{
 				Provider: eval.Provider,
 				Model:    eval.Model,
@@ -101,7 +101,7 @@ func (c *interactiveRunController) buildRunFunc(prompt string) agentRunFunc {
 			Criteria:      eval.Criteria,
 			Bus:           eval.Bus,
 		}
-		result, _, err := evaluator.RunWithGoalEval(ctx, c.session, cfg)
+		result, _, err := evaluator.RunWithEval(ctx, c.session, cfg)
 		return result, err
 	}
 }

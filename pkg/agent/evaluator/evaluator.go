@@ -27,9 +27,10 @@ type Config struct {
 }
 
 type Verdict struct {
-	Pass     bool   `json:"pass"`
-	Reason   string `json:"reason"`
-	Feedback string `json:"feedback"`
+	Pass           bool   `json:"pass"`
+	Reason         string `json:"reason"`
+	Feedback       string `json:"feedback"`
+	InheritContext bool   `json:"inherit_context"`
 }
 
 type Evaluator struct {
@@ -46,8 +47,8 @@ func New(cfg Config) *Evaluator {
 	return &Evaluator{cfg: cfg}
 }
 
-func (e *Evaluator) Evaluate(ctx context.Context, goal, criteria string, messages []provider.ChatMessage, output string, turns int) (*Verdict, error) {
-	trace := buildTrace(messages, output, turns)
+func (e *Evaluator) Evaluate(ctx context.Context, goal, criteria string, messages []provider.ChatMessage, output string, turns, contextTokens int) (*Verdict, error) {
+	trace := buildTrace(messages, output, turns, contextTokens)
 	prompt := buildPrompt(goal, criteria, trace)
 
 	var lastErr error
@@ -57,36 +58,36 @@ func (e *Evaluator) Evaluate(ctx context.Context, goal, criteria string, message
 			return v, nil
 		}
 		lastErr = err
-		e.cfg.Logger.Warnf("goal eval attempt %d failed: %s", attempt+1, err)
+		e.cfg.Logger.Warnf("evaluate attempt %d failed: %s", attempt+1, err)
 		if attempt < e.cfg.MaxRetries-1 {
 			time.Sleep(time.Duration(attempt+1) * time.Second)
 		}
 	}
-	return nil, fmt.Errorf("goal eval failed after %d attempts: %w", e.cfg.MaxRetries, lastErr)
+	return nil, fmt.Errorf("evaluate failed after %d attempts: %w", e.cfg.MaxRetries, lastErr)
 }
 
-const systemPrompt = `You are a goal completion evaluator. Given the original goal, acceptance criteria, and execution trace, determine whether the goal was fully achieved.
-
-You MUST call the "verdict" tool with your evaluation. Do not respond with text.
+const systemPrompt = `You are an evaluator. Call the "verdict" tool with your result. No text replies.
 
 Rules:
-- pass=true only if the goal was fully and correctly completed per the criteria
-- feedback: if pass=false, provide a specific, actionable instruction for what the agent should do next
-- Be strict: "ran without errors" is NOT the same as "fulfilled the goal"`
+- pass=true only if the task was fully achieved per criteria
+- feedback: actionable next step when pass=false
+- inherit_context=false when context usage >50% or history is noisy; when false, feedback must be self-contained (include file paths, findings, etc.)
+- inherit_context=true when intermediate results would be expensive to reconstruct`
 
 var verdictTool = provider.ToolDefinition{
 	Type: "function",
 	Function: provider.FunctionDefinition{
 		Name:        "verdict",
-		Description: "Submit the goal evaluation result",
+		Description: "Submit evaluation verdict",
 		Parameters: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"pass":     map[string]interface{}{"type": "boolean", "description": "true only if goal was fully achieved per criteria"},
-				"reason":   map[string]interface{}{"type": "string", "description": "one sentence summary of the evaluation"},
-				"feedback": map[string]interface{}{"type": "string", "description": "actionable next step if not pass, empty string if pass"},
+				"pass":            map[string]interface{}{"type": "boolean", "description": "task fully achieved"},
+				"reason":          map[string]interface{}{"type": "string", "description": "one-sentence summary"},
+				"feedback":        map[string]interface{}{"type": "string", "description": "next step if not pass; self-contained when inherit_context=false"},
+				"inherit_context": map[string]interface{}{"type": "boolean", "description": "false to discard conversation history for next round"},
 			},
-			"required": []string{"pass", "reason", "feedback"},
+			"required": []string{"pass", "reason", "feedback", "inherit_context"},
 		},
 	},
 }
@@ -132,9 +133,9 @@ func buildPrompt(goal, criteria, trace string) string {
 	return sb.String()
 }
 
-func buildTrace(messages []provider.ChatMessage, output string, turns int) string {
+func buildTrace(messages []provider.ChatMessage, output string, turns, contextTokens int) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Turns: %d\n", turns)
+	fmt.Fprintf(&sb, "Turns: %d | Messages: %d | Context tokens: %d\n", turns, len(messages), contextTokens)
 
 	toolCallCount := 0
 	for _, msg := range messages {

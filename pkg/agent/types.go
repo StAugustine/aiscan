@@ -79,9 +79,9 @@ const (
 	EventToolExecutionStart EventType = "tool_execution_start"
 	EventToolExecutionEnd   EventType = "tool_execution_end"
 	EventTokenBudgetWarning EventType = "token_budget_warning"
-	EventGoalEvalStart      EventType = "goal_eval_start"
-	EventGoalEvalEnd        EventType = "goal_eval_end"
-	EventGoalEvalError      EventType = "goal_eval_error"
+	EventEvalStart EventType = "eval_start"
+	EventEvalEnd   EventType = "eval_end"
+	EventEvalError EventType = "eval_error"
 )
 
 type StopReason string

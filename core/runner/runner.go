@@ -260,8 +260,8 @@ func runOneShotMode(ctx context.Context, option *cfg.Option, logger telemetry.Lo
 
 	var result *agent.Result
 	if option.EvalCriteria != "" {
-		evalCfg := buildGoalEvalConfig(option, rt, logger, task)
-		result, _, err = evaluator.RunWithGoalEval(ctx, a, evalCfg)
+		evalCfg := buildEvalConfig(option, rt, logger, task)
+		result, _, err = evaluator.RunWithEval(ctx, a, evalCfg)
 	} else {
 		result, err = a.Run(ctx, task)
 	}
@@ -436,10 +436,10 @@ func scannerCommandSupportsDebug(name string) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Goal evaluation
+// Evaluation
 // ---------------------------------------------------------------------------
 
-func buildGoalEvalConfig(option *cfg.Option, rt *AgentRuntime, logger telemetry.Logger, task string) evaluator.GoalLoopConfig {
+func buildEvalConfig(option *cfg.Option, rt *AgentRuntime, logger telemetry.Logger, task string) evaluator.EvalLoopConfig {
 	model := option.Model
 	if option.EvalModel != "" {
 		model = option.EvalModel
@@ -448,7 +448,7 @@ func buildGoalEvalConfig(option *cfg.Option, rt *AgentRuntime, logger telemetry.
 	if maxRounds <= 0 {
 		maxRounds = 3
 	}
-	return evaluator.GoalLoopConfig{
+	return evaluator.EvalLoopConfig{
 		Evaluator: evaluator.New(evaluator.Config{
 			Provider: rt.App.Provider,
 			Model:    model,
