@@ -8,12 +8,14 @@ import (
 )
 
 type Handler struct {
-	service *Service
-	static  http.Handler
+	service    *Service
+	agents     *AgentPool
+	ioaHandler http.Handler
+	static     http.Handler
 }
 
-func NewHandler(service *Service, static http.Handler) *Handler {
-	return &Handler{service: service, static: static}
+func NewHandler(service *Service, agents *AgentPool, ioaHandler http.Handler, static http.Handler) *Handler {
+	return &Handler{service: service, agents: agents, ioaHandler: ioaHandler, static: static}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +54,27 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if segments[0] == "api" && len(segments) == 2 && segments[1] == "agents" {
+		h.listAgents(w, r)
+		return
+	}
+
+	if segments[0] == "api" && len(segments) >= 2 && segments[1] == "agent" {
+		h.serveAgent(w, r, segments[2:])
+		return
+	}
+
 	if segments[0] == "api" {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	if segments[0] == "ioa" {
+		if h.ioaHandler != nil {
+			http.StripPrefix("/ioa", h.ioaHandler).ServeHTTP(w, r)
+		} else {
+			writeError(w, http.StatusNotFound, "IOA not enabled")
+		}
 		return
 	}
 
@@ -100,7 +121,84 @@ func (h *Handler) serviceStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.service.Status())
+	status := h.service.Status()
+	if h.agents != nil {
+		status.Agents = h.agents.Count()
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if h.agents == nil {
+		writeJSON(w, http.StatusOK, []AgentInfo{})
+		return
+	}
+	writeJSON(w, http.StatusOK, h.agents.List())
+}
+
+func (h *Handler) serveAgent(w http.ResponseWriter, r *http.Request, segments []string) {
+	if h.agents == nil {
+		writeError(w, http.StatusServiceUnavailable, "agent pool not configured")
+		return
+	}
+	if len(segments) == 0 {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	switch segments[0] {
+	case "register":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var req AgentRegisterRequest
+		if err := decodeJSON(r.Body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		id := h.agents.Register(req.Name, req.Commands)
+		writeJSON(w, http.StatusOK, AgentRegisterResponse{AgentID: id})
+
+	case "stream":
+		if r.Method != http.MethodGet {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.agents.ServeAgentSSE(w, r)
+
+	case "output":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var msg AgentOutputMsg
+		if err := decodeJSON(r.Body, &msg); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.agents.HandleOutput(msg.AgentID, msg.TaskID, msg.Data)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	case "complete":
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		var msg AgentCompleteMsg
+		if err := decodeJSON(r.Body, &msg); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.agents.HandleComplete(msg.AgentID, msg.TaskID, msg.Output, msg.Result, msg.Error)
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	default:
+		writeError(w, http.StatusNotFound, "not found")
+	}
 }
 
 func (h *Handler) serveConfig(w http.ResponseWriter, r *http.Request, segments []string) {

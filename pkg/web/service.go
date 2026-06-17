@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/runner"
 	"github.com/chainreactors/aiscan/core/output"
+	"github.com/chainreactors/aiscan/core/runner"
 )
 
 type LLMConfigStore interface {
@@ -24,6 +25,7 @@ type ServiceConfig struct {
 	App           *runner.App
 	ConfigStore   LLMConfigStore
 	AppFactory    func(ctx context.Context) (*runner.App, error)
+	AgentPool     *AgentPool
 	MaxConcurrent int
 	ScanTimeout   time.Duration
 }
@@ -34,6 +36,7 @@ type Service struct {
 	app     *runner.App
 	config  LLMConfigStore
 	reload  func(ctx context.Context) (*runner.App, error)
+	agents  *AgentPool
 	hub     *Hub
 	sem     chan struct{}
 	timeout time.Duration
@@ -56,6 +59,7 @@ func NewService(cfg ServiceConfig) *Service {
 		app:     cfg.App,
 		config:  cfg.ConfigStore,
 		reload:  cfg.AppFactory,
+		agents:  cfg.AgentPool,
 		hub:     NewHub(),
 		sem:     make(chan struct{}, maxConcurrent),
 		timeout: timeout,
@@ -64,6 +68,10 @@ func NewService(cfg ServiceConfig) *Service {
 }
 
 func (s *Service) Hub() *Hub { return s.hub }
+
+func (s *Service) SetAgentPool(pool *AgentPool) {
+	s.agents = pool
+}
 
 func (s *Service) Close() {
 	if s == nil {
@@ -241,44 +249,101 @@ func (s *Service) runScan(jobID string) {
 		Status: string(StatusRunning),
 	})
 
-	streamWriter := &sseStreamWriter{
-		hub:    s.hub,
-		scanID: jobID,
-		store:  s.store,
-		job:    job,
-		ctx:    ctx,
+	// Try agent dispatch first, fall back to local execution.
+	if s.agents != nil && s.agents.Count() > 0 {
+		s.runScanViaAgent(ctx, job)
+		return
 	}
+	s.runScanLocally(ctx, job)
+}
 
-	// Run scan with streaming real-time progress.
-	// --report is NOT passed because it disables streaming output.
-	args := scanArgsForJob(job)
-	_, result, err := s.executeScan(ctx, args, streamWriter)
-	if err != nil {
-		job.Status = StatusFailed
-		job.Error = err.Error()
-		job.UpdatedAt = time.Now()
-		_ = s.store.Update(ctx, job)
-		s.hub.Broadcast(jobID, ScanEvent{
-			Type:   "error",
-			ScanID: jobID,
-			Error:  err.Error(),
-		})
+func (s *Service) runScanViaAgent(ctx context.Context, job *ScanJob) {
+	agent := s.agents.Pick()
+	if agent == nil {
+		s.failJob(job, "no agents available")
 		return
 	}
 
-	report := buildMarkdownReport(job.Target, job.Mode, result)
+	cmd := strings.Join(scanArgsForJob(job), " ")
+	resultCh, err := s.agents.DispatchCommand(agent.id, job.ID, cmd)
+	if err != nil {
+		s.failJob(job, err.Error())
+		return
+	}
 
+	// Wait for agent to complete. Output is forwarded to SSE hub by
+	// AgentPool.HandleOutput as the agent POSTs progress lines.
+	res, ok := <-resultCh
+	if !ok {
+		s.failJob(job, "agent disconnected")
+		return
+	}
+	if res.Err != "" {
+		s.failJob(job, res.Err)
+		return
+	}
+
+	var result *output.Result
+	if len(res.Result) > 0 {
+		result = &output.Result{}
+		_ = json.Unmarshal(res.Result, result)
+	}
+
+	report := buildMarkdownReport(job.Target, job.Mode, result)
 	job.Status = StatusCompleted
 	job.Report = report
 	job.Result = result
 	job.UpdatedAt = time.Now()
 	_ = s.store.Update(ctx, job)
 
-	s.hub.Broadcast(jobID, ScanEvent{
+	s.hub.Broadcast(job.ID, ScanEvent{
 		Type:   "complete",
-		ScanID: jobID,
+		ScanID: job.ID,
 		Status: string(StatusCompleted),
 		Result: result,
+	})
+}
+
+func (s *Service) runScanLocally(ctx context.Context, job *ScanJob) {
+	streamWriter := &sseStreamWriter{
+		hub:    s.hub,
+		scanID: job.ID,
+		store:  s.store,
+		job:    job,
+		ctx:    ctx,
+	}
+
+	args := scanArgsForJob(job)
+	_, result, err := s.executeScan(ctx, args, streamWriter)
+	if err != nil {
+		s.failJob(job, err.Error())
+		return
+	}
+
+	report := buildMarkdownReport(job.Target, job.Mode, result)
+	job.Status = StatusCompleted
+	job.Report = report
+	job.Result = result
+	job.UpdatedAt = time.Now()
+	_ = s.store.Update(ctx, job)
+
+	s.hub.Broadcast(job.ID, ScanEvent{
+		Type:   "complete",
+		ScanID: job.ID,
+		Status: string(StatusCompleted),
+		Result: result,
+	})
+}
+
+func (s *Service) failJob(job *ScanJob, errMsg string) {
+	job.Status = StatusFailed
+	job.Error = errMsg
+	job.UpdatedAt = time.Now()
+	_ = s.store.Update(context.Background(), job)
+	s.hub.Broadcast(job.ID, ScanEvent{
+		Type:   "error",
+		ScanID: job.ID,
+		Error:  errMsg,
 	})
 }
 
