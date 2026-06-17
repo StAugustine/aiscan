@@ -1,6 +1,8 @@
-# CLI 参考
+# 参考手册
 
-本文档是 aiscan 的命令行参考手册，涵盖命令结构、全局参数、各扫描器快速参考、cyberhub 资源查询、场景建议和常见问题。
+本文档是 aiscan 的完整参考，涵盖命令结构、配置、LLM Provider、各扫描器用法、资源查询和常见问题。
+
+---
 
 ## 命令结构
 
@@ -24,6 +26,72 @@ aiscan [全局参数] <subcommand> [子命令参数]
 
 查看帮助：`aiscan -h`、`aiscan scan -h`、`aiscan neutron -h`
 
+---
+
+## 配置
+
+### 配置优先级
+
+```
+CLI 参数 > 环境变量 > 配置文件 > 编译时默认值
+```
+
+### 配置文件
+
+```bash
+aiscan --init          # 生成默认 config.yaml 到当前目录
+aiscan -c /path/to/config.yaml scan -i 192.168.1.0/24   # 指定配置文件
+```
+
+自动搜索路径：`./config.yaml` → `~/.config/aiscan/config.yaml`
+
+### 配置文件结构
+
+```yaml
+# LLM Provider
+llm:
+  provider: ""        # openai, deepseek, openrouter, ollama, groq, moonshot, anthropic
+  base_url: ""        # API base URL（留空使用 provider 默认值）
+  api_key: ""         # API key（建议使用环境变量）
+  model: ""           # 模型名称
+  proxy: ""           # 访问 LLM API 的 HTTP proxy
+
+  # 多 provider 降级链（可选）
+  providers:
+    - provider: deepseek
+      base_url: https://api.deepseek.com
+      api_key: "sk-..."
+      model: deepseek-chat
+    - provider: openai
+      api_key: "sk-..."
+      model: gpt-4o
+
+# Cyberhub 资源服务
+cyberhub:
+  url: ""
+  key: ""
+  mode: ""            # merge（默认）或 override
+
+# IOA 协作
+ioa:
+  url: ""
+  node_name: ""
+  space: ""
+
+# 扫描默认值
+scan:
+  verify: ""          # auto, off, low, medium, high, critical
+  verify_timeout: 0
+
+# 通用选项
+misc:
+  debug: false
+  quiet: false
+  no_color: false
+```
+
+---
+
 ## 全局参数
 
 全局参数建议放在子命令之前。只有 `scan` 支持在命令之后继续写全局参数并自动提取；其他 scanner 后面的参数原样传给对应引擎，避免短参数冲突。
@@ -34,7 +102,7 @@ aiscan [全局参数] <subcommand> [子命令参数]
 | --- | --- |
 | `--provider` | LLM provider 名称（openai、deepseek、openrouter、ollama 等） |
 | `--base-url` | LLM API base URL |
-| `--api-key` | LLM API key（也可用环境变量 `OPENAI_API_KEY`、`AISCAN_API_KEY` 等） |
+| `--api-key` | LLM API key（也可用环境变量） |
 | `--model` | 模型名称（默认 `gpt-4o`） |
 | `--llm-proxy` | 访问 LLM API 的 HTTP 代理 |
 | `--ai` | 对 scanner 输出启用 LLM 分析 |
@@ -59,7 +127,7 @@ aiscan [全局参数] <subcommand> [子命令参数]
 | `--proxy` | Scanner 代理，支持 `socks5://`、`trojan://`、`vless://`、`clash://`（订阅自动负载均衡） |
 | `--cyberhub-url` | Cyberhub 资源服务 URL |
 | `--cyberhub-key` | Cyberhub API key |
-| `--cyberhub-mode` | 资源模式：`merge`（默认，合并内置和远程资源）或 `override`（使用远程资源覆盖内置） |
+| `--cyberhub-mode` | 资源模式：`merge`（默认）或 `override` |
 
 ### IOA 参数
 
@@ -81,6 +149,75 @@ aiscan [全局参数] <subcommand> [子命令参数]
 | `--version` | 输出版本号并退出 |
 
 > **参数名冲突说明**：顶层参数和 scanner 子命令参数可能同名。例如 `aiscan agent -p` 中 `-p` 是自然语言 prompt，`aiscan gogo -p` 中 `-p` 是端口参数，`aiscan zombie -p` 中 `-p` 是密码参数。aiscan 会根据子命令自动区分。
+
+---
+
+## LLM Provider
+
+### 支持的 Provider
+
+| Provider | 默认 Base URL | 默认模型 | API Key 环境变量 |
+| --- | --- | --- | --- |
+| `openai` | `https://api.openai.com/v1` | `gpt-4o` | `OPENAI_API_KEY` |
+| `deepseek` | `https://api.deepseek.com/v1` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `anthropic` | `https://api.anthropic.com/v1` | — | `ANTHROPIC_API_KEY` |
+| `openrouter` | `https://openrouter.ai/api/v1` | — | `OPENROUTER_API_KEY` |
+| `groq` | `https://api.groq.com/openai/v1` | — | `GROQ_API_KEY` |
+| `moonshot` | `https://api.moonshot.cn/v1` | — | `MOONSHOT_API_KEY` |
+| `ollama` | `http://localhost:11434/v1` | — | 不需要 |
+
+aiscan 可以从 `--base-url` 自动推断 provider（如 URL 包含 `deepseek.com` 自动识别为 `deepseek`）。
+
+### 多 Provider 降级链
+
+当主 provider 重试耗尽后，agent loop 自动切换到降级链中的下一个 provider 并重放当前 turn。配置文件中通过 `llm.providers` 数组定义，每个 entry 支持 `provider`、`base_url`、`api_key`、`model`、`proxy`、`timeout` 字段。启动时并行初始化，失败的跳过。REPL 中可通过 `/provider` 查看链状态。
+
+### Provider 配置示例
+
+```bash
+# 环境变量
+export OPENAI_API_KEY="sk-..."
+aiscan agent -p "检查目标" -i http://target.example
+
+# 指定 provider
+aiscan agent --provider deepseek --base-url https://api.deepseek.com --api-key "sk-..." --model deepseek-chat
+
+# Ollama 本地模型
+aiscan agent --provider ollama --model llama3 --base-url http://localhost:11434/v1
+
+# 任意 OpenAI 兼容 API
+aiscan agent --base-url https://my-proxy.example/v1 --api-key "$MY_KEY" --model my-model
+
+# 通过代理访问 LLM API
+aiscan agent --llm-proxy http://127.0.0.1:7890
+```
+
+---
+
+## 代理（Proxy）
+
+### Scanner 代理
+
+`--proxy` 参数为扫描器设置代理：
+
+```bash
+aiscan scan -i http://target.example --proxy socks5://127.0.0.1:1080
+aiscan scan -i http://target.example --proxy trojan://password@server:443
+aiscan scan -i http://target.example --proxy vless://uuid@server:443?security=tls
+aiscan scan -i http://target.example --proxy clash://https://subscribe.example/link
+```
+
+Agent 模式下还可通过 `proxy` 工具在运行时动态管理代理，详见 [Agent 模式详解](agent.md)。
+
+### LLM API 代理
+
+`--llm-proxy` 单独为 LLM API 请求设置 HTTP 代理：
+
+```bash
+aiscan agent --llm-proxy http://127.0.0.1:7890 -p "检查目标" -i http://target.example
+```
+
+---
 
 ## 直接使用扫描器
 
@@ -105,77 +242,52 @@ aiscan spray -l urls.txt --finger
 ```bash
 aiscan zombie -i ssh://127.0.0.1:22 --top 3
 aiscan zombie -i ssh://admin@127.0.0.1:22 -p admin123
-aiscan zombie -l services.txt --top 10
 ```
 
 > 注意：`zombie -p` 是密码参数，不是 agent 的 prompt 参数。
 
 ### neutron：POC 检测
 
-模板化 POC 执行，支持按 ID、tag、severity、fingerprint 和模板路径过滤。参数较多，完整列表如下：
-
 | 参数 | 说明 |
 | --- | --- |
 | `-u, --target` | URL、host 或 ip:port，可重复 |
-| `-i, --input` | target 别名 |
 | `-l, --list` | 目标文件 |
 | `-t, --templates` | 自定义模板文件或目录 |
 | `--id` | 按模板 ID 执行 |
 | `--finger` | 按指纹过滤模板 |
-| `--tags, --tag` | 按 tag 过滤模板 |
-| `-s, --severity` | 按严重性过滤（critical, high, medium, low, info） |
+| `--tags` | 按 tag 过滤模板 |
+| `-s, --severity` | 按严重性过滤 |
 | `-c, --concurrency` | 模板并发数 |
 | `--rate-limit` | 每秒执行上限 |
 | `-j, --json` | JSON Lines 输出 |
-| `-o, --output` | 写入文件 |
 | `--template-list` | 列出匹配模板（不执行） |
 
 ```bash
-# 按严重性过滤
 aiscan neutron -u http://target.example -s critical,high
-
-# 按指纹过滤
 aiscan neutron -u http://target.example --finger nginx
-
-# 按 tag 过滤，指定并发和速率限制
 aiscan neutron -l targets.txt --tags cve,rce -c 10 --rate-limit 20
-
-# 使用自定义模板，指定模板 ID
-aiscan neutron -u http://target.example -t ./pocs --id shiro-detect -j -o loots.jsonl
-
-# 列出匹配的模板（不执行扫描）
-aiscan neutron -u http://target.example --template-list
+aiscan neutron -u http://target.example -t ./pocs --id shiro-detect -j
 ```
 
 ### katana：Web 爬虫（仅 full 版）
 
 ```bash
 aiscan katana -u https://target.example -d 3 -jc
-aiscan katana -u https://target.example -d 2 -silent -jsonl
-aiscan katana -u https://target.example -f qurl
-aiscan katana -list urls.txt -d 2 -jc -timeout 60
+aiscan katana -u https://target.example -hl -d 3 -jc       # headless
+aiscan katana -u https://target.example -hh -d 2            # hybrid
 ```
-
-Headless / Hybrid 引擎标志：
 
 | 参数 | 说明 |
 | --- | --- |
-| `-hl, --headless` | 启用 headless 浏览器爬取（实验性） |
-| `-hh, --hybrid` | 启用 headless hybrid 爬取（实验性） |
-| `-cwu, --chrome-ws-url` | 连接已有 Chrome 实例的 debugger URL |
-
-```bash
-aiscan katana -u https://target.example -hl -d 3 -jc       # headless
-aiscan katana -u https://target.example -hh -d 2            # hybrid
-aiscan katana -u https://target.example -cwu ws://127.0.0.1:9222  # 远程 Chrome
-```
+| `-hl, --headless` | 启用 headless 浏览器爬取 |
+| `-hh, --hybrid` | 启用 headless hybrid 爬取 |
+| `-cwu, --chrome-ws-url` | 连接已有 Chrome 实例 |
 
 ### passive：网络空间搜索（仅 full 版）
 
 ```bash
 aiscan passive -s fofa 'domain="example.com"'
 aiscan passive -s hunter 'domain.suffix="example.com"'
-aiscan passive -s shodan-idb '1.2.3.4'
 ```
 
 | 数据源 | 凭据参数 | 环境变量 |
@@ -184,49 +296,74 @@ aiscan passive -s shodan-idb '1.2.3.4'
 | `hunter` | `--hunter-api-key` | `HUNTER_API_KEY` |
 | `shodan-idb` | 无需 API key | — |
 
-附加参数：`--recon-proxy`（搜索引擎 HTTP 代理）、`--recon-limit`（单次查询上限，0 = 无限）。
+---
 
-## cyberhub 资源查询
+## Cyberhub 资源
 
-`cyberhub` 子命令查询和搜索已加载的指纹库与 POC 模板。
+Cyberhub 提供外部指纹库和 POC 模板，可以扩充或替换内置资源。
 
-### 命令格式
-
-```text
-aiscan cyberhub list [finger|poc|all] [options]
-aiscan cyberhub search [finger|poc|all] <query> [options]
-aiscan cyberhub id <name-or-id>
+```bash
+aiscan scan -i http://target.example --cyberhub-url http://127.0.0.1:9000 --cyberhub-key "$CYBERHUB_KEY"
 ```
 
-### 结构化查询标志
+资源模式：`merge`（默认，合并内置和远程）或 `override`（远程覆盖内置）。
 
-| 参数 | 说明 |
-| --- | --- |
-| `--finger` | 按指纹名过滤（支持别名和 CPE 关联） |
-| `--cve` | 按 CVE ID 过滤 |
-| `--vendor` | 按厂商名过滤 |
-| `--product` | 按产品名过滤 |
-| `--poc` | 仅显示有关联 POC 模板的条目 |
-| `--tag` | 按 tag 过滤，逗号分隔或重复 |
-| `-s, --severity` | POC 严重性过滤 |
-| `--limit` | 最大输出行数（默认 50，0 为全部） |
-| `-j, --json` | JSON Lines 输出 |
-
-### 本地缓存
-
-Cyberhub 资源缓存在 `~/.aiscan/cache/`，TTL 24 小时。过期后自动从 Cyberhub 服务重新拉取。
-
-### 示例
+### cyberhub 查询命令
 
 ```bash
 aiscan cyberhub search --finger tomcat
 aiscan cyberhub search --cve CVE-2021-44228
 aiscan cyberhub search --vendor apache --product tomcat
-aiscan cyberhub search finger --poc
 aiscan cyberhub list poc --severity critical --limit 10
 aiscan cyberhub id tomcat
-aiscan cyberhub search poc spring --tag rce -j
 ```
+
+结构化查询标志：`--finger`、`--cve`、`--vendor`、`--product`、`--poc`、`--tag`、`-s`、`--limit`、`-j`。
+
+本地缓存位于 `~/.aiscan/cache/`，TTL 24 小时。
+
+---
+
+## 扫描默认值
+
+```yaml
+scan:
+  verify: "auto"       # auto 等效 high，LLM 不可用时跳过
+  verify_timeout: 0
+```
+
+| 值 | 说明 |
+| --- | --- |
+| `auto` | 编译时默认值；等效 `high`，LLM 不可用时自动跳过 |
+| `off` | 关闭验证 |
+| `low` / `medium` / `high` / `critical` | 验证对应优先级及以上的发现 |
+
+---
+
+## 环境变量汇总
+
+| 变量 | 说明 |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI API key |
+| `OPENAI_BASE_URL` / `OPENAI_BASEURL` | OpenAI/Codex 风格 API base URL |
+| `OPENAI_MODEL` | OpenAI/Codex 风格模型名 |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `ANTHROPIC_BASE_URL` / `ANTHROPIC_BASEURL` | Claude Code 风格 API base URL |
+| `ANTHROPIC_MODEL` | Claude Code 风格模型名 |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `GROQ_API_KEY` | Groq API key |
+| `MOONSHOT_API_KEY` | Moonshot API key |
+| `AISCAN_API_KEY` | 统一 fallback API key（所有 provider 通用） |
+| `AISCAN_BASE_URL` / `AISCAN_LLM_BASE_URL` | 统一 LLM API base URL |
+| `AISCAN_MODEL` / `AISCAN_LLM_MODEL` | 统一模型名 |
+| `AISCAN_PROVIDER` / `AISCAN_LLM_PROVIDER` | 统一 provider 名称 |
+| `AISCAN_LLM_PROXY` | LLM API 请求代理 |
+| `TAVILY_API_KEY` | Tavily Web Search API key（agent `web_search` 工具） |
+| `FOFA_EMAIL` / `FOFA_KEY` | FOFA 凭据 |
+| `HUNTER_API_KEY` | Hunter API key |
+
+---
 
 ## 场景选择建议
 
@@ -238,30 +375,32 @@ aiscan cyberhub search poc spring --tag rce -j
 | 深度动态测试 | `aiscan scan -i <target> --deep` |
 | AI 主动验证 + 漏洞搜索 | `aiscan scan -i <target> --verify=high --sniper` |
 | 自动解释结果和生成结论 | `aiscan agent -p "<任务>" -i <target>` |
+| 目标驱动 + 自动评估 | `aiscan agent -e "<标准>" -p "<任务>" -i <target>` |
 | 对 scanner 输出做 AI 摘要 | `aiscan --ai -p "<意图>" <scanner> ...` |
-| 查询已加载的指纹和 POC | `aiscan cyberhub list poc --severity critical` |
+| 查询指纹和 POC | `aiscan cyberhub search --finger <name>` |
 | 机器可读输出 | `aiscan scan -i <target> -j` |
 | 人可读报告 | `aiscan scan -i <target> --report` |
 | 回看历史扫描记录 | `aiscan -F result.jsonl` |
 | 多 worker 协作 | `aiscan ioa serve` + `aiscan agent --loop --space case-1` |
 | 交互式探索 | `aiscan agent` |
-| 目标驱动 + 自动评估 | `aiscan agent -e "确认所有高危漏洞已验证" -p "<任务>" -i <target>` |
+
+---
 
 ## 常见问题
 
 ### agent 报 provider 未配置
 
-`agent` 必须有可用的 LLM provider。设置对应环境变量或通过 `--api-key` 显式传入：
+设置对应环境变量或通过 `--api-key` 传入：
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-aiscan agent --model gpt-4o -p "检查目标" -i http://target.example
+aiscan agent -p "检查目标" -i http://target.example
 ```
 
 ### scan --verify 没有产生 AI 验证
 
-1. 检查是否配置了 LLM provider（`--api-key` 或环境变量）
-2. 确认发现的风险优先级达到了 `--verify` 指定的阈值（`--verify=high` 只验证 high 及以上）
+1. 检查是否配置了 LLM provider
+2. 确认发现的风险优先级达到了 `--verify` 阈值
 3. 未显式传 `--verify` 时默认 `auto`（等效 `high`），LLM 不可用时静默跳过
 
 ### 输出太多或包含颜色
@@ -280,19 +419,18 @@ aiscan scan -i 192.168.1.0/24 --thread 500        # 降低并发
 
 ### --ai 需要 LLM 但 scan 不需要
 
-顶层 `--ai` 在 scanner 执行后启动 LLM agent 分析输出，必须配置 LLM。`scan` 核心流水线（gogo → spray → zombie → neutron）不依赖 LLM。`scan --verify` 在 LLM 不可用时自动跳过验证，不影响其余扫描。
+顶层 `--ai` 在 scanner 执行后启动 LLM agent 分析输出，必须配置 LLM。`scan` 核心流水线不依赖 LLM。`scan --verify` 在 LLM 不可用时自动跳过。
 
 ### cyberhub 没有结果
 
-1. 检查 `--cyberhub-url` 和 `--cyberhub-key` 是否正确、服务是否可达
-2. 本地缓存在 `~/.aiscan/cache/`（TTL 24 小时），如需强制刷新可删除缓存文件
+检查 `--cyberhub-url`/`--cyberhub-key` 是否正确。本地缓存在 `~/.aiscan/cache/`（TTL 24h），删除缓存可强制刷新。
 
 ### 信号处理
 
-aiscan 使用两阶段信号处理（连续按键间隔超过 5 秒时计数器重置）：
-
 | 操作 | 行为 |
 | --- | --- |
-| 第一次 Ctrl+C | 停止当前任务；无活跃任务时提示再按一次退出 |
-| 第二次 Ctrl+C | 取消上下文，完成当前 turn 后退出 |
+| 第一次 Ctrl+C | 停止当前任务 |
+| 第二次 Ctrl+C | 取消上下文，退出 |
 | 第三次 Ctrl+C | 强制退出进程 |
+
+连续按键间隔超过 5 秒时计数器重置。

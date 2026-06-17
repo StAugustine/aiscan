@@ -1,6 +1,6 @@
 # Agent 模式详解
 
-本文档基于 `v0.2.2` 源码编写，是 Agent 模式的完整参考。基本用法参见 [README](../README.md)，LLM Provider 配置参见 [配置指南](configuration.md)。
+本文档基于 `v0.2.2` 源码编写，是 Agent 模式的完整参考。基本用法参见 [README](../README.md)，LLM Provider 配置参见 [参考手册](reference.md)。
 
 标记 ★ 的功能为 v0.2.2 新增。
 
@@ -533,7 +533,7 @@ llm:
       base_url: "http://localhost:11434/v1"
 ```
 
-主 provider 通过顶层 `llm` 配置指定，`providers` 数组定义降级顺序。完整配置格式参见 [配置指南](configuration.md)。
+主 provider 通过顶层 `llm` 配置指定，`providers` 数组定义降级顺序。完整配置格式参见 [参考手册](reference.md)。
 
 ### 查看状态
 

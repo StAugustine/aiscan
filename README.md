@@ -226,9 +226,8 @@ llm:
 | --- | --- |
 | [Scan 模式详解](docs/scan.md) | 扫描流水线、AI 增强、输出格式 |
 | [Agent 模式详解](docs/agent.md) | Agent 工具集、Goal Evaluation、REPL、信号处理 |
-| [配置指南](docs/configuration.md) | LLM Provider、多 Provider 降级、配置文件、环境变量 |
 | [IOA 协作](docs/ioa.md) | 多 Agent 协作架构、Space/Node/Message 模型 |
-| [CLI 参考](docs/reference.md) | 命令结构、全局参数、扫描器速查、FAQ |
+| [参考手册](docs/reference.md) | 配置、LLM Provider、全局参数、扫描器用法、FAQ |
 
 ## Supported Platforms
 

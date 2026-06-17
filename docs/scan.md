@@ -142,7 +142,7 @@ scan 提供 `quick` 和 `full` 两种预设模式，通过 `--mode` 参数选择
 
 ## AI 增强扫描
 
-scan 提供三种 AI 增强能力，均需要配置 LLM Provider（参考 [配置指南](configuration.md)）。这些能力可以单独使用，也可以组合使用。
+scan 提供三种 AI 增强能力，均需要配置 LLM Provider（参考 [参考手册](reference.md)）。这些能力可以单独使用，也可以组合使用。
 
 ### --verify：AI 验证
 
