@@ -21,6 +21,8 @@ import (
 	"github.com/chainreactors/aiscan/core/runner"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/web"
+	"github.com/chainreactors/ioa/protocols"
+	ioaserver "github.com/chainreactors/ioa/server"
 
 	_ "github.com/chainreactors/aiscan/pkg/tools"
 )
@@ -35,6 +37,7 @@ func main() {
 	debug := flag.Bool("debug", false, "Enable debug logging")
 	maxScans := flag.Int("max-scans", 3, "Maximum concurrent scans")
 	scanTimeout := flag.Int("scan-timeout", 600, "Maximum scan runtime in seconds")
+	ioaToken := flag.String("ioa-token", "", "IOA access key (auto-generated if empty)")
 	flag.Parse()
 
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{
@@ -75,12 +78,24 @@ func main() {
 	})
 	defer service.Close()
 
+	pool := web.NewAgentPool(service.Hub())
+	service.SetAgentPool(pool)
+
 	staticSub, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: load static assets: %s\n", err)
 		os.Exit(1)
 	}
-	handler := web.NewHandler(service, newSPAFileServer(staticSub))
+
+	// Embedded IOA server
+	accessKey := *ioaToken
+	if accessKey == "" {
+		accessKey = protocols.NewToken()
+	}
+	ioaSvc := ioaserver.NewService(ioaserver.NewMemoryStore(), accessKey)
+	ioaHandler := ioaserver.AuthMiddleware(ioaSvc)(ioaserver.NewHandler(ioaSvc))
+
+	handler := web.NewHandler(service, pool, ioaHandler, newSPAFileServer(staticSub))
 
 	srv := &http.Server{
 		Addr:    *addr,
@@ -99,6 +114,7 @@ func main() {
 	}()
 
 	logger.Infof("aiscan web server listening on http://%s", *addr)
+	logger.Infof("IOA server embedded at http://%s/ioa (token=%s)", *addr, accessKey)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)

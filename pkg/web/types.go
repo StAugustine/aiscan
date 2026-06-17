@@ -58,6 +58,7 @@ type ServiceStatus struct {
 	LLMAPIKeyConfigured bool   `json:"llm_api_key_configured,omitempty"`
 	ConfigPath          string `json:"config_path,omitempty"`
 	ConfigLoaded        bool   `json:"config_loaded"`
+	Agents              int    `json:"agents"`
 }
 
 type LLMConfig struct {
