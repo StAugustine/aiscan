@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	sdktypes "github.com/chainreactors/sdk/pkg/types"
+	"github.com/chainreactors/parsers"
 )
 
 // RecordsToResult converts parsed records into a Result for asset report rendering.
@@ -13,10 +13,10 @@ func RecordsToResult(records []Record) *Result {
 	for _, r := range records {
 		switch r.Type {
 		case TypeService:
-			d, _ := ParseRecordData[sdktypes.GOGOResult](r)
+			d, _ := ParseRecordData[parsers.GOGOResult](r)
 			result.Services = append(result.Services, &d)
 		case TypeWeb:
-			d, _ := ParseRecordData[sdktypes.SprayResult](r)
+			d, _ := ParseRecordData[parsers.SprayResult](r)
 			if d.UrlString == "" {
 				continue
 			}
