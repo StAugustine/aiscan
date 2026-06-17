@@ -40,6 +40,10 @@ func NewCommands(client protocols.ClientAPI, nodeName string, meta map[string]an
 	}
 }
 
+type autoRegisterer interface {
+	EnsureRegistered(ctx context.Context, name, description string, meta map[string]any) error
+}
+
 func ensureNode(ctx context.Context, client protocols.ClientAPI, name string, meta map[string]any) error {
 	if client.NodeID() != "" {
 		return nil
@@ -49,6 +53,9 @@ func ensureNode(ctx context.Context, client protocols.ClientAPI, name string, me
 	}
 	if meta == nil {
 		meta = map[string]any{}
+	}
+	if ar, ok := client.(autoRegisterer); ok {
+		return ar.EnsureRegistered(ctx, name, "", meta)
 	}
 	_, err := client.RegisterNode(ctx, name, "", meta)
 	return err

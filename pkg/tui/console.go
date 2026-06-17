@@ -1047,7 +1047,16 @@ func (r *AgentConsole) ioaClient() (*ioaclient.Client, error) {
 	if ioaURL == "" {
 		return nil, fmt.Errorf("IOA not configured: use --ioa-url")
 	}
-	return ioaclient.NewClient(ioaURL, "")
+	client, err := ioaclient.NewClient(ioaURL, "")
+	if err != nil {
+		return nil, err
+	}
+	if client.AccessKey() != "" {
+		if err := client.EnsureRegistered(context.Background(), "aiscan-tui", "", nil); err != nil {
+			return nil, fmt.Errorf("IOA auth: %w", err)
+		}
+	}
+	return client, nil
 }
 
 func (r *AgentConsole) providerCommand() *cobra.Command {
