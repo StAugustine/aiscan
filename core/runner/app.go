@@ -186,6 +186,15 @@ func registerScannerCommands(cmdReg *commands.CommandRegistry, engineSet *engine
 		scanOpts = append(scanOpts, scan.WithDeepBrowserFunc(func(ctx context.Context, targetURL string) (string, error) {
 			return collectDeepBrowserArtifacts(ctx, cmdReg, targetURL, logger)
 		}))
+		if skillStore != nil {
+			scanOpts = append(scanOpts, scan.WithSkillReader(func(name string) string {
+				content, ok, err := skillStore.ReadVirtual("aiscan://skills/scan/" + name + ".md")
+				if !ok || err != nil {
+					return ""
+				}
+				return content
+			}))
+		}
 	}
 	scanOpts = append(scanOpts, scan.WithLogger(logger))
 

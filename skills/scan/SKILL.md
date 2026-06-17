@@ -58,7 +58,7 @@ Notes:
 - `full` uses gogo ports `-` and adds spray plugins (common/bak/active) plus spray default-dictionary probing; crawl depth remains 2.
 - Full builds additionally add katana crawling: `katana_crawl` in quick/full and `katana_deep` in full.
 - Spray web capabilities run with recon enabled in both profiles.
-- `--verify=<level>` asks an LLM agent to validate loots at or above the selected priority.
+- `--verify=<level>` triggers in-pipeline AI verification for loots at or above the specified priority threshold (low, medium, high, critical). Only loots meeting the threshold are sent to a verify sub-agent.
 - `--sniper` asks an LLM agent to perform fingerprint vulnerability intelligence.
 - `--deep` asks an LLM agent to perform browser-backed testing for discovered websites and fingerprint-based deep assessment.
 - User intent decides whether scan output should be summarized, analyzed, validated, reported, or used to choose follow-up commands.

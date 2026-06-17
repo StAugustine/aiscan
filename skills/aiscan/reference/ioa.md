@@ -1,7 +1,3 @@
----
-name: ioa
-description: Use when collaborating with peer agents via IOA (shared message spaces). Covers tool API, message format, and basic coordination rules. For multi-agent swarm coordination without a central controller, also read aiscan://skills/ioa/swarm.md.
----
 
 # IOA — Inter-Operator Async Collaboration
 
@@ -103,4 +99,4 @@ These apply in any multi-agent scenario:
 
 ## 4. Multi-Agent Swarm
 
-When working in a swarm (2+ agents, no central controller), read the full coordination protocol at `aiscan://skills/ioa/swarm.md`. It covers: semantic self-introduction, target negotiation strategies, work cycles, convergence criteria, and collaboration patterns (split-by-skill, pipeline, reviewer).
+When working in a swarm (2+ agents, no central controller), read the full coordination protocol at `aiscan://skills/aiscan/reference/ioa-swarm.md`. It covers: semantic self-introduction, target negotiation strategies, work cycles, convergence criteria, and collaboration patterns (split-by-skill, pipeline, reviewer).

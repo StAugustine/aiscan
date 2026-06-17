@@ -38,3 +38,11 @@ func (c *Command) Configure(opts ...Option) {
 func WithDeepBrowserFunc(fn DeepBrowserFunc) Option {
 	return func(c *Command) { c.deepBrowser = fn }
 }
+
+// SkillReader reads a scan sub-skill by name (e.g. "verify", "sniper", "deep").
+// Returns the skill content or "" if not found.
+type SkillReader func(name string) string
+
+func WithSkillReader(r SkillReader) Option {
+	return func(c *Command) { c.readSkill = r }
+}

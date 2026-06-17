@@ -99,7 +99,11 @@ func formatMarkdown(d *collector) string {
 			}
 			return a.Description < b.Description
 		}) {
-			writeMarkdownEventLine(&sb, lootEvent(loot.Kind, loot))
+			status, _ := loot.Data["verification_status"].(string)
+			line := formatEventLine(lootEvent(loot.Kind, loot), false)
+			if line != "" {
+				writeMarkdownStatusLine(&sb, line, status)
+			}
 		}
 	}
 

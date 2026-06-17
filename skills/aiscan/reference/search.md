@@ -1,8 +1,3 @@
----
-name: search
-description: Use this skill to learn how to use the cyberhub pseudo-command for querying loaded fingerprints and POC templates.
-internal: true
----
 
 # cyberhub (also: search cyberhub)
 

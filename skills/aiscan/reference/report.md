@@ -1,7 +1,3 @@
----
-name: report
-description: Use this skill to generate a concise security scan report from scan results in natural language.
----
 
 # Report
 

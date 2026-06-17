@@ -52,7 +52,7 @@ Do not report these as confirmed vulnerabilities unless there is an impact chain
 
 ## Output Format
 
-When verification is complete, call the `checkpoint` tool:
+When verification is complete, call the `checkpoint` tool (or `ioa_send checkpoint` in IOA collaboration mode):
 
 - **kind**: "verify"
 - **target**: host:port or URL verified

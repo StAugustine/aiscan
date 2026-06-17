@@ -1,8 +1,3 @@
----
-name: tmux
-description: Session management for long-running commands. Covers session lifecycle, output reading modes, incremental monitoring, and best practices.
----
-
 # tmux - Session Manager
 
 tmux is the PTY session manager built into aiscan. All `bash` commands run inside tmux sessions. Commands completing within 15 seconds return output inline; longer commands are auto-backgrounded with incremental output delivered to the agent inbox automatically.

@@ -5,6 +5,19 @@ import (
 	"github.com/chainreactors/parsers"
 )
 
+func verificationLabel(status string) string {
+	switch status {
+	case "confirmed":
+		return "[verified]"
+	case "not_confirmed":
+		return "[not confirmed]"
+	case "inconclusive":
+		return "[inconclusive]"
+	default:
+		return "[ai:" + status + "]"
+	}
+}
+
 func formatEventLine(event event, color bool) string {
 	c := output.NewColor(color)
 	switch event.Kind {
@@ -35,20 +48,25 @@ func formatEventLine(event event, color bool) string {
 			return ""
 		}
 		loot := event.Loot
+		var label string
 		switch loot.Kind {
 		case output.LootFingerprint:
 			focus, _ := loot.Data["focus"].(bool)
 			if !focus {
 				return ""
 			}
-			return output.FormatLine(output.OutputPrefix("fingerprint", c.ForPriority(loot.Priority)), loot.Description, c)
+			label = "fingerprint"
 		case output.LootWeakpass:
-			return output.FormatLine(output.OutputPrefix("risk", c.ForPriority(loot.Priority)), loot.Description, c)
+			label = "risk"
 		case output.LootVuln:
-			return output.FormatLine(output.OutputPrefix("vuln", c.ForPriority(loot.Priority)), loot.Description, c)
+			label = "vuln"
 		default:
-			return output.FormatLine(output.OutputPrefix(loot.Kind, c.ForPriority(loot.Priority)), loot.Description, c)
+			label = loot.Kind
 		}
+		if status, _ := loot.Data["verification_status"].(string); status != "" {
+			label = verificationLabel(status) + " " + label
+		}
+		return output.FormatLine(output.OutputPrefix(label, c.ForPriority(loot.Priority)), loot.Description, c)
 	case eventError:
 		if event.Error.Message == "" {
 			return ""

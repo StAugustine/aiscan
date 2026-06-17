@@ -19,7 +19,7 @@ Assessment criteria:
 
 ## Output Format
 
-When you have completed analysis, call the `checkpoint` tool:
+When you have completed analysis, call the `checkpoint` tool (or `ioa_send checkpoint` in IOA collaboration mode):
 
 - **kind**: "sniper"
 - **target**: the host:port or URL you analyzed

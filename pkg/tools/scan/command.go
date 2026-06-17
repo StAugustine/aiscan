@@ -21,6 +21,7 @@ type Command struct {
 	engines     *engine.Set
 	parent      *agent.Agent
 	deepBrowser DeepBrowserFunc
+	readSkill   SkillReader
 	logger      telemetry.Logger
 	proxy       string
 	workDir     string
@@ -165,10 +166,13 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 	if err != nil {
 		return "", nil, fmt.Errorf("scan: %w", err)
 	}
+	var verifyLevel priority
 	if flags.Verify != "" && flags.Verify != "off" {
-		if _, err := parsePriority(flags.Verify); err != nil {
+		vl, err := parsePriority(flags.Verify)
+		if err != nil {
 			return "", nil, fmt.Errorf("scan: %w", err)
 		}
+		verifyLevel = vl
 	}
 	options := resolveScanOptions(flags)
 
@@ -228,6 +232,14 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 		return "", nil, fmt.Errorf("scan: %w", err)
 	}
 	p.Run(seedsToEvents(seeds))
+
+	if c.parent != nil && verifyLevel != "" {
+		runVerifyPass(ctx, c.parent, c.readSkill, coll, verifyLevel, c.logger)
+	}
+	if c.parent != nil && flags.Sniper {
+		runSniperPass(ctx, c.parent, c.readSkill, coll, c.logger)
+	}
+
 	coll.Finish()
 
 	var out string

@@ -1,7 +1,7 @@
 package skills
 
-var baseExpectedSkills = []string{"aiscan", "ioa", "playwright", "scan", "gogo", "spray", "zombie", "neutron", "report", "search"}
-var baseInternalSkills = []string{"playwright", "scan", "gogo", "spray", "zombie", "neutron", "search"}
+var baseExpectedSkills = []string{"aiscan", "playwright", "scan", "gogo", "spray", "zombie", "neutron"}
+var baseInternalSkills = []string{"playwright", "scan", "gogo", "spray", "zombie", "neutron"}
 
 var extraExpected []string
 var extraInternal []string
