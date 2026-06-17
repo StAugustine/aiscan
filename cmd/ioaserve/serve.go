@@ -8,8 +8,9 @@ import (
 )
 
 type Config struct {
-	URL string
-	DB  string
+	URL   string
+	Token string
+	DB    string
 }
 
 func RunServe(ctx context.Context, cfg Config, logger telemetry.Logger) error {
@@ -21,7 +22,8 @@ func RunServe(ctx context.Context, cfg Config, logger telemetry.Logger) error {
 		defer func() { _ = closeStore() }()
 	}
 	return ioaserver.RunServer(ctx, ioaserver.ServerOptions{
-		URL:   cfg.URL,
-		Store: store,
+		URL:       cfg.URL,
+		AccessKey: cfg.Token,
+		Store:     store,
 	})
 }

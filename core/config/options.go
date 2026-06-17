@@ -66,7 +66,8 @@ type AgentOptions struct {
 }
 
 type IOAOptions struct {
-	IOAURL      string `long:"ioa-url" config:"url" description:"IOA server URL for agent tools"`
+	IOAURL      string `long:"ioa-url" config:"url" description:"IOA server URL (supports http://token@host:port for auth)"`
+	IOAToken    string `long:"ioa-token" config:"token" description:"IOA server access key (for 'ioa serve'; auto-generated if empty)"`
 	IOANodeID   string `long:"ioa-node-id" description:"Existing IOA node id for agent tools"`
 	IOANodeName string `long:"ioa-node-name" config:"node_name" description:"IOA node name when auto-registering"`
 	Space       string `long:"space" config:"space" description:"IOA space name for 'aiscan agent --loop'" default:"default"`

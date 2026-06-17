@@ -224,9 +224,17 @@ func (a *App) InitIOA(ctx context.Context, ioa cfg.IOAConfig) error {
 		commands.BuildGroup("ioa", deps, a.Commands)
 	}
 	if ioa.AutoRegister && client != nil && client.NodeID() == "" {
-		_, err := client.RegisterNode(ctx, ioa.NodeName, "", ioa.NodeMeta)
-		if err != nil {
-			return err
+		type autoRegisterer interface {
+			EnsureRegistered(ctx context.Context, name, description string, meta map[string]any) error
+		}
+		if ar, ok := client.(autoRegisterer); ok {
+			if err := ar.EnsureRegistered(ctx, ioa.NodeName, "", ioa.NodeMeta); err != nil {
+				return err
+			}
+		} else {
+			if _, err := client.RegisterNode(ctx, ioa.NodeName, "", ioa.NodeMeta); err != nil {
+				return err
+			}
 		}
 	}
 	if ioa.Space != "" && client != nil && client.NodeID() != "" {
