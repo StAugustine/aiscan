@@ -58,8 +58,8 @@
 aiscan scan -i 192.168.1.0/24
 
 # 有 LLM，一行启动 agent
-export OPENAI_API_KEY="sk-..."
-aiscan agent -p "扫描目标并检查高风险漏洞" -i 192.168.1.0/24
+aiscan agent --base-url "https://api.deepseek.com" --api-key "sk-..." --model deepseek-chat \
+  -p "扫描目标并检查高风险漏洞" -i 192.168.1.0/24
 ```
 
 安装：从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载二进制文件（**aiscan** 基础版 / **aiscan-full** 完整版含 playwright + katana + passive）。
