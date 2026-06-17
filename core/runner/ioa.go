@@ -27,7 +27,7 @@ func RunIOAClientCommand(ctx context.Context, mode cfg.RunMode, option *cfg.Opti
 }
 
 func ResolveIOANodeName(option *cfg.Option) string {
-	if option.IOANodeName != "" {
+	if option != nil && option.IOANodeName != "" {
 		return option.IOANodeName
 	}
 	var b [4]byte

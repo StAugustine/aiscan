@@ -9,13 +9,12 @@ import (
 	"time"
 
 	cfg "github.com/chainreactors/aiscan/core/config"
+	"github.com/chainreactors/aiscan/core/eventbus"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/agent/evaluator"
 	inboxpkg "github.com/chainreactors/aiscan/pkg/agent/inbox"
 	tmuxpkg "github.com/chainreactors/aiscan/pkg/agent/tmux"
-	
 	cmdpkg "github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/core/eventbus"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/tools/toolargs"
 	"github.com/chainreactors/aiscan/pkg/tui"
@@ -28,6 +27,7 @@ import (
 
 type AgentRuntime struct {
 	App          *App
+	NodeName     string
 	SystemPrompt string
 	Config       agent.Config
 	Bus          *eventbus.Bus[agent.Event]
@@ -77,11 +77,14 @@ func NewAgentRuntime(ctx context.Context, option *cfg.Option, logger telemetry.L
 		}
 	}
 
+	nodeName := ResolveIOANodeName(option)
+	rt.NodeName = nodeName
+
 	pc := &PromptConfig{
 		Tools:       rt.App.Commands,
 		ScannerDocs: rt.App.Commands.UsageDocs(),
 		Skills:      rt.App.Skills.Skills,
-		NodeName:    ResolveIOANodeName(option),
+		NodeName:    nodeName,
 		Space:       option.Space,
 	}
 	for _, name := range option.Skills {
@@ -211,7 +214,6 @@ func (rt *AgentRuntime) Close() {
 	}
 }
 
-
 // ---------------------------------------------------------------------------
 // Mode dispatch
 // ---------------------------------------------------------------------------
@@ -332,6 +334,19 @@ func runLoop(ctx context.Context, option *cfg.Option, logger telemetry.Logger) e
 	}
 	defer rt.Close()
 
+	// Wait for scanner engines, then connect to web via WebSocket.
+	callbackDone := make(chan struct{})
+	go func() {
+		defer close(callbackDone)
+		_ = rt.App.WaitEngines(ctx)
+		webURL := DeriveWebURL(ioaURL)
+		if webURL == "" {
+			return
+		}
+		logger.Debugf("web callback to %s", webURL)
+		_ = RunWebCallback(ctx, webURL, rt.NodeName, rt.App.Commands, rt.Bus)
+	}()
+
 	prompt := strings.TrimSpace(option.Prompt)
 	if prompt != "" && len(option.Inputs) > 0 {
 		prompt = fmt.Sprintf("%s\n\nTargets:\n%s", prompt, cfg.FormatInputs(option.Inputs))
@@ -339,6 +354,8 @@ func runLoop(ctx context.Context, option *cfg.Option, logger telemetry.Logger) e
 
 	loopCfg := rt.Config.WithSystemPrompt(rt.SystemPrompt).WithStream(true)
 	_, err = agent.NewAgent(loopCfg).Run(ctx, prompt)
+
+	<-callbackDone
 	return err
 }
 

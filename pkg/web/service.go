@@ -263,7 +263,7 @@ func (s *Service) runScanViaAgent(ctx context.Context, job *ScanJob) {
 		return
 	}
 
-	cmd := strings.Join(scanArgsForJob(job), " ")
+	cmd := "scan " + strings.Join(scanArgsForJob(job), " ")
 	resultCh, err := s.agents.DispatchCommand(agent.id, job.ID, cmd)
 	if err != nil {
 		s.failJob(job, err.Error())
@@ -450,7 +450,7 @@ func (w *sseStreamWriter) Write(p []byte) (int, error) {
 		w.job = current
 
 		w.hub.Broadcast(w.scanID, HubEvent{
-			Type: "output",
+			Type: "progress",
 			Data: mustJSON(map[string]string{"scan_id": w.scanID, "data": line}),
 		})
 	}

@@ -257,8 +257,10 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 	switch msg.Type {
 	case "output":
 		if p.hub != nil && msg.TaskID != "" {
-			raw, _ := json.Marshal(msg)
-			p.hub.Broadcast(msg.TaskID, HubEvent{Type: "output", Data: raw})
+			p.hub.Broadcast(msg.TaskID, HubEvent{
+				Type: "progress",
+				Data: mustJSON(map[string]string{"scan_id": msg.TaskID, "data": msg.Data}),
+			})
 		}
 
 	case "complete":
@@ -287,13 +289,21 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 		}
 
 	default:
-		// Agent events (agent.*, log.*, scanner.*) — forward raw payload to hub.
+		// Agent events (agent.*, log.*, scanner.*) are shown in the same
+		// progress stream as scanner output for the task that produced them.
 		if p.hub != nil && msg.TaskID != "" {
-			data := msg.Payload
-			if data == nil {
-				data, _ = json.Marshal(msg)
-			}
-			p.hub.Broadcast(msg.TaskID, HubEvent{Type: msg.Type, Data: data})
+			raw, _ := json.Marshal(map[string]string{
+				"scan_id": msg.TaskID,
+				"data":    formatTelemetryProgress(msg),
+			})
+			p.hub.Broadcast(msg.TaskID, HubEvent{Type: "progress", Data: raw})
 		}
 	}
+}
+
+func formatTelemetryProgress(msg WSMessage) string {
+	if msg.Data == "" {
+		return "[" + msg.Type + "]"
+	}
+	return fmt.Sprintf("[%s] %s", msg.Type, msg.Data)
 }
