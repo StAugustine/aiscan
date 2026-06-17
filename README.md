@@ -53,29 +53,16 @@
 
 ## Quick Start
 
-### 安装
-
-从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载对应平台的二进制文件：
-
-- **aiscan** — 基础版，包含 scan/agent/gogo/spray/zombie/neutron
-- **aiscan-full** — 完整版，额外包含 playwright 浏览器、passive recon、katana 爬虫
-
 ```bash
-# Linux
-curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_linux_amd64
-chmod +x aiscan
-sudo mv aiscan /usr/local/bin/
+# 无需 LLM，一行启动扫描
+aiscan scan -i 192.168.1.0/24
 
-# macOS (Apple Silicon)
-curl -L -o aiscan https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_darwin_arm64
-chmod +x aiscan && xattr -d com.apple.quarantine aiscan 2>/dev/null || true
-sudo mv aiscan /usr/local/bin/
+# 有 LLM，一行启动 agent
+export OPENAI_API_KEY="sk-..."
+aiscan agent -p "扫描目标并检查高风险漏洞" -i 192.168.1.0/24
 ```
 
-```powershell
-# Windows
-Invoke-WebRequest "https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_windows_amd64.exe" -OutFile aiscan.exe
-```
+安装：从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载二进制文件（**aiscan** 基础版 / **aiscan-full** 完整版含 playwright + katana + passive）。
 
 ---
 
