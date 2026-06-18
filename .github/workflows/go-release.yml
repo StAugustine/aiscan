@@ -82,6 +82,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Warm Go build cache
+        run: |
+          echo "::group::Pre-build shared packages"
+          CGO_ENABLED=0 go build -tags "forceposix emptytemplates noembed osusergo netgo full sqlite" ./cmd/aiscan/...
+          echo "::endgroup::"
+
       - name: Install upx
         run: sudo apt install upx -y
         continue-on-error: true
@@ -91,7 +97,7 @@ jobs:
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: release --clean
+          args: release --clean -p 2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOPATH: "/home/runner/go"
