@@ -126,7 +126,27 @@ Session Subcommands (multi-step interactive workflows):
 
   Vuln Verification:
     dialog <session> --arm|--check|--disarm     JS dialog capture (XSS verification)
-    cookies <session> --list|--set k=v|--clear  Cookie management
+
+  Storage Management (playwright-cli aligned):
+    cookie-list <session>                       List all cookies
+    cookie-get <session> <name>                 Get a specific cookie by name
+    cookie-set <session> <n=v> [n=v...]         Set cookies
+    cookie-delete <session> <name>              Delete a specific cookie
+    cookie-clear <session>                      Clear all cookies
+    cookies <session> --list|--set|--clear       (legacy alias)
+    localstorage-list <session>                 List all localStorage items
+    localstorage-get <session> <key>            Get a localStorage item
+    localstorage-set <session> <key> <value>    Set a localStorage item
+    localstorage-delete <session> <key>         Delete a localStorage item
+    localstorage-clear <session>                Clear all localStorage
+    sessionstorage-list <session>               List all sessionStorage items
+    sessionstorage-get <session> <key>          Get a sessionStorage item
+    sessionstorage-set <session> <key> <value>  Set a sessionStorage item
+    sessionstorage-delete <session> <key>       Delete a sessionStorage item
+    sessionstorage-clear <session>              Clear all sessionStorage
+
+  DevTools:
+    console <session> [--clear]                 Show/clear captured console messages
 
 Recording (nuclei headless template codegen):
   record <session> --start                            Start recording actions
@@ -310,6 +330,46 @@ func (c *Command) Execute(ctx context.Context, args []string, w io.Writer) error
 		result, err = c.execDialog(ctx, subArgs)
 	case "cookies":
 		result, err = c.execCookies(ctx, subArgs)
+
+	// --- Cookie management (playwright-cli aligned) ---
+	case "cookie-list":
+		result, err = c.execCookieList(ctx, subArgs)
+	case "cookie-get":
+		result, err = c.execCookieGet(ctx, subArgs)
+	case "cookie-set":
+		result, err = c.execCookieSet(ctx, subArgs)
+	case "cookie-delete":
+		result, err = c.execCookieDelete(ctx, subArgs)
+	case "cookie-clear":
+		result, err = c.execCookieClear(ctx, subArgs)
+
+	// --- Console ---
+	case "console":
+		result, err = c.execConsole(ctx, subArgs)
+
+	// --- localStorage ---
+	case "localstorage-list":
+		result, err = c.execWebStorageList(ctx, subArgs, "localStorage")
+	case "localstorage-get":
+		result, err = c.execWebStorageGet(ctx, subArgs, "localStorage")
+	case "localstorage-set":
+		result, err = c.execWebStorageSet(ctx, subArgs, "localStorage")
+	case "localstorage-delete":
+		result, err = c.execWebStorageDelete(ctx, subArgs, "localStorage")
+	case "localstorage-clear":
+		result, err = c.execWebStorageClear(ctx, subArgs, "localStorage")
+
+	// --- sessionStorage ---
+	case "sessionstorage-list":
+		result, err = c.execWebStorageList(ctx, subArgs, "sessionStorage")
+	case "sessionstorage-get":
+		result, err = c.execWebStorageGet(ctx, subArgs, "sessionStorage")
+	case "sessionstorage-set":
+		result, err = c.execWebStorageSet(ctx, subArgs, "sessionStorage")
+	case "sessionstorage-delete":
+		result, err = c.execWebStorageDelete(ctx, subArgs, "sessionStorage")
+	case "sessionstorage-clear":
+		result, err = c.execWebStorageClear(ctx, subArgs, "sessionStorage")
 
 	// --- Network & Headers ---
 	case "set-extra-headers":

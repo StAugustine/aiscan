@@ -1,6 +1,6 @@
 ---
 name: playwright
-description: Use this skill to learn how to use the playwright pseudo-command for headless browsing, screenshots, network capture, and interactive vulnerability verification. Aligned with Playwright API conventions.
+description: Use this skill to learn how to use the playwright pseudo-command for headless browsing, screenshots, network capture, and interactive vulnerability verification. Aligned with microsoft/playwright-cli conventions.
 internal: true
 ---
 
@@ -8,7 +8,7 @@ internal: true
 
 Headless Chromium browser for interacting with JS-rendered pages, taking screenshots, capturing network traffic, executing JavaScript, and performing **multi-step interactive vulnerability verification**. Powered by go-rod with stealth anti-bot-detection and katana script injection for smart form discovery, event listener capture, and SPA route detection.
 
-Command names are aligned with the [Playwright API](https://playwright.dev/docs/api/class-page) for familiarity.
+Command names are aligned with [microsoft/playwright-cli](https://github.com/microsoft/playwright-cli) for familiarity.
 
 ## Unified URL Or Session Commands
 
@@ -35,13 +35,14 @@ playwright content <url> [--timeout <seconds>] [--user-agent <string>]
 playwright content <session> [selector]
 ```
 
-### evaluate
+### eval
 Execute a JavaScript expression on a URL or session page.
 ```bash
-playwright evaluate <url> <expression>
-playwright evaluate <url> --script "document.querySelectorAll('a').length"
-playwright evaluate <session> "document.title"
+playwright eval <url> <expression>
+playwright eval <url> --script "document.querySelectorAll('a').length"
+playwright eval <session> "document.title"
 ```
+Alias: `evaluate`
 
 ### network
 Navigate to a URL and capture all network requests/responses, or control session network capture.
@@ -76,6 +77,7 @@ playwright sessions
 - Max 8 concurrent sessions
 - Session name is auto-generated if `--session` is omitted
 - `playwright sessions` lists all active sessions with URL and age
+- Console messages are automatically captured from session open (retrieve with `console`)
 
 ### discover
 Call katana's injected JS to enumerate all interactive elements on the page: forms (with their fields), buttons, elements with onclick handlers, **event listeners** (captured by hooks), and **SPA navigated links** (pushState, fetch, WebSocket URLs).
@@ -94,24 +96,53 @@ Smart form filling using katana's heuristics. Automatically infers values based 
 playwright autofill <session> [--form 0] [--data "username=admin,password=test123"]
 ```
 
-### click / fill / select-option / wait-for
+### click / fill / type / select-option / wait-for
 ```bash
 playwright click <session> <selector>
+playwright dblclick <session> <selector>
 playwright fill <session> <selector> <value>
+playwright type <session> <selector> <text>
+playwright press <session> <selector> <key>
+playwright hover <session> <selector>
 playwright select-option <session> <selector> <value>
+playwright check <session> <selector>
+playwright uncheck <session> <selector>
+playwright set-input-files <session> <selector> <path...>
+playwright focus <session> <selector>
+playwright blur <session> <selector>
+playwright tap <session> <selector>
 playwright wait-for <session> <selector|--idle|--stable>
+playwright wait-for-url <session> <url-substring>
+playwright wait-for-request <session> <url-substring>
+playwright wait-for-response <session> <url-substring>
+playwright dispatch-event <session> <selector> <event-type>
 ```
 
 ### Extraction and current URL
 ```bash
 playwright goto <session> [selector]           # Extract visible text
 playwright content <session> [selector]        # Extract HTML
-playwright evaluate <session> <js-expression>  # Execute JS in session
+playwright eval <session> <js-expression>      # Execute JS in session
 playwright screenshot <session> [--output f] [--selector s] [--full-page]
 playwright url <session>                       # Current URL and title
+playwright get-attribute <session> <sel> <attr>
+playwright input-value <session> <selector>
+playwright inner-text <session> <selector>
+playwright is-visible <session> <selector>
+playwright is-hidden <session> <selector>
+playwright is-checked <session> <selector>
+playwright is-disabled <session> <selector>
+playwright is-enabled <session> <selector>
 ```
 
-Short aliases (backward compat): `text-content`, `inner-html`, `navigate`, `eval`, `select`, `wait`, `text`, `html`, `seval`, `sshot`, `netcap`.
+Short aliases (backward compat): `text-content`, `inner-html`, `navigate`, `evaluate`, `select`, `wait`, `text`, `html`, `seval`, `sshot`.
+
+### Navigation
+```bash
+playwright reload <session>
+playwright go-back <session>
+playwright go-forward <session>
+```
 
 ### dialog (XSS verification)
 Capture JavaScript alert/confirm/prompt dialogs. Arm the listener before triggering the payload.
@@ -121,11 +152,52 @@ playwright dialog <session> --check   # Return captured dialogs (JSON)
 playwright dialog <session> --disarm  # Stop listening
 ```
 
-### cookies
+### Storage Management (playwright-cli aligned)
+
+#### Cookies
+Individual commands aligned with microsoft/playwright-cli `cookie-*` style:
 ```bash
-playwright cookies <session> --list
-playwright cookies <session> --set name=value [name2=value2]
-playwright cookies <session> --clear
+playwright cookie-list <session>                     # List all cookies
+playwright cookie-get <session> <name>               # Get a specific cookie by name
+playwright cookie-set <session> <name=value> [...]   # Set one or more cookies
+playwright cookie-delete <session> <name>            # Delete a specific cookie
+playwright cookie-clear <session>                    # Clear all cookies
+```
+Legacy alias: `cookies <session> --list|--set k=v|--clear`
+
+#### localStorage
+```bash
+playwright localstorage-list <session>               # List all localStorage items
+playwright localstorage-get <session> <key>          # Get a localStorage item
+playwright localstorage-set <session> <key> <value>  # Set a localStorage item
+playwright localstorage-delete <session> <key>       # Delete a localStorage item
+playwright localstorage-clear <session>              # Clear all localStorage
+```
+
+#### sessionStorage
+```bash
+playwright sessionstorage-list <session>               # List all sessionStorage items
+playwright sessionstorage-get <session> <key>          # Get a sessionStorage item
+playwright sessionstorage-set <session> <key> <value>  # Set a sessionStorage item
+playwright sessionstorage-delete <session> <key>       # Delete a sessionStorage item
+playwright sessionstorage-clear <session>              # Clear all sessionStorage
+```
+
+### DevTools
+
+#### console
+Console messages (console.log, console.error, etc.) are automatically captured from session open.
+```bash
+playwright console <session>           # Show all captured console messages
+playwright console <session> --clear   # Clear captured messages
+```
+
+### Headers & Interception
+```bash
+playwright set-extra-headers <session> <json>          # Add extra HTTP headers (e.g. Authorization)
+playwright set-viewport <session> <width> <height>     # Set viewport dimensions
+playwright route <session> <pattern> --fulfill|--abort|--continue [options]
+playwright unroute <session>                           # Remove all request interception routes
 ```
 
 ## Recording (nuclei headless template codegen)
@@ -141,7 +213,7 @@ playwright open http://target.com/login --session s1 --record
 playwright record s1 --start
 ```
 
-When `--record` is active, every interaction command (click, fill, press, select-option, wait-for, evaluate, etc.) is automatically captured as a nuclei headless action.
+When `--record` is active, every interaction command (click, fill, press, select-option, wait-for, eval, etc.) is automatically captured as a nuclei headless action.
 
 ### Export recorded template
 ```bash
@@ -189,7 +261,7 @@ playwright template interaction.yaml http://target3.com/search
 | `fill` / `type` | `text` |
 | `press` | `keyboard` |
 | `select-option` | `select` |
-| `evaluate` | `script` |
+| `eval` | `script` |
 | `wait-for --stable` | `waitstable` |
 | `wait-for --idle` | `waitidle` |
 | `wait-for <selector>` | `waitvisible` |
@@ -227,24 +299,53 @@ playwright template self-contained-check.yaml http://target.com
 
 Use browser automation when evidence depends on rendered DOM, user interaction, dialogs, cookies, storage, client-side routing, screenshots, or network traces. Keep tests low-risk, use unique canaries for input experiments, and close sessions when finished. When an interaction is confirmed as useful evidence, save a screenshot or recorded template only as needed for reproducibility.
 
-## Playwright API Mapping
+## playwright-cli Command Mapping
 
-| playwright command | Playwright API equivalent |
-|---|---|
-| `goto` | `page.goto()` |
-| `click` | `locator.click()` |
-| `fill` | `locator.fill()` |
-| `select-option` | `locator.selectOption()` |
-| `wait-for` | `locator.waitFor()` / `page.waitForLoadState()` |
-| `evaluate` | `page.evaluate()` |
-| `screenshot` | `page.screenshot()` / `locator.screenshot()` |
-| `content` | `page.content()` |
-| `url` | `page.url()` |
-| `cookies` | `context.cookies()` |
-| `dialog --arm` | `page.on('dialog')` |
-| `network --start` | `page.on('request')` |
+| microsoft/playwright-cli | aiscan playwright | notes |
+|---|---|---|
+| `open` | `open` | |
+| `goto` | `goto` | |
+| `close` | `close` | |
+| `click` | `click` | |
+| `dblclick` | `dblclick` | |
+| `fill` | `fill` | |
+| `type` | `type` | |
+| `press` | `press` | |
+| `hover` | `hover` | |
+| `select` | `select-option` | alias: `select` |
+| `check` | `check` | |
+| `uncheck` | `uncheck` | |
+| `eval` | `eval` | alias: `evaluate` |
+| `screenshot` | `screenshot` | |
+| `pdf` | `pdf` | |
+| `reload` | `reload` | |
+| `go-back` | `go-back` | alias: `back` |
+| `go-forward` | `go-forward` | alias: `forward` |
+| `cookie-list` | `cookie-list` | |
+| `cookie-get` | `cookie-get` | |
+| `cookie-set` | `cookie-set` | |
+| `cookie-delete` | `cookie-delete` | |
+| `cookie-clear` | `cookie-clear` | |
+| `localstorage-list` | `localstorage-list` | |
+| `localstorage-get` | `localstorage-get` | |
+| `localstorage-set` | `localstorage-set` | |
+| `localstorage-delete` | `localstorage-delete` | |
+| `localstorage-clear` | `localstorage-clear` | |
+| `sessionstorage-list` | `sessionstorage-list` | |
+| `sessionstorage-get` | `sessionstorage-get` | |
+| `sessionstorage-set` | `sessionstorage-set` | |
+| `sessionstorage-delete` | `sessionstorage-delete` | |
+| `sessionstorage-clear` | `sessionstorage-clear` | |
+| `console` | `console` | auto-captured from session open |
+| `route` | `route` | |
+| `unroute` | `unroute` | |
+| `snapshot` | — | not implemented (use `discover` for form/element discovery) |
+| `tab-list` / `tab-new` / `tab-close` | — | not implemented (use multiple sessions) |
+| `dialog-accept` / `dialog-dismiss` | `dialog --arm` | aiscan auto-accepts and captures all dialogs |
+| `resize` | `set-viewport` | |
+| `state-save` / `state-load` | `--save-storage` / `--load-storage` | flags on `open` / `close` |
 
-## aiscan Extensions (no Playwright CLI equivalent)
+## aiscan Extensions (no playwright-cli equivalent)
 
 | command | purpose |
 |---|---|
@@ -263,6 +364,7 @@ Use browser automation when evidence depends on rendered DOM, user interaction, 
   - SPA route detection via pushState/replaceState/fetch/WebSocket hooks (`window.__navigatedLinks`)
   - Form reset prevention
   - setTimeout/setInterval acceleration (0.1x factor, disable with `--no-speed-up`)
+- Console messages are auto-captured from session open — retrieve with `console <session>`.
 - Sessions persist until explicitly closed — the agent is responsible for calling `playwright close`.
 - Chromium is automatically downloaded on first launch if not found.
 - Selectors may be CSS or `xpath:<xpath>` — interaction commands accept both.

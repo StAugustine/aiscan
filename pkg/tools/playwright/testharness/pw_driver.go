@@ -15,6 +15,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,8 +55,9 @@ func main() {
 			break
 		}
 
-		out, err := cmd.Execute(ctx, req.Args)
-		resp := response{Output: out}
+		var buf bytes.Buffer
+		err := cmd.Execute(ctx, req.Args, &buf)
+		resp := response{Output: buf.String()}
 		if err != nil {
 			resp.Error = err.Error()
 		}

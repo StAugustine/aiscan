@@ -274,7 +274,14 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 		return "", fmt.Errorf("playwright open: hooks activation: %w", err)
 	}
 
-	// 3. Optionally disable setTimeout/setInterval acceleration.
+	// 3. Console capture hook (captures all console.* calls into window.__consoleBuffer).
+	if _, err := page.EvalOnNewDocument(consoleHookJS); err != nil {
+		_ = page.Close()
+		_ = incognito.Close()
+		return "", fmt.Errorf("playwright open: console hook: %w", err)
+	}
+
+	// 4. Optionally disable setTimeout/setInterval acceleration.
 	if o.noSpeedUp {
 		pinTimers := `(function () {
     Object.defineProperty(window, "setTimeout", { value: window.setTimeout, writable: false, configurable: false });
@@ -287,7 +294,7 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 		}
 	}
 
-	// 4. Katana JS environment (utils.js + page-init.js via EvalOnNewDocument)
+	// 5. Katana JS environment
 	if err := katanajs.InitJavascriptEnv(page); err != nil {
 		_ = page.Close()
 		_ = incognito.Close()
