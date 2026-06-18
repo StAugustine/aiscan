@@ -211,10 +211,23 @@ func TestArsenalE2E_InstallRegisteredCR(t *testing.T) {
 		t.Errorf("gogo binary too small: %d bytes", info.Size())
 	}
 
-	// Install again should fail (already installed).
+	// Install again should be idempotent (not error).
 	r = callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if !r.IsError {
-		t.Error("re-install should return error")
+	if r.IsError {
+		t.Errorf("re-install should be idempotent, got error: %s", resultText(r))
+	}
+	if !strings.Contains(resultText(r), "already installed") {
+		t.Errorf("expected 'already installed', got: %s", resultText(r))
+	}
+
+	// Verify install output includes hint and docs for CR tools.
+	// gogo has a hint about built-in pseudo-command.
+	firstInstall := text
+	if !strings.Contains(firstInstall, "Docs:") {
+		t.Logf("install output: %s", firstInstall)
+	}
+	if !strings.Contains(firstInstall, "Hint:") {
+		t.Logf("install output (no hint): %s", firstInstall)
 	}
 }
 

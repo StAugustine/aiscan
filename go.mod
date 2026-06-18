@@ -4,7 +4,7 @@ go 1.25.7
 
 require (
 	github.com/alecthomas/chroma/v2 v2.14.0
-	github.com/chainreactors/crtm v0.0.3-0.20260618104235-f0de7a5049c6
+	github.com/chainreactors/crtm v0.0.3-0.20260618144400-29fcbe76207a
 	github.com/chainreactors/fingers v1.2.2-0.20260615064219-7e07a99c93e0
 	github.com/chainreactors/gogo/v2 v2.14.2-0.20260616122548-b8e5ed3b1b40
 	github.com/chainreactors/ioa v0.1.1-0.20260618070057-ec99736bed74
