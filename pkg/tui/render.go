@@ -38,7 +38,7 @@ const (
 	ModeForwarded
 )
 
-// resolveRenderMode honours an explicit AISCAN_RENDER override so the rem
+// resolveRenderMode honors an explicit AISCAN_RENDER override so the rem
 // forwarding path can opt into the degraded renderer without code changes.
 func resolveRenderMode() RenderMode {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("AISCAN_RENDER"))) {

@@ -32,11 +32,11 @@ type wsMsg struct {
 func RunWebCallback(ctx context.Context, serverURL, name string, reg *commands.CommandRegistry, bus *eventbus.Bus[agent.Event]) error {
 	for {
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // context cancellation is a clean shutdown
 		}
 		err := runCallbackOnce(ctx, serverURL, name, reg, bus)
 		if ctx.Err() != nil {
-			return nil
+			return nil //nolint:nilerr // context cancellation is a clean shutdown
 		}
 		if err != nil {
 			select {

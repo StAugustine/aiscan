@@ -214,10 +214,7 @@ func BuildSystemPrompt(cfg *PromptConfig, agentCfg *agent.Config) string {
 
 	for _, ls := range cfg.LoadedSkills {
 		if ls.Body != "" {
-			data.LoadedSkills = append(data.LoadedSkills, loadedSkillEntry{
-				Name: ls.Name,
-				Body: ls.Body,
-			})
+			data.LoadedSkills = append(data.LoadedSkills, loadedSkillEntry(ls))
 		}
 	}
 
