@@ -210,11 +210,27 @@ jobs:
             -v \
             ./pkg/e2e/
 
-  # ── Build (depends on test) ───────────────────────────────────
+  # ── Build (depends on test, 3 parallel profiles) ──────────────
 
   build:
     runs-on: ubuntu-22.04
     needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: standard
+            main: ./cmd/aiscan
+            tags: "forceposix emptytemplates noembed osusergo netgo"
+            generate: true
+          - id: full
+            main: ./cmd/aiscan
+            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite"
+            generate: true
+          - id: agent
+            main: ./cmd/agent
+            tags: "forceposix emptytemplates noembed osusergo netgo"
+            generate: false
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -228,19 +244,17 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Warm Go build cache
+      - name: Generate embedded resources
+        if: matrix.generate
+        run: go generate ./core/resources
+
+      - name: Build all platforms (${{ matrix.id }})
         run: |
-          CGO_ENABLED=0 go build -tags "forceposix emptytemplates noembed osusergo netgo full sqlite" ./cmd/aiscan/...
-
-      - name: Install upx
-        run: sudo apt install upx -y
-        continue-on-error: true
-
-      - name: Compile release targets
-        uses: goreleaser/goreleaser-action@v7
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: build --snapshot --clean -p 2
-        env:
-          GOPATH: "/home/runner/go"
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            IFS='/' read -r goos goarch <<< "$target"
+            echo "  compile ${goos}/${goarch}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -tags "${{ matrix.tags }}" -ldflags "-s -w" \
+              -buildvcs=false -o "dist/${{ matrix.id }}_${goos}_${goarch}" ${{ matrix.main }}
+          done
+          ls -lh dist/

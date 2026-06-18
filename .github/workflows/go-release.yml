@@ -23,9 +23,17 @@ concurrency:
   group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+# ---------------------------------------------------------------------------
+# Three parallel build jobs (standard / full / agent) → one release job
+# ---------------------------------------------------------------------------
+
 jobs:
-  goreleaser:
+
+  # ── Resolve the tag once, share with all jobs ───────────────────
+  prepare:
     runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -33,9 +41,9 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.target || github.ref }}
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          submodules: recursive
 
-      - name: Prepare release tag
+      - name: Resolve release tag
+        id: tag
         shell: bash
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
@@ -50,7 +58,6 @@ jobs:
             echo "Invalid release tag: ${TAG}" >&2
             exit 1
           fi
-
           if [[ "${TAG}" == *nightly* ]]; then
             echo "Nightly tags must be released by nightly.yml: ${TAG}" >&2
             exit 1
@@ -59,13 +66,12 @@ jobs:
           git fetch --force --tags origin
 
           if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-            git checkout --force "refs/tags/${TAG}"
+            echo "Tag ${TAG} exists"
           else
             if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
               echo "Tag ${TAG} was expected to exist for a tag push event" >&2
               exit 1
             fi
-
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git checkout --force "${TARGET}"
@@ -73,8 +79,46 @@ jobs:
             git push origin "refs/tags/${TAG}"
           fi
 
-          echo "RELEASE_TAG=${TAG}" >> "${GITHUB_ENV}"
-          echo "GORELEASER_CURRENT_TAG=${TAG}" >> "${GITHUB_ENV}"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+  # ── Parallel build matrix ───────────────────────────────────────
+  build:
+    needs: prepare
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: aiscan
+            profile: standard
+            main: ./cmd/aiscan
+            binary: aiscan
+            tags: "forceposix emptytemplates noembed osusergo netgo"
+            generate: true
+          - id: aiscan-full
+            profile: full
+            main: ./cmd/aiscan
+            binary: aiscan-full
+            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite"
+            generate: true
+          - id: aiscan-agent
+            profile: agent
+            main: ./cmd/agent
+            binary: aiscan-agent
+            tags: "forceposix emptytemplates noembed osusergo netgo"
+            generate: false
+
+    env:
+      GORELEASER_CURRENT_TAG: ${{ needs.prepare.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: recursive
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -82,22 +126,136 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Warm Go build cache
-        run: |
-          echo "::group::Pre-build shared packages"
-          CGO_ENABLED=0 go build -tags "forceposix emptytemplates noembed osusergo netgo full sqlite" ./cmd/aiscan/...
-          echo "::endgroup::"
+      - name: Generate embedded resources
+        if: matrix.generate
+        run: go generate ./core/resources
+
+      - name: Warm build cache
+        run: CGO_ENABLED=0 go build -tags "${{ matrix.tags }}" ${{ matrix.main }}/...
 
       - name: Install upx
         run: sudo apt install upx -y
         continue-on-error: true
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7
+      - name: Cross-compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGETS="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
+          TAGS="${{ matrix.tags }}"
+          BINARY="${{ matrix.binary }}"
+          MAIN="${{ matrix.main }}"
+          OUTDIR="dist/build"
+          mkdir -p "${OUTDIR}"
+
+          for target in $TARGETS; do
+            IFS='/' read -r goos goarch <<< "$target"
+            suffix=""; [[ "$goos" == "windows" ]] && suffix=".exe"
+            out="${OUTDIR}/${BINARY}_${goos}_${goarch}${suffix}"
+            echo "  compiling ${goos}/${goarch} → ${out}"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+              go build -trimpath -tags "$TAGS" -ldflags "-s -w" -buildvcs=false \
+              -o "$out" "$MAIN"
+          done
+
+          echo "=== Binaries ==="
+          ls -lh "${OUTDIR}/"
+
+      - name: Compress with UPX
+        continue-on-error: true
+        shell: bash
+        run: |
+          for f in dist/build/*_linux_amd64 dist/build/*_windows_amd64.exe; do
+            [ -f "$f" ] || continue
+            echo "upx: $f"
+            upx --best --lzma "$f" || true
+          done
+
+      - name: Package archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          BINARY="${{ matrix.binary }}"
+          ARCHDIR="dist/archives"
+          mkdir -p "${ARCHDIR}"
+
+          for f in dist/build/${BINARY}_*; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            # strip .exe for archive name
+            archive_name="${base%.exe}"
+            zipfile="${ARCHDIR}/${archive_name}.zip"
+            echo "  zip: ${zipfile}"
+
+            # rename binary inside zip to just the binary name (+ .exe if windows)
+            inner_name="${BINARY}"
+            [[ "$base" == *.exe ]] && inner_name="${BINARY}.exe"
+
+            tmpdir=$(mktemp -d)
+            cp "$f" "${tmpdir}/${inner_name}"
+            cp README.md "${tmpdir}/" 2>/dev/null || true
+            if [[ "$BINARY" != "aiscan-agent" ]] && [ -d docs ]; then
+              cp -r docs "${tmpdir}/" 2>/dev/null || true
+            fi
+            (cd "$tmpdir" && zip -r - .) > "$zipfile"
+            rm -rf "$tmpdir"
+          done
+
+          echo "=== Archives ==="
+          ls -lh "${ARCHDIR}/"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean -p 2
+          name: release-${{ matrix.profile }}
+          path: dist/archives/*.zip
+          retention-days: 1
+
+  # ── Publish release ─────────────────────────────────────────────
+  release:
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    env:
+      TAG: ${{ needs.prepare.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ needs.prepare.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/release
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist/release
+          sha256sum *.zip > aiscan_checksums.txt
+          cat aiscan_checksums.txt
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          prev_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed -n '2p' || echo "")
+          if [ -n "$prev_tag" ]; then
+            git log --pretty=format:"- %s" "${prev_tag}..${TAG}" --no-merges | grep -v "^- ${TAG}$" | grep -v "^- docs" > /tmp/changelog.md || true
+          else
+            git log --pretty=format:"- %s" -20 --no-merges > /tmp/changelog.md || true
+          fi
+          echo "path=/tmp/changelog.md" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GOPATH: "/home/runner/go"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete existing release if any (replace mode)
+          gh release delete "${TAG}" --yes 2>/dev/null || true
+
+          gh release create "${TAG}" \
+            --title "${TAG}" \
+            --notes-file "${{ steps.changelog.outputs.path }}" \
+            --draft \
+            dist/release/*
