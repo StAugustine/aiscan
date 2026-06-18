@@ -281,6 +281,9 @@ func (s *Service) runScanViaAgent(ctx context.Context, job *ScanJob) {
 		s.failJob(job, res.Err)
 		return
 	}
+	if progress := lastOutputLine(res.Output); progress != "" {
+		job.Progress = progress
+	}
 
 	var result *output.Result
 	if len(res.Result) > 0 {
@@ -315,6 +318,9 @@ func (s *Service) runScanLocally(ctx context.Context, job *ScanJob) {
 	if err != nil {
 		s.failJob(job, err.Error())
 		return
+	}
+	if streamWriter.job != nil {
+		job = streamWriter.job
 	}
 
 	report := buildMarkdownReport(job.Target, job.Mode, result)
@@ -702,4 +708,15 @@ func stripANSI(s string) string {
 		i++
 	}
 	return string(out)
+}
+
+func lastOutputLine(output string) string {
+	lines := strings.Split(output, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(stripANSI(lines[i]))
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }

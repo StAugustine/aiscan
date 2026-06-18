@@ -257,9 +257,13 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 	switch msg.Type {
 	case "output":
 		if p.hub != nil && msg.TaskID != "" {
+			data := stripANSI(msg.Data)
+			if data == "" {
+				return
+			}
 			p.hub.Broadcast(msg.TaskID, HubEvent{
 				Type: "progress",
-				Data: mustJSON(map[string]string{"scan_id": msg.TaskID, "data": msg.Data}),
+				Data: mustJSON(map[string]string{"scan_id": msg.TaskID, "data": data}),
 			})
 		}
 
