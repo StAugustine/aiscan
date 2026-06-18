@@ -799,25 +799,6 @@ func truncateToolResultLine(value string, limit int) string {
 	return truncate.ClipRunes(value, limit)
 }
 
-func toolResultTitle(toolName, elapsed string) string {
-	title := ""
-	switch toolName {
-	case "fetch":
-		title = "fetch result"
-	case "read":
-		title = "read preview"
-	case "bash":
-		title = "bash output"
-	case "":
-		title = "tool output"
-	default:
-		title = toolName + " output"
-	}
-	if elapsed != "" {
-		title += " " + elapsed
-	}
-	return title
-}
 
 // ---------------------------------------------------------------------------
 // Turn / agent end (debug diagnostics)
@@ -1140,10 +1121,6 @@ func summarizeChatMessage(msg agent.ChatMessage) (role string, contentLen int, t
 	}
 	toolCalls = len(msg.ToolCalls)
 	return role, contentLen, toolCalls, reasoningLen, preview
-}
-
-func sameRenderedAgentText(left, right string) bool {
-	return strings.TrimSpace(left) == strings.TrimSpace(right)
 }
 
 // ---------------------------------------------------------------------------

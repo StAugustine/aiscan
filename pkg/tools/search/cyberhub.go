@@ -323,8 +323,8 @@ func (c *CyberhubSearch) renderAliasDetail(a *alias.Alias, jsonOutput bool) (str
 	if jsonOutput {
 		data, _ := json.Marshal(map[string]interface{}{
 			"alias":      a.Name,
-			"vendor":     a.Attributes.Vendor,
-			"product":    a.Attributes.Product,
+			"vendor":     a.Vendor,
+			"product":    a.Product,
 			"associated": items,
 		})
 		return string(data) + "\n", nil
@@ -332,11 +332,11 @@ func (c *CyberhubSearch) renderAliasDetail(a *alias.Alias, jsonOutput bool) (str
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("[alias] %s", a.Name))
-	if a.Attributes.Vendor != "" {
-		sb.WriteString(fmt.Sprintf("  vendor=%s", a.Attributes.Vendor))
+	if a.Vendor != "" {
+		sb.WriteString(fmt.Sprintf("  vendor=%s", a.Vendor))
 	}
-	if a.Attributes.Product != "" {
-		sb.WriteString(fmt.Sprintf("  product=%s", a.Attributes.Product))
+	if a.Product != "" {
+		sb.WriteString(fmt.Sprintf("  product=%s", a.Product))
 	}
 	sb.WriteByte('\n')
 	if len(items) > 0 {

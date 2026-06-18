@@ -284,9 +284,9 @@ func (r *AgentConsole) startFastInput() error {
 
 		done, execErr := r.handleInputLine(line)
 		if execErr != nil {
-			if errors.Is(execErr, context.Canceled) && r.ctx.Err() != nil { //nolint:nilerr // clean shutdown
+			if errors.Is(execErr, context.Canceled) && r.ctx.Err() != nil {
 				fmt.Fprintln(os.Stdout)
-				return nil
+				return nil //nolint:nilerr // clean shutdown — intentionally swallow error on context cancel
 			}
 			fmt.Fprintf(os.Stderr, "error: %s\n", execErr)
 		}
@@ -343,9 +343,9 @@ func (r *AgentConsole) startReadline() error {
 
 		done, err := r.handleInputLine(line)
 		if err != nil {
-			if errors.Is(err, context.Canceled) && r.ctx.Err() != nil { //nolint:nilerr // clean shutdown
+			if errors.Is(err, context.Canceled) && r.ctx.Err() != nil {
 				fmt.Fprintln(os.Stdout)
-				return nil
+				return nil //nolint:nilerr // clean shutdown — intentionally swallow error on context cancel
 			}
 			fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		}
@@ -551,10 +551,6 @@ func ansiAccent(s string, enabled bool) string {
 	return ansiWrap(s, outputpkg.ANSICyan, enabled)
 }
 
-func ansiOK(s string, enabled bool) string {
-	return ansiWrap(s, outputpkg.ANSIGreen, enabled)
-}
-
 func ansiWarn(s string, enabled bool) string {
 	return ansiWrap(s, outputpkg.ANSIYellow, enabled)
 }
@@ -605,29 +601,6 @@ func (r *AgentConsole) providerModel() (string, string) {
 	}
 	pc := r.appInfo.ProviderConfig
 	return pc.Provider, pc.Model
-}
-
-// skillSlashNames lists user-facing skills as slash commands, capped so the
-// banner stays tidy when many skills are loaded.
-func (r *AgentConsole) skillSlashNames() string {
-	if r.appInfo.Commands == nil || r.appInfo.Skills == nil {
-		return ""
-	}
-	names := make([]string, 0, len(r.appInfo.Skills.Skills))
-	for _, s := range r.appInfo.Skills.Skills {
-		if strings.TrimSpace(s.Name) == "" || s.Internal {
-			continue
-		}
-		names = append(names, "/"+s.Name)
-	}
-	if len(names) == 0 {
-		return ""
-	}
-	const max = 6
-	if len(names) > max {
-		return strings.Join(names[:max], "  ") + fmt.Sprintf("  +%d", len(names)-max)
-	}
-	return strings.Join(names, "  ")
 }
 
 func (r *AgentConsole) replSession() *Session {
@@ -1057,29 +1030,6 @@ func (r *AgentConsole) ioaClient() (*ioaclient.Client, error) {
 		}
 	}
 	return client, nil
-}
-
-func (r *AgentConsole) providerCommand() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "/provider",
-		Short: "查看/管理 LLM provider 链",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			if len(args) == 0 {
-				fmt.Fprint(os.Stdout, r.renderProviders())
-				return nil
-			}
-			switch args[0] {
-			case "list":
-				fmt.Fprint(os.Stdout, r.renderProviders())
-			default:
-				fmt.Fprintf(os.Stderr, "unknown subcommand: %s (use: list)\n", args[0])
-			}
-			return nil
-		},
-	}
-	cmd.DisableFlagParsing = true
-	return cmd
 }
 
 func (r *AgentConsole) renderProviders() string {
