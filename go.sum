@@ -172,6 +172,10 @@ github.com/chainreactors/crtm v0.0.3-0.20260618104235-f0de7a5049c6 h1:p+h/6B98WR
 github.com/chainreactors/crtm v0.0.3-0.20260618104235-f0de7a5049c6/go.mod h1:+T3JvsT0teBxi4+ValZTYWCDIwM8inbx57+nQfMFkbA=
 github.com/chainreactors/crtm v0.0.3-0.20260618144400-29fcbe76207a h1:u3n64DKbzulazqiqyfPSPqMuqUzvUOF25vYv75K9neY=
 github.com/chainreactors/crtm v0.0.3-0.20260618144400-29fcbe76207a/go.mod h1:+T3JvsT0teBxi4+ValZTYWCDIwM8inbx57+nQfMFkbA=
+github.com/chainreactors/crtm v0.0.3-0.20260618153642-6abdb4b636b1 h1:dmvTyiMy5aJUeZhhyl4agNOc7Drgy6y1Bzjao/LeDME=
+github.com/chainreactors/crtm v0.0.3-0.20260618153642-6abdb4b636b1/go.mod h1:+T3JvsT0teBxi4+ValZTYWCDIwM8inbx57+nQfMFkbA=
+github.com/chainreactors/crtm v0.0.3-0.20260618153917-951d5082ce56 h1:ZibviEgy7w11vkn220JycTS4pYri1CWjCvbbUtnEm8U=
+github.com/chainreactors/crtm v0.0.3-0.20260618153917-951d5082ce56/go.mod h1:+T3JvsT0teBxi4+ValZTYWCDIwM8inbx57+nQfMFkbA=
 github.com/chainreactors/files v0.0.0-20240716182835-7884ee1e77f0 h1:cU3sGEODXZsUZGBXfnz0nyxF6+37vA+ZGDx6L/FKN4o=
 github.com/chainreactors/files v0.0.0-20240716182835-7884ee1e77f0/go.mod h1:NSxGNMRWryAyrDzZpVwmujI22wbGw6c52bQOd5zEvyU=
 github.com/chainreactors/fingers v1.2.2-0.20260615064219-7e07a99c93e0 h1:jXqNI3BlhMV8IVxF0C7CkPYZ8iYMC6wlTwbtN3hrS1U=
