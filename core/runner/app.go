@@ -286,7 +286,7 @@ func CollectDeepBrowserArtifacts(ctx context.Context, reg *commands.CommandRegis
 		name    string
 		command string
 	}{
-		{"open", fmt.Sprintf("playwright open %s --session %s --ttl 0 --op-timeout 8 --record", quoteCommandArg(targetURL), session)},
+		{"open", fmt.Sprintf("playwright open %s --session %s --op-timeout 8 --record", quoteCommandArg(targetURL), session)},
 		{"network-start", "playwright network " + session + " --start"},
 		{"reload", "playwright reload " + session},
 		{"wait-idle", "playwright wait-for " + session + " --idle"},

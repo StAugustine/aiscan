@@ -153,26 +153,13 @@ func TestParseAutofillOpts_RejectsUnknownFlag(t *testing.T) {
 
 func TestParseOpenOpts_OperationTimeout(t *testing.T) {
 	o, err := parseOpenOpts([]string{
-		"https://example.com", "--ttl", "120", "--op-timeout", "7",
+		"https://example.com", "--op-timeout", "7",
 	}, "usage")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.ttl != 120*time.Second {
-		t.Fatalf("expected ttl 120s, got %v", o.ttl)
-	}
 	if o.opTimeout != 7*time.Second {
 		t.Fatalf("expected op timeout 7s, got %v", o.opTimeout)
-	}
-}
-
-func TestParseOpenOpts_ZeroTTL_Persistent(t *testing.T) {
-	o, err := parseOpenOpts([]string{"https://example.com", "--ttl", "0"}, "usage")
-	if err != nil {
-		t.Fatalf("unexpected error for --ttl 0: %v", err)
-	}
-	if o.ttl != persistentTTL {
-		t.Fatalf("expected persistentTTL for --ttl 0, got %v", o.ttl)
 	}
 }
 
@@ -183,16 +170,6 @@ func TestParseOpenOpts_NoSpeedUp(t *testing.T) {
 	}
 	if !o.noSpeedUp {
 		t.Fatal("expected noSpeedUp to be true")
-	}
-}
-
-func TestParseOpenOpts_DefaultIsPersistent(t *testing.T) {
-	o, err := parseOpenOpts([]string{"https://example.com"}, "usage")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if o.ttl != persistentTTL {
-		t.Fatalf("expected default TTL to be persistent, got %v", o.ttl)
 	}
 }
 

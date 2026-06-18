@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -23,12 +22,8 @@ import (
 )
 
 const (
-	// persistentTTL is the sentinel value for "never expire".
-	// Sessions default to this; use --ttl <seconds> to opt-in to auto-expiry.
-	persistentTTL                  = time.Duration(math.MaxInt64)
 	defaultSessionOperationTimeout = 30 * time.Second
 	maxSessions                    = 8
-	gcInterval                     = 15 * time.Second
 )
 
 // Session holds a persistent page across multiple Execute() calls.
@@ -37,8 +32,6 @@ type Session struct {
 	Page      *rod.Page
 	Incognito *rod.Browser // incognito context
 	CreatedAt time.Time
-	LastUsed  time.Time
-	Timeout   time.Duration
 
 	// OperationTimeout limits a single interactive operation on this page.
 	OperationTimeout time.Duration
@@ -71,18 +64,6 @@ type Session struct {
 	// playwright-cli parity: save-storage / save-har on close
 	saveStoragePath string
 	saveHARPath     string
-}
-
-// touch updates LastUsed timestamp.
-func (s *Session) touch() { s.LastUsed = time.Now() }
-
-// expired reports whether the session has exceeded its TTL.
-// Sessions with persistentTTL (--ttl 0) never expire.
-func (s *Session) expired() bool {
-	if s.Timeout == persistentTTL {
-		return false
-	}
-	return time.Since(s.LastUsed) > s.Timeout
 }
 
 // withPage serializes a single operation against the persistent page and
@@ -176,54 +157,13 @@ func (c *Command) initSessions() {
 	}
 }
 
-func (c *Command) startGC() {
-	c.sessionsMu.Lock()
-	if c.gcRunning {
-		c.sessionsMu.Unlock()
-		return
-	}
-	c.gcRunning = true
-	stop := make(chan struct{})
-	c.gcStop = stop
-	c.sessionsMu.Unlock()
-
-	go func() {
-		ticker := time.NewTicker(gcInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				c.reapExpiredSessions()
-			case <-stop:
-				return
-			}
-		}
-	}()
-}
-
-func (c *Command) reapExpiredSessions() {
-	c.sessionsMu.Lock()
-	var expired []*Session
-	for name, sess := range c.sessions {
-		if sess.expired() {
-			expired = append(expired, sess)
-			delete(c.sessions, name)
-		}
-	}
-	c.sessionsMu.Unlock()
-
-	for _, sess := range expired {
-		sess.cleanup()
-	}
-}
-
 // evictLRUSession removes the least-recently-used session to make room.
 func (c *Command) evictLRUSession() {
 	c.sessionsMu.Lock()
 	var oldest *Session
 	oldestName := ""
 	for name, sess := range c.sessions {
-		if oldest == nil || sess.LastUsed.Before(oldest.LastUsed) {
+		if oldest == nil || sess.CreatedAt.Before(oldest.CreatedAt) {
 			oldest = sess
 			oldestName = name
 		}
@@ -241,18 +181,10 @@ func (c *Command) evictLRUSession() {
 func (c *Command) getSession(name string) (*Session, error) {
 	c.sessionsMu.Lock()
 	sess, ok := c.sessions[name]
+	c.sessionsMu.Unlock()
 	if !ok {
-		c.sessionsMu.Unlock()
 		return nil, fmt.Errorf("playwright: session %q not found", name)
 	}
-	if sess.expired() {
-		delete(c.sessions, name)
-		c.sessionsMu.Unlock()
-		sess.cleanup()
-		return nil, fmt.Errorf("playwright: session %q expired", name)
-	}
-	sess.touch()
-	c.sessionsMu.Unlock()
 	return sess, nil
 }
 
@@ -273,11 +205,6 @@ func (c *Command) closeAllSessions() {
 		sessions = append(sessions, sess)
 		delete(c.sessions, name)
 	}
-	if c.gcStop != nil {
-		close(c.gcStop)
-		c.gcStop = nil
-	}
-	c.gcRunning = false
 	c.sessionsMu.Unlock()
 
 	for _, sess := range sessions {
@@ -299,8 +226,6 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 	defer c.openMu.Unlock()
 
 	c.initSessions()
-	c.startGC()
-	c.reapExpiredSessions()
 
 	if o.proxyServer != "" {
 		c.SetProxy(o.proxyServer)
@@ -457,8 +382,6 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 		Page:      page,
 		Incognito: incognito,
 		CreatedAt: time.Now(),
-		LastUsed:  time.Now(),
-		Timeout:   o.ttl,
 
 		OperationTimeout: o.opTimeout,
 		saveStoragePath:  o.saveStoragePath,
@@ -502,17 +425,12 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 		title = info.Title
 	}
 
-	ttlDisplay := o.ttl.String()
-	if o.ttl == persistentTTL {
-		ttlDisplay = "∞ (persistent)"
-	}
-
 	recDisplay := "off"
 	if o.record {
 		recDisplay = "on"
 	}
-	return fmt.Sprintf("Session: %s\nURL: %s\nTitle: %s\nTTL: %s\nOperation timeout: %s\nRecording: %s",
-		o.sessName, o.url, title, ttlDisplay, o.opTimeout, recDisplay), nil
+	return fmt.Sprintf("Session: %s\nURL: %s\nTitle: %s\nOperation timeout: %s\nRecording: %s",
+		o.sessName, o.url, title, o.opTimeout, recDisplay), nil
 }
 
 func (c *Command) execClose(ctx context.Context, args []string) (string, error) {
@@ -606,16 +524,6 @@ func (c *Command) execSessions(ctx context.Context, args []string) (string, erro
 	sb.WriteString(fmt.Sprintf("Active Sessions (%d):\n", len(c.sessions)))
 	for name, sess := range c.sessions {
 		age := time.Since(sess.CreatedAt).Round(time.Second)
-		var ttlStr string
-		if sess.Timeout == persistentTTL {
-			ttlStr = "∞"
-		} else {
-			remaining := sess.Timeout - time.Since(sess.LastUsed)
-			if remaining < 0 {
-				remaining = 0
-			}
-			ttlStr = remaining.Round(time.Second).String()
-		}
 		url := "(unknown)"
 		if sess.Page != nil {
 			if info, err := sess.Page.Info(); err == nil && info != nil {
@@ -626,7 +534,7 @@ func (c *Command) execSessions(ctx context.Context, args []string) (string, erro
 		if sess.rec != nil {
 			recStr = fmt.Sprintf("  rec=%d", sess.rec.len())
 		}
-		sb.WriteString(fmt.Sprintf("  %-8s %s  age=%s  ttl=%s%s\n", name, url, age, ttlStr, recStr))
+		sb.WriteString(fmt.Sprintf("  %-8s %s  age=%s%s\n", name, url, age, recStr))
 	}
 	return sb.String(), nil
 }
@@ -638,7 +546,6 @@ func (c *Command) execSessions(ctx context.Context, args []string) (string, erro
 type openOpts struct {
 	commonOpts
 	sessName         string
-	ttl              time.Duration
 	opTimeout        time.Duration
 	noSpeedUp        bool
 	ignoreHTTPSErrs  bool
@@ -661,7 +568,6 @@ type openOpts struct {
 func parseOpenOpts(args []string, usage string) (openOpts, error) {
 	o := openOpts{
 		commonOpts: commonOpts{timeout: defaultTimeout},
-		ttl:        persistentTTL,
 		opTimeout:  defaultSessionOperationTimeout,
 	}
 
@@ -692,23 +598,6 @@ func parseOpenOpts(args []string, usage string) (openOpts, error) {
 			}
 			i++
 			o.sessName = args[i]
-		case "--ttl":
-			if i+1 >= len(args) {
-				return o, fmt.Errorf("playwright open: --ttl requires a value in seconds")
-			}
-			i++
-			secs, err := strconv.Atoi(args[i])
-			if err != nil {
-				return o, fmt.Errorf("playwright open: --ttl must be an integer: %w", err)
-			}
-			if secs < 0 {
-				return o, fmt.Errorf("playwright open: --ttl must be >= 0")
-			}
-			if secs == 0 {
-				o.ttl = persistentTTL
-			} else {
-				o.ttl = time.Duration(secs) * time.Second
-			}
 		case "--op-timeout":
 			if i+1 >= len(args) {
 				return o, fmt.Errorf("playwright open: --op-timeout requires a value in seconds")

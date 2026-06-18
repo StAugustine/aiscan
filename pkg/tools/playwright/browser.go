@@ -38,8 +38,6 @@ type Command struct {
 	openMu     sync.Mutex
 	sessions   map[string]*Session
 	sessionsMu sync.Mutex
-	gcRunning  bool
-	gcStop     chan struct{}
 
 	// Proxy URL for Chrome's --proxy-server flag. Updated via SetProxy().
 	proxyMu  sync.RWMutex
@@ -76,7 +74,7 @@ Stateless-only Subcommands:
   pdf                                             Generate PDF of the rendered page
 
 Session Subcommands (multi-step interactive workflows):
-  open <url> [--session name] [--ttl secs]        Open a persistent page (no auto-expire by default)
+  open <url> [--session name]                      Open a persistent page (close explicitly)
              [--op-timeout secs]                  Per-operation timeout for session commands
              [--no-speed-up]                      Disable setTimeout/setInterval acceleration
              [--record]                           Enable action recording for template codegen
@@ -144,7 +142,6 @@ Common Options:
   --timeout <seconds>     Page load timeout in seconds (default: 30)
   --user-agent <string>   Custom User-Agent header
   --selector <selector>   Element screenshot selector (session screenshot only)
-  --ttl 0                 Persistent session (no auto-expire)
 
 Examples:
   playwright goto https://example.com

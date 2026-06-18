@@ -66,17 +66,16 @@ Sessions persist a browser page across multiple tool calls. This enables multi-s
 
 ### open / close / sessions
 ```bash
-playwright open <url> [--session <name>] [--ttl <seconds>] [--timeout <seconds>] [--op-timeout <seconds>] [--no-speed-up]
+playwright open <url> [--session <name>] [--timeout <seconds>] [--op-timeout <seconds>] [--no-speed-up]
 playwright close <session>
 playwright sessions
 ```
-- **Sessions never auto-expire by default** — only closed via `playwright close <session>` or process exit
-- Use `--ttl <seconds>` to opt-in to auto-expiry if needed
+- Sessions persist until explicitly closed via `playwright close <session>` or process exit
 - `--no-speed-up` disables setTimeout/setInterval acceleration (use for timing-sensitive verification)
 - Each session operation is serialized and has an `--op-timeout` deadline (default: 30s)
 - Max 8 concurrent sessions
 - Session name is auto-generated if `--session` is omitted
-- `playwright sessions` lists all active sessions with URL, age, and TTL remaining
+- `playwright sessions` lists all active sessions with URL and age
 
 ### discover
 Call katana's injected JS to enumerate all interactive elements on the page: forms (with their fields), buttons, elements with onclick handlers, **event listeners** (captured by hooks), and **SPA navigated links** (pushState, fetch, WebSocket URLs).
@@ -264,6 +263,6 @@ Use browser automation when evidence depends on rendered DOM, user interaction, 
   - SPA route detection via pushState/replaceState/fetch/WebSocket hooks (`window.__navigatedLinks`)
   - Form reset prevention
   - setTimeout/setInterval acceleration (0.1x factor, disable with `--no-speed-up`)
-- Sessions are garbage-collected after TTL expiry (use `--ttl 0` for persistent sessions).
+- Sessions persist until explicitly closed — the agent is responsible for calling `playwright close`.
 - Chromium is automatically downloaded on first launch if not found.
 - Selectors may be CSS or `xpath:<xpath>` — interaction commands accept both.
