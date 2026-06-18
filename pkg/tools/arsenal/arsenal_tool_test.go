@@ -151,6 +151,33 @@ func TestArsenalAddAndFind(t *testing.T) {
 	}
 }
 
+func TestArsenalUpdateNoName(t *testing.T) {
+	tool := newTestTool(t)
+	r := callTool(t, tool, map[string]string{"action": "update"})
+	if !r.IsError {
+		t.Error("update without name should error")
+	}
+}
+
+func TestArsenalRemoveNotInstalled(t *testing.T) {
+	tool := newTestTool(t)
+	r := callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
+	if r.IsError {
+		t.Error("remove of not-installed tool should not error")
+	}
+	if !strings.Contains(resultText(r), "not installed") {
+		t.Errorf("expected 'not installed', got: %s", resultText(r))
+	}
+}
+
+func TestArsenalRemoveNoName(t *testing.T) {
+	tool := newTestTool(t)
+	r := callTool(t, tool, map[string]string{"action": "remove"})
+	if !r.IsError {
+		t.Error("remove without name should error")
+	}
+}
+
 func TestArsenalUnknownAction(t *testing.T) {
 	tool := newTestTool(t)
 	r := callTool(t, tool, map[string]string{"action": "bad_action"})
@@ -424,6 +451,131 @@ func TestArsenalE2E_PDVersionDetection(t *testing.T) {
 			}
 			break
 		}
+	}
+}
+
+// TestArsenalE2E_UpdateTool verifies the update action re-downloads.
+func TestArsenalE2E_UpdateTool(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip network test in short mode")
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("install e2e only on linux/amd64")
+	}
+
+	tool := newTestTool(t)
+
+	// Install gogo first.
+	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
+	if r.IsError {
+		t.Fatalf("install: %s", resultText(r))
+	}
+
+	// Update should succeed (re-download).
+	r = callTool(t, tool, map[string]string{"action": "update", "name": "gogo"})
+	text := resultText(r)
+	if r.IsError {
+		t.Fatalf("update failed: %s", text)
+	}
+	if !strings.Contains(text, "Updated gogo") {
+		t.Errorf("expected 'Updated gogo', got: %s", text)
+	}
+	// Should include docs/hint.
+	if !strings.Contains(text, "Docs:") {
+		t.Errorf("update output should include Docs URL, got: %s", text)
+	}
+}
+
+// TestArsenalE2E_RemoveTool verifies install → remove → verify gone.
+func TestArsenalE2E_RemoveTool(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip network test in short mode")
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("install e2e only on linux/amd64")
+	}
+
+	tool := newTestTool(t)
+
+	// Install.
+	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
+	if r.IsError {
+		t.Fatalf("install: %s", resultText(r))
+	}
+
+	// Binary exists.
+	binPath := filepath.Join(tool.mgr.BinPath(), "gogo")
+	if _, err := os.Stat(binPath); err != nil {
+		t.Fatalf("binary should exist: %v", err)
+	}
+
+	// Remove.
+	r = callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
+	if r.IsError {
+		t.Fatalf("remove failed: %s", resultText(r))
+	}
+	if !strings.Contains(resultText(r), "Removed gogo") {
+		t.Errorf("expected 'Removed gogo', got: %s", resultText(r))
+	}
+
+	// Binary gone.
+	if _, err := os.Stat(binPath); err == nil {
+		t.Error("binary should be removed")
+	}
+
+	// Remove again — should say not installed.
+	r = callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
+	if !strings.Contains(resultText(r), "not installed") {
+		t.Errorf("expected 'not installed', got: %s", resultText(r))
+	}
+}
+
+// TestArsenalE2E_InstallShowsHintDocs verifies install output includes
+// docs_url and hint from the YAML registry.
+func TestArsenalE2E_InstallShowsHintDocs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip network test in short mode")
+	}
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		t.Skip("install e2e only on linux/amd64")
+	}
+
+	tool := newTestTool(t)
+
+	// nuclei has both docs_url and hint in the YAML.
+	r := callTool(t, tool, map[string]string{"action": "install", "name": "nuclei"})
+	text := resultText(r)
+	if r.IsError {
+		t.Fatalf("install nuclei: %s", text)
+	}
+	if !strings.Contains(text, "Docs:") {
+		t.Errorf("install output should contain Docs URL, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Hint:") {
+		t.Errorf("install output should contain Hint, got:\n%s", text)
+	}
+	if !strings.Contains(text, "update-templates") {
+		t.Errorf("nuclei hint should mention update-templates, got:\n%s", text)
+	}
+}
+
+// TestArsenalE2E_InfoShowsDocsHint verifies info action includes docs and hint.
+func TestArsenalE2E_InfoShowsDocsHint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip network test in short mode")
+	}
+
+	tool := newTestTool(t)
+	r := callTool(t, tool, map[string]string{"action": "info", "name": "nuclei"})
+	text := resultText(r)
+	if r.IsError {
+		t.Fatalf("info nuclei: %s", text)
+	}
+	if !strings.Contains(text, "Docs:") {
+		t.Errorf("info should show Docs URL, got:\n%s", text)
+	}
+	if !strings.Contains(text, "Hint:") {
+		t.Errorf("info should show Hint, got:\n%s", text)
 	}
 }
 
