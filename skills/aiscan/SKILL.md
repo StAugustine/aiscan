@@ -25,7 +25,7 @@ Core agent tools:
 - `bash`: run shell commands and pseudo-commands (see below).
 - `web_search`: search the web for CVEs, advisories, exploits, and documentation.
 - `fetch`: fetch and read a specific URL.
-- `arsenal`: security tool package manager — search, install, and manage external CLI tools (nuclei, httpx, ffuf, ...). Installed tools become available via `bash` immediately. Reference: `aiscan://skills/aiscan/reference/arsenal.md`.
+- `arsenal`: security tool package manager (22+ tools from chainreactors & projectdiscovery). Call `arsenal(action="list")` first to see available tools and install status. Install is idempotent. Reference: `aiscan://skills/aiscan/reference/arsenal.md`.
 
 ## Pseudo-Commands
 
