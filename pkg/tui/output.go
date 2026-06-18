@@ -51,11 +51,10 @@ type AgentOutput struct {
 	stdout   io.Writer
 	stderr   io.Writer
 	markdown bool
-	color    output.Color
-	debug    bool
-	verbose  bool
-	Quiet    bool
-	tools    map[string]agentToolSummary
+	color     output.Color
+	debug     bool
+	verbosity int // -1=quiet, 0=default, 1=tools, 2=thinking
+	tools     map[string]agentToolSummary
 
 	// Streaming state.
 	stream                 bool
@@ -68,6 +67,11 @@ type AgentOutput struct {
 	didStream              bool   // Final() dedup flag
 	lastStreamed            string // full cumulative content of the streamed turn
 	aborted                bool   // current run was interrupted
+
+	// Turn/agent timing and cumulative token stats.
+	turnStart  time.Time
+	agentStart time.Time
+	totalUsage agent.Usage // accumulated from per-turn Usage events
 
 	// Pretty-render state. The REPL runs inside a PTY that may be forwarded to a
 	// remote agent (aider), so transient chrome is gated by mode+tty: spinners,
@@ -88,27 +92,27 @@ type agentToolSummary struct {
 func NewAgentOutput(option *cfg.Option) *AgentOutput {
 	markdown := stdoutMarkdownEnabled(option)
 	debug := false
-	verbose := false
-	quiet := false
+	verbosity := 0
 	noColor := false
 	if option != nil {
 		debug = option.Debug
-		verbose = option.Verbose
-		quiet = option.Quiet
+		verbosity = len(option.Verbose)
+		if option.Quiet {
+			verbosity = -1
+		}
 		noColor = option.NoColor
 	}
 	useColor := !noColor && term.IsTerminal(int(os.Stderr.Fd()))
 	color := output.NewColor(useColor)
 	tty := term.IsTerminal(int(os.Stderr.Fd()))
 	return &AgentOutput{
-		stdout:   os.Stdout,
-		stderr:   os.Stderr,
-		markdown: markdown,
-		color:    color,
-		debug:    debug,
-		verbose:  verbose,
-		Quiet:    quiet,
-		tools:    make(map[string]agentToolSummary),
+		stdout:    os.Stdout,
+		stderr:    os.Stderr,
+		markdown:  markdown,
+		color:     color,
+		debug:     debug,
+		verbosity: verbosity,
+		tools:     make(map[string]agentToolSummary),
 		stream:   stdoutDeltaStreamingEnabled(option),
 		mode:     resolveRenderMode(),
 		tty:      tty,
@@ -151,7 +155,7 @@ func (o *AgentOutput) Start(label, text string) {
 	o.spinner.Stop()
 	o.ensureStreamNewlineLocked()
 	o.beginRun()
-	if o.Quiet {
+	if o.verbosity < 0 {
 		return
 	}
 	label = strings.TrimSpace(label)
@@ -178,7 +182,7 @@ func (o *AgentOutput) Start(label, text string) {
 }
 
 func (o *AgentOutput) Empty() {
-	if o == nil || o.Quiet {
+	if o == nil || o.verbosity < 0 {
 		return
 	}
 	o.mu.Lock()
@@ -201,9 +205,7 @@ func (o *AgentOutput) Final(content string) {
 		return
 	}
 	o.spinner.Stop()
-	if o.didStream && sameRenderedAgentText(content, o.lastStreamed) {
-		// Assistant text was already streamed live — don't re-render/duplicate.
-		// Just ensure the cursor sits on a fresh line for the next prompt.
+	if o.didStream {
 		o.ensureStreamNewlineLocked()
 		o.resetStreamState()
 		return
@@ -216,7 +218,7 @@ func (o *AgentOutput) Final(content string) {
 }
 
 func (o *AgentOutput) Queued(text string) {
-	if o == nil || o.Quiet {
+	if o == nil || o.verbosity < 0 {
 		return
 	}
 	o.mu.Lock()
@@ -236,7 +238,7 @@ func (o *AgentOutput) QueuedFollowUp(text string) {
 }
 
 func (o *AgentOutput) Stopping() {
-	if o == nil || o.Quiet {
+	if o == nil || o.verbosity < 0 {
 		return
 	}
 	o.mu.Lock()
@@ -247,7 +249,7 @@ func (o *AgentOutput) Stopping() {
 }
 
 func (o *AgentOutput) Stopped() {
-	if o == nil || o.Quiet {
+	if o == nil || o.verbosity < 0 {
 		return
 	}
 	o.mu.Lock()
@@ -313,10 +315,14 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 		return
 	}
 	switch event.Type {
+	case agent.EventAgentStart:
+		o.agentStart = time.Now()
+		o.totalUsage = agent.Usage{}
 	case agent.EventTurnStart:
 		o.streamPrinted = 0
 		o.streamReasoningPrinted = 0
 		o.lastReasoningFull = ""
+		o.turnStart = time.Now()
 		if o.canAnimate() {
 			o.spinner.Start("thinking")
 		}
@@ -356,11 +362,11 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 // token-by-token to stdout. Reasoning content (verbose mode) is buffered and
 // flushed line-by-line to stderr in dim color.
 func (o *AgentOutput) streamDelta(event agent.Event) {
-	if o.Quiet || !o.stream || o.stdout == nil {
+	if o.verbosity < 0 || !o.stream || o.stdout == nil {
 		return
 	}
 
-	if o.verbose && event.Message.ReasoningContent != nil {
+	if o.verbosity >= 2 && event.Message.ReasoningContent != nil {
 		reasoning := *event.Message.ReasoningContent
 		o.lastReasoningFull = reasoning
 		lastNL := strings.LastIndex(reasoning, "\n")
@@ -456,7 +462,7 @@ func (o *AgentOutput) closeReasoningBlock() {
 // non-TTY pipes get no spinner — a perpetually repainting line would corrupt
 // the line-oriented stream a remote agent (aider) consumes.
 func (o *AgentOutput) canAnimate() bool {
-	return o != nil && o.mode == ModeInteractive && o.tty && !o.Quiet
+	return o != nil && o.mode == ModeInteractive && o.tty && o.verbosity >= 0
 }
 
 // canHyperlink gates OSC 8 clickable paths. Same boundary as the spinner: only
@@ -517,9 +523,18 @@ func (o *AgentOutput) toolLine(symbol, text string) {
 func (o *AgentOutput) resultLine(text string) {
 	if text == "" {
 		fmt.Fprintf(o.stderr, "%s%s\n", toolResultIndent, o.dim("│"))
+	} else if isToolMetaLine(text) {
+		fmt.Fprintf(o.stderr, "%s%s %s\n", toolResultIndent, o.dim("│"), o.colored(output.ANSIYellow, text))
 	} else {
 		fmt.Fprintf(o.stderr, "%s%s %s\n", toolResultIndent, o.dim("│"), text)
 	}
+}
+
+func isToolMetaLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "[exit code:") ||
+		strings.HasPrefix(trimmed, "[command timed out") ||
+		strings.HasPrefix(trimmed, "[truncated:")
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +569,7 @@ func (o *AgentOutput) toolStart(event agent.Event) {
 	if event.ToolCallID != "" {
 		o.tools[event.ToolCallID] = agentToolSummary{name: name, summary: summary, started: time.Now()}
 	}
-	if o.Quiet {
+	if o.verbosity < 1 {
 		return
 	}
 	o.ensureStreamNewlineLocked()
@@ -574,7 +589,7 @@ func (o *AgentOutput) toolStart(event agent.Event) {
 }
 
 func (o *AgentOutput) toolEnd(event agent.Event) {
-	if o.Quiet {
+	if o.verbosity < 1 {
 		return
 	}
 
@@ -600,11 +615,13 @@ func (o *AgentOutput) toolEnd(event agent.Event) {
 	}
 
 	result := strings.TrimSpace(event.Result)
+	toolName := firstNonEmptyString(summary.name, event.ToolName, "tool")
+	elapsed := elapsedToolText(summary.started)
 	if result == "" {
 		o.ensureStreamNewlineLocked()
-		if elapsed := elapsedToolText(summary.started); elapsed != "" {
+		if elapsed != "" {
 			fmt.Fprintf(o.stderr, "%s%s\n", toolIndent,
-				o.dim("⎿ "+firstNonEmptyString(summary.name, event.ToolName, "tool")+" done "+elapsed))
+				o.dim("⎿ "+toolName+" done "+elapsed))
 		}
 		o.forgetTool(event.ToolCallID)
 		return
@@ -612,17 +629,16 @@ func (o *AgentOutput) toolEnd(event agent.Event) {
 
 	o.ensureStreamNewlineLocked()
 	highlightPath := ""
-	toolNameForResult := firstNonEmptyString(summary.name, event.ToolName)
 	if event.ToolName == "read" || summary.name == "read" {
 		if args := decodeToolArguments(event.Arguments); args != nil {
 			highlightPath = stringArg(args, "path")
 		}
 	}
-	o.renderToolResult(toolNameForResult, result, elapsedToolText(summary.started), highlightPath)
+	o.renderToolResult(toolName, summary.summary, result, elapsed, highlightPath)
 	o.forgetTool(event.ToolCallID)
 }
 
-func (o *AgentOutput) renderToolResult(toolName, result, elapsed, highlightPath string) {
+func (o *AgentOutput) renderToolResult(toolName, toolSummary, result, elapsed, highlightPath string) {
 	preview := buildToolResultPreview(toolName, result, o.debug)
 	if len(preview.lines) == 0 {
 		return
@@ -632,12 +648,22 @@ func (o *AgentOutput) renderToolResult(toolName, result, elapsed, highlightPath 
 		preview.lines = highlightReadResult(highlightPath, preview.lines, o.color)
 	}
 
+	// Build header: "⎿ toolName  summary · elapsed"
+	header := toolName
+	if toolSummary != "" {
+		header += "  " + compactAgentLine(toolSummary, 80)
+	}
+	if elapsed != "" {
+		header += " " + elapsed
+	}
+
 	if len(preview.lines) == 1 && !preview.truncated {
-		o.toolLine("⎿", preview.lines[0])
+		o.toolLine("⎿", header)
+		o.resultLine(preview.lines[0])
 		return
 	}
 
-	o.toolLine("⎿", toolResultTitle(toolName, elapsed))
+	o.toolLine("⎿", header)
 	for _, line := range preview.lines {
 		o.resultLine(line)
 	}
@@ -798,78 +824,113 @@ func toolResultTitle(toolName, elapsed string) string {
 // ---------------------------------------------------------------------------
 
 func (o *AgentOutput) turnEnd(event agent.Event) {
+	if o.verbosity < 0 {
+		return
+	}
+
 	o.flushStreamBuf()
 	o.ensureStreamNewlineLocked()
-
 	o.closeReasoningBlock()
 
-	if !o.Quiet {
-		// Render reasoning content when verbose and it wasn't already streamed
-		// (non-streaming / -p mode).
-		if o.verbose && o.streamReasoningPrinted == 0 {
-			if event.Message.ReasoningContent != nil {
-				reasoning := strings.TrimSpace(*event.Message.ReasoningContent)
-				if reasoning != "" {
-					o.renderThinkingBlock(reasoning)
-				}
-			}
-		}
-
-		// Render assistant text content if it wasn't already streamed.
-		if o.streamPrinted == 0 {
-			if event.Message.Content != nil {
-				content := strings.TrimSpace(*event.Message.Content)
-				if content != "" {
-					rendered := renderAgentMarkdown(content, o.markdown)
-					if rendered != "" {
-						fmt.Fprintln(o.stdout, rendered)
-					}
-					o.didStream = true
-					o.lastStreamed = content
-				}
+	// Render thinking (verbosity >= 2) if not already streamed.
+	if o.verbosity >= 2 && o.streamReasoningPrinted == 0 {
+		if event.Message.ReasoningContent != nil {
+			if reasoning := strings.TrimSpace(*event.Message.ReasoningContent); reasoning != "" {
+				o.renderThinkingBlock(reasoning)
 			}
 		}
 	}
 
-	if o.Quiet || !o.debug {
+	// Render assistant content if not already streamed.
+	if o.streamPrinted == 0 {
+		if event.Message.Content != nil {
+			if content := strings.TrimSpace(*event.Message.Content); content != "" {
+				rendered := renderAgentMarkdown(content, o.markdown)
+				if rendered != "" {
+					fmt.Fprintln(o.stdout, rendered)
+				}
+				o.didStream = true
+				o.lastStreamed = content
+			}
+		}
+	}
+
+	// Turn statistics.
+	o.renderTurnStats(event)
+
+	// Debug diagnostics — only when --debug is set.
+	if o.debug {
+		role, contentLen, toolCalls, reasoningLen, preview := summarizeChatMessage(event.Message)
+		if role != "" || contentLen > 0 || toolCalls > 0 || reasoningLen > 0 {
+			fmt.Fprintf(o.stderr, "%s[debug] [turn %d] role=%s content=%d reasoning=%d tool_calls=%d preview=%q%s\n",
+				o.color.Code(output.ANSIDim), event.Turn, role, contentLen, reasoningLen, toolCalls, preview,
+				o.color.Code(output.ANSIReset))
+		}
+		if event.Usage != nil {
+			cache := ""
+			if event.Usage.CacheReadTokens > 0 || event.Usage.CacheWriteTokens > 0 {
+				cache = fmt.Sprintf(" cache_read=%d cache_write=%d (%.0f%%)",
+					event.Usage.CacheReadTokens, event.Usage.CacheWriteTokens,
+					event.Usage.CacheHitRatio()*100)
+			}
+			fmt.Fprintf(o.stderr, "%s[debug] [turn %d] prompt=%d completion=%d total=%d context=%d%s%s\n",
+				o.color.Code(output.ANSIDim), event.Turn,
+				event.Usage.PromptTokens, event.Usage.CompletionTokens, event.Usage.TotalTokens,
+				event.ContextTokens, cache, o.color.Code(output.ANSIReset))
+		}
+	}
+}
+
+// renderTurnStats prints a compact one-line summary for the completed turn.
+func (o *AgentOutput) renderTurnStats(event agent.Event) {
+	if o.stderr == nil {
 		return
 	}
-	role, contentLen, toolCalls, reasoningLen, preview := summarizeChatMessage(event.Message)
-	if role != "" || contentLen > 0 || toolCalls > 0 || reasoningLen > 0 {
-		fmt.Fprintf(o.stderr, "%s[debug] [turn %d] assistant role=%s content=%d reasoning=%d tool_calls=%d preview=%q%s\n",
-			o.color.Code(output.ANSIDim),
-			event.Turn,
-			role,
-			contentLen,
-			reasoningLen,
-			toolCalls,
-			preview,
-			o.color.Code(output.ANSIReset))
+	// Accumulate usage for agent-end summary.
+	if event.Usage != nil {
+		o.totalUsage.PromptTokens += event.Usage.PromptTokens
+		o.totalUsage.CompletionTokens += event.Usage.CompletionTokens
+		o.totalUsage.TotalTokens += event.Usage.TotalTokens
+		o.totalUsage.CacheReadTokens += event.Usage.CacheReadTokens
+		o.totalUsage.CacheWriteTokens += event.Usage.CacheWriteTokens
 	}
-	if event.Usage == nil {
-		return
+
+	elapsed := time.Since(o.turnStart)
+	toolCalls := max(len(event.Message.ToolCalls), len(event.ToolResults))
+
+	parts := []string{fmt.Sprintf("turn %d", event.Turn)}
+	if toolCalls > 0 {
+		parts = append(parts, fmt.Sprintf("tools=%d", toolCalls))
 	}
-	cache := ""
-	if event.Usage.CacheReadTokens > 0 || event.Usage.CacheWriteTokens > 0 {
-		cache = fmt.Sprintf(" cache_read=%d cache_write=%d (%.0f%%)",
-			event.Usage.CacheReadTokens, event.Usage.CacheWriteTokens,
-			event.Usage.CacheHitRatio()*100)
+	if event.Usage != nil {
+		parts = append(parts, formatTokenUsage(event.Usage))
 	}
-	fmt.Fprintf(o.stderr, "%s[debug] [turn %d] prompt=%d completion=%d total=%d context=%d%s%s\n",
-		o.color.Code(output.ANSIDim), event.Turn,
-		event.Usage.PromptTokens, event.Usage.CompletionTokens, event.Usage.TotalTokens,
-		event.ContextTokens, cache,
-		o.color.Code(output.ANSIReset))
+	parts = append(parts, formatElapsed(elapsed))
+	fmt.Fprintln(o.stderr, o.dim("  ["+strings.Join(parts, " | ")+"]"))
 }
 
 func (o *AgentOutput) agentEnd(event agent.Event) {
 	o.ensureStreamNewlineLocked()
-	if o.Quiet || !o.debug {
-		return
+
+	if o.stderr != nil && event.Turn > 0 {
+		elapsed := time.Since(o.agentStart)
+		parts := []string{
+			fmt.Sprintf("agent %s", event.Stop),
+			fmt.Sprintf("turns=%d", event.Turn),
+		}
+		if o.totalUsage.TotalTokens > 0 {
+			parts = append(parts, formatTokenUsage(&o.totalUsage))
+		}
+		parts = append(parts, formatElapsed(elapsed))
+		if event.Err != nil {
+			parts = append(parts, fmt.Sprintf("err=%q", event.Err.Error()))
+		}
+		fmt.Fprintln(o.stderr, o.dim("  ["+strings.Join(parts, " | ")+"]"))
 	}
-	errText := ""
-	if event.Err != nil {
-		errText = fmt.Sprintf(" err=%q", event.Err.Error())
+
+	// Debug diagnostics.
+	if !o.debug {
+		return
 	}
 	lastRole, lastContentLen, lastToolCalls, lastReasoningLen, lastPreview := lastMessageSummary(event.Messages)
 	noToolAssistant := lastRole == "assistant" && lastToolCalls == 0
@@ -877,21 +938,15 @@ func (o *AgentOutput) agentEnd(event agent.Event) {
 	if event.Stop == agent.StopReasonCompleted && noToolAssistant {
 		hint = " hint=no_tool_calls_no_pending_work"
 	}
-	fmt.Fprintf(o.stderr, "%s[debug] [agent] stop=%s turns=%d messages=%d new_messages=%d last_role=%s last_content=%d last_reasoning=%d last_tool_calls=%d last_assistant_no_tool=%v last_preview=%q%s%s%s\n",
-		o.color.Code(output.ANSIDim),
-		event.Stop,
-		event.Turn,
-		len(event.Messages),
-		len(event.NewMessages),
-		lastRole,
-		lastContentLen,
-		lastReasoningLen,
-		lastToolCalls,
-		noToolAssistant,
-		lastPreview,
-		hint,
-		errText,
-		o.color.Code(output.ANSIReset))
+	errText := ""
+	if event.Err != nil {
+		errText = fmt.Sprintf(" err=%q", event.Err.Error())
+	}
+	fmt.Fprintf(o.stderr, "%s[debug] [agent] stop=%s turns=%d messages=%d new=%d last_role=%s content=%d reasoning=%d tools=%d preview=%q%s%s%s\n",
+		o.color.Code(output.ANSIDim), event.Stop, event.Turn,
+		len(event.Messages), len(event.NewMessages),
+		lastRole, lastContentLen, lastReasoningLen, lastToolCalls,
+		lastPreview, hint, errText, o.color.Code(output.ANSIReset))
 }
 
 // ---------------------------------------------------------------------------
@@ -918,7 +973,7 @@ func (o *AgentOutput) renderThinkingBlock(reasoning string) {
 }
 
 func (o *AgentOutput) evalStart(event agent.Event) {
-	if o.Quiet || o.stderr == nil {
+	if o.stderr == nil {
 		return
 	}
 	label := fmt.Sprintf("Evaluating (round %d)...", event.EvalRound+1)
@@ -930,7 +985,7 @@ func (o *AgentOutput) evalStart(event agent.Event) {
 }
 
 func (o *AgentOutput) evalEnd(event agent.Event) {
-	if o.Quiet || o.stderr == nil {
+	if o.stderr == nil {
 		return
 	}
 	if event.EvalPass {
@@ -942,7 +997,7 @@ func (o *AgentOutput) evalEnd(event agent.Event) {
 }
 
 func (o *AgentOutput) evalError(event agent.Event) {
-	if o.Quiet || o.stderr == nil {
+	if o.stderr == nil {
 		return
 	}
 	detail := "evaluator LLM call failed"
@@ -1030,6 +1085,37 @@ func elapsedToolText(started time.Time) string {
 		return fmt.Sprintf("· %dms", elapsed.Milliseconds())
 	}
 	return fmt.Sprintf("· %.1fs", elapsed.Seconds())
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers for stats
+// ---------------------------------------------------------------------------
+
+// formatTokenUsage formats token usage like: "input=2,378 (+ 9,088 cached) output=27"
+func formatTokenUsage(u *agent.Usage) string {
+	if u == nil {
+		return ""
+	}
+	s := fmt.Sprintf("input=%s", formatNumber(u.PromptTokens))
+	if u.CacheReadTokens > 0 {
+		s += fmt.Sprintf(" (+ %s cached)", formatNumber(u.CacheReadTokens))
+	}
+	s += fmt.Sprintf(" output=%s", formatNumber(u.CompletionTokens))
+	return s
+}
+
+func formatElapsed(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+func formatNumber(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return formatNumber(n/1000) + fmt.Sprintf(",%03d", n%1000)
 }
 
 // ---------------------------------------------------------------------------

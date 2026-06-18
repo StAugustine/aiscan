@@ -46,9 +46,10 @@ func TestAgentOutputFinalWritesPlainMarkdownWithoutWrapper(t *testing.T) {
 func TestAgentOutputToolSummary(t *testing.T) {
 	var stderr bytes.Buffer
 	output := &AgentOutput{
-		stdout: &bytes.Buffer{},
-		stderr: &stderr,
-		tools:  make(map[string]agentToolSummary),
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+		verbosity: 1,
+		tools:     make(map[string]agentToolSummary),
 	}
 
 	output.HandleEvent(agent.Event{
@@ -76,10 +77,11 @@ func TestAgentOutputToolSummary(t *testing.T) {
 func TestAgentOutputToolDebugDetails(t *testing.T) {
 	var stderr bytes.Buffer
 	output := &AgentOutput{
-		stdout: &bytes.Buffer{},
-		stderr: &stderr,
-		debug:  true,
-		tools:  make(map[string]agentToolSummary),
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+		debug:     true,
+		verbosity: 1,
+		tools:     make(map[string]agentToolSummary),
 	}
 
 	output.HandleEvent(agent.Event{
@@ -110,9 +112,10 @@ func TestAgentOutputToolDebugDetails(t *testing.T) {
 func TestAgentOutputToolError(t *testing.T) {
 	var stderr bytes.Buffer
 	output := &AgentOutput{
-		stdout: &bytes.Buffer{},
-		stderr: &stderr,
-		tools:  make(map[string]agentToolSummary),
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+		verbosity: 1,
+		tools:     make(map[string]agentToolSummary),
 	}
 
 	output.HandleEvent(agent.Event{
@@ -132,9 +135,10 @@ func TestAgentOutputToolError(t *testing.T) {
 func TestAgentOutputWriteEditSummary(t *testing.T) {
 	var stderr bytes.Buffer
 	output := &AgentOutput{
-		stdout: &bytes.Buffer{},
-		stderr: &stderr,
-		tools:  make(map[string]agentToolSummary),
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+		verbosity: 1,
+		tools:     make(map[string]agentToolSummary),
 	}
 
 	output.HandleEvent(agent.Event{
@@ -156,9 +160,10 @@ func TestAgentOutputWriteEditSummary(t *testing.T) {
 func TestAgentOutputMultiLineResult(t *testing.T) {
 	var stderr bytes.Buffer
 	output := &AgentOutput{
-		stdout: &bytes.Buffer{},
-		stderr: &stderr,
-		tools:  make(map[string]agentToolSummary),
+		stdout:    &bytes.Buffer{},
+		stderr:    &stderr,
+		verbosity: 1,
+		tools:     make(map[string]agentToolSummary),
 	}
 
 	result := "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12"
