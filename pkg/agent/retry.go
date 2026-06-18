@@ -11,11 +11,13 @@ import (
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 )
 
+var errEmptyResponse = errors.New("empty response from LLM")
+
 func isRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrCallTimeout) || errors.Is(err, ErrStreamStalled) {
+	if errors.Is(err, ErrCallTimeout) || errors.Is(err, ErrStreamStalled) || errors.Is(err, errEmptyResponse) {
 		return true
 	}
 	if errors.Is(err, context.Canceled) {
@@ -130,7 +132,7 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, bus emitt
 		return ChatMessage{}, nil, fmt.Errorf("LLM call failed at turn %d: %w", turn, err)
 	}
 	if len(resp.Choices) == 0 {
-		return ChatMessage{}, nil, fmt.Errorf("empty response from LLM at turn %d", turn)
+		return ChatMessage{}, nil, fmt.Errorf("%w at turn %d", errEmptyResponse, turn)
 	}
 	msg := resp.Choices[0].Message
 	bus.Emit(Event{Type: EventMessageStart, Turn: turn, Message: msg})
