@@ -204,7 +204,7 @@ func TestGogoContextPropagatesCancel(t *testing.T) {
 
 	gogoCtx := gogo.NewContext().WithContext(ctx)
 	if gogoCtx.Context().Err() == nil {
-		t.Fatal("cancelled context not propagated to gogo Context")
+		t.Fatal("canceled context not propagated to gogo Context")
 	}
 }
 
@@ -214,7 +214,7 @@ func TestSprayContextPropagatesCancel(t *testing.T) {
 
 	sprayCtx := spray.NewContext().WithContext(ctx)
 	if sprayCtx.Context().Err() == nil {
-		t.Fatal("cancelled context not propagated to spray Context")
+		t.Fatal("canceled context not propagated to spray Context")
 	}
 }
 
@@ -224,7 +224,7 @@ func TestNeutronContextPropagatesCancel(t *testing.T) {
 
 	nCtx := neutron.NewContext().WithContext(ctx)
 	if nCtx.Context().Err() == nil {
-		t.Fatal("cancelled context not propagated to neutron Context")
+		t.Fatal("canceled context not propagated to neutron Context")
 	}
 }
 
@@ -234,7 +234,7 @@ func TestZombieContextPropagatesCancel(t *testing.T) {
 
 	zCtx := sdkzombie.NewContext().WithContext(ctx)
 	if zCtx.Context().Err() == nil {
-		t.Fatal("cancelled context not propagated to zombie Context")
+		t.Fatal("canceled context not propagated to zombie Context")
 	}
 }
 

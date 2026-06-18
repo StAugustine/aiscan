@@ -83,7 +83,7 @@ func resizeIfNeeded(img image.Image, w, h int) image.Image {
 		return img
 	}
 
-	newW, newH := w, h
+	var newW, newH int
 	if w > h {
 		newW = maxDimension
 		newH = h * maxDimension / w

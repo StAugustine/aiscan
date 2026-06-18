@@ -132,7 +132,7 @@ func parseJSONTimestamp(raw json.RawMessage) time.Time {
 		}
 	}
 	var t time.Time
-	json.Unmarshal(raw, &t)
+	_ = json.Unmarshal(raw, &t)
 	return t
 }
 

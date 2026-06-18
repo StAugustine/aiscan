@@ -79,6 +79,9 @@ func TestParseCLIScannerDebugEnablesGlobalDebugAndPreservesArg(t *testing.T) {
 }
 
 func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
+	if !cfg.ScannerCommandAvailable("scan") {
+		t.Skip("scan command not available (requires engine registration)")
+	}
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Output: &logBuf})
 	stdout, err := captureStdoutForTest(t, func() error {
@@ -101,6 +104,9 @@ func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
 }
 
 func TestDirectScannerModeDebugShowsInitInfo(t *testing.T) {
+	if !cfg.ScannerCommandAvailable("scan") {
+		t.Skip("scan command not available (requires engine registration)")
+	}
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Debug: true, Output: &logBuf})
 	stdout, err := captureStdoutForTest(t, func() error {

@@ -118,7 +118,7 @@ func streamSSE(
 		setHeaders(httpReq)
 	}
 
-	resp, err := client.Do(httpReq)
+	resp, err := client.Do(httpReq) //nolint:bodyclose // closed in goroutine below
 	if err != nil {
 		reqCancel()
 		return nil, fmt.Errorf("http request: %w", err)

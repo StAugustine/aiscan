@@ -11,7 +11,7 @@ import (
 
 func readPendingTerminalBytes(timeout time.Duration) string {
 	file := os.Stdin
-	fd := int32(file.Fd())
+	fd := int32(file.Fd()) //nolint:gosec // stdin fd is always small
 	timeoutMS := int(timeout / time.Millisecond)
 	if timeoutMS <= 0 && timeout > 0 {
 		timeoutMS = 1

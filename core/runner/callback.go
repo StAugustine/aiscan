@@ -28,7 +28,7 @@ type wsMsg struct {
 
 // RunWebCallback connects to the web server via WebSocket and enters a
 // loop receiving commands and forwarding agent events. It reconnects on
-// disconnect until ctx is cancelled.
+// disconnect until ctx is canceled.
 func RunWebCallback(ctx context.Context, serverURL, name string, reg *commands.CommandRegistry, bus *eventbus.Bus[agent.Event]) error {
 	for {
 		if ctx.Err() != nil {
@@ -92,7 +92,7 @@ func runCallbackOnce(ctx context.Context, serverURL, name string, reg *commands.
 				}
 				_ = conn.WriteJSON(msg)
 			case <-ctx.Done():
-				conn.WriteMessage(websocket.CloseMessage,
+				_ = conn.WriteMessage(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 				return
 			case <-done:
