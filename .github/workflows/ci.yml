@@ -148,7 +148,7 @@ jobs:
         run: |
           go test -race -count=1 -timeout 5m -v \
             -run 'MultiRound|SendCtrlC' \
-            ./pkg/agent/task/
+            ./pkg/agent/tmux/
 
       - name: Run agent tmux integration tests
         run: |
