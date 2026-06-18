@@ -248,7 +248,7 @@ case "$PROFILE" in
         AISCAN_MAIN="./cmd/agent"
         ;;
     full)
-        EXTRA_TAGS="browser,recon${EXTRA_TAGS:+,$EXTRA_TAGS}"
+        EXTRA_TAGS="full${EXTRA_TAGS:+,$EXTRA_TAGS}"
         BUILD_IOA=true
         AISCAN_BIN="aiscan-full"
         ;;
