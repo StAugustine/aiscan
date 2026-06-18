@@ -413,7 +413,7 @@ func (r *AgentConsole) executeArgs(ctx context.Context, args []string) error {
 // background probes. stderr-TTY-only and skipped in quiet mode so redirected
 // logs stay clean. Printed once into the scrollback (PTY-forward safe).
 func (r *AgentConsole) renderBanner() {
-	if r.output == nil || r.output.Quiet || r.output.stderr == nil {
+	if r.output == nil || r.output.verbosity < 0 || r.output.stderr == nil {
 		return
 	}
 	if !writerIsTerminal(r.output.stderr) {
