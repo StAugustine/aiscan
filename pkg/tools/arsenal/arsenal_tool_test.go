@@ -148,6 +148,11 @@ func TestAddAndFind(t *testing.T) {
 	}
 }
 
+func TestReleasesNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "releases")
+}
+
 func TestUnknownAction(t *testing.T) {
 	cmd := newTestCmd(t)
 	runErr(t, cmd, "bad_action")
@@ -284,6 +289,15 @@ func TestE2E_RemoveTool(t *testing.T) {
 	out = run(t, cmd, "remove", "gogo")
 	if !strings.Contains(out, "not installed") {
 		t.Errorf("expected not installed, got: %s", out)
+	}
+}
+
+func TestE2E_Releases(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
+	out := run(t, cmd, "releases", "gogo")
+	if !strings.Contains(out, "version") {
+		t.Errorf("releases should return version info, got: %s", out)
 	}
 }
 
