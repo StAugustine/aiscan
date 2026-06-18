@@ -85,6 +85,8 @@ export interface ScanEvent {
   result?: ScanResult;
 }
 
+type RawScanEventType = ScanEvent['type'] | 'output';
+
 export interface ScanOptions {
   verify: boolean;
   sniper: boolean;
@@ -165,7 +167,7 @@ export function subscribeScanEvents(
   onEvent: (event: ScanEvent) => void,
 ): () => void {
   const es = new EventSource(`/api/scans/${encodeURIComponent(id)}/events`);
-  const handler = (type: ScanEvent['type']) => (e: Event) => {
+  const handler = (type: RawScanEventType) => (e: Event) => {
     const data = 'data' in e ? (e as MessageEvent).data : undefined;
     if (typeof data !== 'string' || data === '') {
       if (type === 'error') {
@@ -190,9 +192,16 @@ export function subscribeScanEvents(
 
     let event: ScanEvent;
     try {
-      event = JSON.parse(data);
+      const parsed = JSON.parse(data);
+      const normalizedType = type === 'output' ? 'progress' : type;
+      const parsedType = parsed?.type === 'output' ? 'progress' : parsed?.type || normalizedType;
+      event = {
+        scan_id: id,
+        ...parsed,
+        type: parsedType,
+      };
     } catch {
-      event = { type, scan_id: id, data };
+      event = { type: type === 'output' ? 'progress' : type, scan_id: id, data };
     }
 
     onEvent(event);
@@ -204,6 +213,7 @@ export function subscribeScanEvents(
   es.addEventListener('status', handler('status'));
   es.addEventListener('complete', handler('complete'));
   es.addEventListener('error', handler('error'));
+  es.addEventListener('output', handler('output'));
 
   return () => es.close();
 }

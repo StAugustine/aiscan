@@ -23,8 +23,6 @@ import (
 	"github.com/chainreactors/aiscan/pkg/web"
 	"github.com/chainreactors/ioa/protocols"
 	ioaserver "github.com/chainreactors/ioa/server"
-
-	_ "github.com/chainreactors/aiscan/pkg/tools"
 )
 
 //go:embed static
@@ -368,7 +366,15 @@ func initApp(ctx context.Context, configFile string, logger telemetry.Logger) (*
 	appCfg.Scanner.EnableAllAISkills = false
 	appCfg.Scanner.VerifyMode = "off"
 
-	return runner.NewApp(ctx, appCfg)
+	app, err := runner.NewApp(ctx, appCfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := app.WaitEngines(ctx); err != nil {
+		app.Close()
+		return nil, err
+	}
+	return app, nil
 }
 
 // parseSimpleYAML is a minimal YAML parser for flat/two-level config.
