@@ -13,17 +13,19 @@ import (
 )
 
 const (
-	defaultMaxRetries = 3
-	maxResultPreview  = 200
-	maxOutputPreview  = 3000
-	maxTraceSize      = 16000
+	defaultMaxRetries    = 3
+	defaultContextWindow = 128000
+	maxResultPreview     = 200
+	maxOutputPreview     = 3000
+	maxTraceSize         = 16000
 )
 
 type Config struct {
-	Provider   provider.Provider
-	Model      string
-	MaxRetries int
-	Logger     telemetry.Logger
+	Provider      provider.Provider
+	Model         string
+	MaxRetries    int
+	ContextWindow int
+	Logger        telemetry.Logger
 }
 
 type Verdict struct {
@@ -41,14 +43,83 @@ func New(cfg Config) *Evaluator {
 	if cfg.MaxRetries <= 0 {
 		cfg.MaxRetries = defaultMaxRetries
 	}
+	if cfg.ContextWindow <= 0 {
+		cfg.ContextWindow = ModelContextWindow(cfg.Model)
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = telemetry.NopLogger()
 	}
 	return &Evaluator{cfg: cfg}
 }
 
+// modelContextWindows maps model name prefixes to their context window sizes.
+// Entries are checked in order; the first prefix match wins.
+// Longer/more-specific prefixes must come before shorter ones in the same family.
+var modelContextWindows = []struct {
+	prefix string
+	tokens int
+}{
+	// Anthropic — 1M context models
+	{"claude-opus-4-8", 1000000},
+	{"claude-opus-4-7", 1000000},
+	{"claude-opus-4-6", 1000000},
+	{"claude-sonnet-4-6", 1000000},
+	{"claude-fable-5", 1000000},
+	// Anthropic — 200k context models
+	{"claude-opus-4", 200000},
+	{"claude-sonnet-4", 200000},
+	{"claude-haiku-4", 200000},
+	{"claude-3", 200000},
+
+	// DeepSeek
+	{"deepseek-v4", 1000000},
+	{"deepseek-r1", 163840},
+	{"deepseek-v3", 163840},
+	{"deepseek-chat", 128000},
+	{"deepseek-reasoner", 128000},
+	{"deepseek", 128000},
+
+	// OpenAI
+	{"gpt-5.4", 1050000},
+	{"gpt-5.5", 1050000},
+	{"gpt-5", 400000},
+	{"gpt-4.1", 1047576},
+	{"gpt-4o", 128000},
+	{"gpt-4-turbo", 128000},
+	{"gpt-4", 8192},
+	{"o4-mini", 200000},
+	{"o3", 200000},
+	{"o1", 200000},
+
+	// Google Gemini
+	{"gemini", 1048576},
+
+	// Qwen
+	{"qwen3.7", 1000000},
+	{"qwen3.6", 1000000},
+	{"qwen3-coder", 262144},
+	{"qwen3", 262144},
+	{"qwen", 128000},
+
+	// Moonshot / Kimi
+	{"kimi", 262144},
+	{"moonshot", 262144},
+}
+
+// ModelContextWindow returns the context window size for a model name.
+// Falls back to defaultContextWindow if no prefix matches.
+func ModelContextWindow(model string) int {
+	model = strings.ToLower(model)
+	for _, entry := range modelContextWindows {
+		if strings.HasPrefix(model, entry.prefix) {
+			return entry.tokens
+		}
+	}
+	return defaultContextWindow
+}
+
 func (e *Evaluator) Evaluate(ctx context.Context, goal, criteria string, messages []provider.ChatMessage, output string, turns, contextTokens int) (*Verdict, error) {
-	trace := buildTrace(messages, output, turns, contextTokens)
+	trace := buildTrace(messages, output, turns, contextTokens, e.cfg.ContextWindow)
 	prompt := buildPrompt(goal, criteria, trace)
 
 	var lastErr error
@@ -71,8 +142,11 @@ const systemPrompt = `You are an evaluator. Call the "verdict" tool with your re
 Rules:
 - pass=true only if the task was fully achieved per criteria
 - feedback: actionable next step when pass=false
-- inherit_context=false when context usage >50% or history is noisy; when false, feedback must be self-contained (include file paths, findings, etc.)
-- inherit_context=true when intermediate results would be expensive to reconstruct`
+- inherit_context decision based on context_usage% shown in trace:
+  - >80%: MUST set inherit_context=false (context nearly full, fresh start required)
+  - >50%: SHOULD set inherit_context=false unless critical intermediate state exists
+  - <=50%: default inherit_context=true
+- When inherit_context=false, feedback must be fully self-contained (include file paths, findings, variable names, prior progress)`
 
 var verdictTool = provider.ToolDefinition{
 	Type: "function",
@@ -133,9 +207,10 @@ func buildPrompt(goal, criteria, trace string) string {
 	return sb.String()
 }
 
-func buildTrace(messages []provider.ChatMessage, output string, turns, contextTokens int) string {
+func buildTrace(messages []provider.ChatMessage, output string, turns, contextTokens, contextWindow int) string {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Turns: %d | Messages: %d | Context tokens: %d\n", turns, len(messages), contextTokens)
+	usagePct := float64(contextTokens) / float64(contextWindow) * 100
+	fmt.Fprintf(&sb, "Turns: %d | Messages: %d | Context tokens: %d/%d (%.0f%%)\n", turns, len(messages), contextTokens, contextWindow, usagePct)
 
 	toolCallCount := 0
 	for _, msg := range messages {
