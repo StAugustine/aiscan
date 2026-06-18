@@ -9,8 +9,9 @@ import (
 )
 
 type OpenAIProvider struct {
-	config *ProviderConfig
-	client *http.Client
+	config            *ProviderConfig
+	client            *http.Client
+	webSearchDisabled bool
 }
 
 func NewOpenAIProvider(cfg *ProviderConfig) (*OpenAIProvider, error) {
@@ -115,6 +116,9 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 // --- WebSearch via OpenAI Responses API ---
 
 func (p *OpenAIProvider) WebSearch(ctx context.Context, query string, maxResults int) (*WebSearchResponse, error) {
+	if p.webSearchDisabled {
+		return nil, fmt.Errorf("provider does not support server-side web search")
+	}
 	maxResults = clampInt(maxResults, 1, 10, 5)
 
 	base := strings.TrimSuffix(p.config.BaseURL, "/")
@@ -130,9 +134,15 @@ func (p *OpenAIProvider) WebSearch(ctx context.Context, query string, maxResults
 		p.setAuthHeaders,
 	)
 	if err != nil {
+		p.webSearchDisabled = true
 		return nil, err
 	}
-	return parseOpenAIWebSearchResponse(data, maxResults)
+	resp, err := parseOpenAIWebSearchResponse(data, maxResults)
+	if err != nil {
+		p.webSearchDisabled = true
+		return nil, err
+	}
+	return resp, nil
 }
 
 func parseOpenAIWebSearchResponse(data []byte, maxResults int) (*WebSearchResponse, error) {

@@ -15,6 +15,7 @@ func TestResolveUsesBaseURL(t *testing.T) {
 	cfg, err := Resolve(&ProviderConfig{
 		Provider: "ollama",
 		BaseURL:  "http://localhost:11434/v1",
+		APIKey:   "test-key",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -28,6 +29,7 @@ func TestResolvePreservesExplicitBaseURL(t *testing.T) {
 	cfg, err := Resolve(&ProviderConfig{
 		Provider: "ollama",
 		BaseURL:  "http://base-url.example/v1",
+		APIKey:   "test-key",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -37,32 +39,25 @@ func TestResolvePreservesExplicitBaseURL(t *testing.T) {
 	}
 }
 
-func TestInferFromBaseURL(t *testing.T) {
-	tests := []struct {
-		baseURL string
-		want    string
-	}{
-		{"https://api.openai.com/v1", "openai"},
-		{"https://api.anthropic.com/v1", "anthropic"},
-		{"https://api.deepseek.com/v1", "deepseek"},
-		{"https://openrouter.ai/api/v1", "openrouter"},
-		{"https://api.groq.com/openai/v1", "groq"},
-		{"https://api.moonshot.cn/v1", "moonshot"},
-		{"http://localhost:11434/v1", "ollama"},
-		{"https://llm.example.com/v1", ""},
-	}
-
-	for _, tt := range tests {
-		if got := InferFromBaseURL(tt.baseURL); got != tt.want {
-			t.Fatalf("InferFromBaseURL(%q) = %q, want %q", tt.baseURL, got, tt.want)
+func TestInferFromBaseURLDefaultsToOpenAI(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://api.openai.com/v1",
+		"https://api.deepseek.com/v1",
+		"https://openrouter.ai/api/v1",
+		"http://localhost:11434/v1",
+		"https://llm.example.com/v1",
+	} {
+		if got := InferFromBaseURL(baseURL); got != "openai" {
+			t.Fatalf("InferFromBaseURL(%q) = %q, want openai", baseURL, got)
 		}
 	}
 }
 
-func TestResolveInfersProviderFromBaseURL(t *testing.T) {
+func TestResolveExplicitProvider(t *testing.T) {
 	cfg, err := Resolve(&ProviderConfig{
-		BaseURL: "https://api.anthropic.com/v1",
-		APIKey:  "test-key",
+		Provider: "anthropic",
+		BaseURL:  "https://my-proxy.example.com/v1",
+		APIKey:   "test-key",
 	})
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
@@ -72,10 +67,11 @@ func TestResolveInfersProviderFromBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewProviderUsesInferredAnthropicProvider(t *testing.T) {
+func TestNewProviderExplicitAnthropic(t *testing.T) {
 	p, err := NewProvider(&ProviderConfig{
-		BaseURL: "https://api.anthropic.com/v1",
-		APIKey:  "test-key",
+		Provider: "anthropic",
+		BaseURL:  "https://my-proxy.example.com/v1",
+		APIKey:   "test-key",
 	})
 	if err != nil {
 		t.Fatalf("NewProvider() error = %v", err)

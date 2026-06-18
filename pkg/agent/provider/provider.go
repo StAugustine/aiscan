@@ -77,7 +77,7 @@ func Resolve(cfg *ProviderConfig) (*ProviderConfig, error) {
 	}
 
 	if resolved.Images == nil {
-		v := inferImageSupport(resolved.BaseURL, resolved.Model)
+		v := inferImageSupport(resolved.Provider, resolved.Model)
 		resolved.Images = &v
 	}
 
@@ -93,28 +93,19 @@ func NewProvider(cfg *ProviderConfig) (Provider, error) {
 }
 
 // inferImageSupport guesses whether a provider+model combination accepts
-// image content parts.  Known vision-capable providers return true; unknown
-// providers default to false so the agent gracefully degrades instead of
-// crashing with a 400.
-func inferImageSupport(baseURL, model string) bool {
-	u := strings.ToLower(strings.TrimSpace(baseURL))
+// image content parts based on the provider type and model name heuristics.
+// Defaults to true for known provider types (anthropic/openai) and falls
+// back to model-name heuristics for unknown providers.
+func inferImageSupport(provider, model string) bool {
+	p := strings.ToLower(strings.TrimSpace(provider))
 	m := strings.ToLower(strings.TrimSpace(model))
 
-	// Anthropic Claude models support images.
-	if strings.Contains(u, "anthropic.com") {
-		return true
-	}
-	// OpenAI vision models.
-	if strings.Contains(u, "openai.com") {
-		return true
-	}
-	// Google Gemini models support images.
-	if strings.Contains(u, "googleapis.com") || strings.Contains(u, "generativelanguage") {
+	switch p {
+	case "anthropic", "openai":
 		return true
 	}
 
-	// Model-name heuristics for providers that mix vision/text-only models.
-	for _, kw := range []string{"vision", "vl", "multimodal", "4o", "gpt-4-turbo"} {
+	for _, kw := range []string{"claude", "gpt", "gemini", "vision", "vl", "multimodal", "4o", "gpt-4-turbo"} {
 		if strings.Contains(m, kw) {
 			return true
 		}
@@ -123,11 +114,11 @@ func inferImageSupport(baseURL, model string) bool {
 	return false
 }
 
-func InferFromBaseURL(baseURL string) string {
-	baseURL = strings.ToLower(strings.TrimSpace(baseURL))
-	if strings.Contains(baseURL, "anthropic.com") {
-		return "anthropic"
-	}
+// InferFromBaseURL returns a default provider type when --provider is not
+// set. Most third-party endpoints speak the OpenAI protocol, so "openai" is
+// the safest default. Users who need Anthropic protocol must pass --provider
+// explicitly.
+func InferFromBaseURL(_ string) string {
 	return "openai"
 }
 

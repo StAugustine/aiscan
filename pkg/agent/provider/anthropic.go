@@ -15,8 +15,9 @@ const (
 )
 
 type AnthropicProvider struct {
-	config *ProviderConfig
-	client *http.Client
+	config            *ProviderConfig
+	client            *http.Client
+	webSearchDisabled bool
 }
 
 func NewAnthropicProvider(cfg *ProviderConfig) (*AnthropicProvider, error) {
@@ -612,6 +613,9 @@ func (p *anthropicStreamParser) usageSnapshot() *Usage {
 // --- WebSearch via Anthropic server-side web_search tool ---
 
 func (p *AnthropicProvider) WebSearch(ctx context.Context, query string, maxResults int) (*WebSearchResponse, error) {
+	if p.webSearchDisabled {
+		return nil, fmt.Errorf("provider does not support server-side web search")
+	}
 	maxResults = clampInt(maxResults, 1, 10, 5)
 
 	data, err := doJSON(ctx, p.client, timeoutFromConfig(p.config.Timeout),
@@ -630,9 +634,15 @@ func (p *AnthropicProvider) WebSearch(ctx context.Context, query string, maxResu
 		},
 	)
 	if err != nil {
+		p.webSearchDisabled = true
 		return nil, err
 	}
-	return parseAnthropicWebSearchResponse(data)
+	resp, err := parseAnthropicWebSearchResponse(data)
+	if err != nil {
+		p.webSearchDisabled = true
+		return nil, err
+	}
+	return resp, nil
 }
 
 func parseAnthropicWebSearchResponse(data []byte) (*WebSearchResponse, error) {
