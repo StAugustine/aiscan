@@ -89,6 +89,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Generate embedded resources
+        run: go generate ./core/resources/...
+
       - name: Run unit tests with coverage
         run: |
           go test -race -count=1 -timeout 5m \
