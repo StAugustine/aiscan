@@ -31,11 +31,21 @@ func (p *AnthropicProvider) Name() string {
 	return p.config.Provider
 }
 
+func (p *AnthropicProvider) supportsImages() bool {
+	if p.config.Images != nil {
+		return *p.config.Images
+	}
+	return true
+}
+
 func (p *AnthropicProvider) ChatCompletion(ctx context.Context, req *ChatCompletionRequest) (*ChatCompletionResponse, error) {
 	if req.Model == "" {
 		req.Model = p.config.Model
 	}
 	req.Stream = false
+	if !p.supportsImages() {
+		req.Messages = stripImageParts(req.Messages)
+	}
 
 	bodyBytes, err := p.marshalRequest(req)
 	if err != nil {
@@ -65,6 +75,9 @@ func (p *AnthropicProvider) ChatCompletionStream(ctx context.Context, req *ChatC
 		req.Model = p.config.Model
 	}
 	req.Stream = true
+	if !p.supportsImages() {
+		req.Messages = stripImageParts(req.Messages)
+	}
 
 	bodyBytes, err := p.marshalRequest(req)
 	if err != nil {

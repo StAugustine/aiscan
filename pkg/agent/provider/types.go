@@ -81,6 +81,41 @@ func ParseDataURI(dataURI string) (mediaType, base64Data string) {
 	return parts[0], parts[1]
 }
 
+// stripImageParts returns a copy of msgs with all image_url content parts
+// removed and replaced by a text notice.  Used when the target provider does
+// not support multimodal input.
+func stripImageParts(msgs []ChatMessage) []ChatMessage {
+	out := make([]ChatMessage, len(msgs))
+	for i, m := range msgs {
+		if len(m.ContentParts) == 0 {
+			out[i] = m
+			continue
+		}
+		hasImage := false
+		for _, p := range m.ContentParts {
+			if p.Type == "image_url" {
+				hasImage = true
+				break
+			}
+		}
+		if !hasImage {
+			out[i] = m
+			continue
+		}
+		filtered := make([]ContentPart, 0, len(m.ContentParts))
+		for _, p := range m.ContentParts {
+			if p.Type != "image_url" {
+				filtered = append(filtered, p)
+			}
+		}
+		filtered = append(filtered, TextPart("[image omitted: model does not support images]"))
+		cp := m
+		cp.ContentParts = filtered
+		out[i] = cp
+	}
+	return out
+}
+
 type ChatMessageDelta struct {
 	Role             string          `json:"role,omitempty"`
 	Content          *string         `json:"content,omitempty"`

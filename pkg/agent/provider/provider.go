@@ -37,6 +37,7 @@ type ProviderConfig struct {
 	Model    string `yaml:"model"    config:"model"`
 	Proxy    string `yaml:"proxy"    config:"proxy"`
 	Timeout  int    `yaml:"timeout"  config:"timeout"`
+	Images   *bool  `yaml:"images,omitempty" config:"images"`
 }
 
 func NormalizeProvider(name string) string {
@@ -75,6 +76,11 @@ func Resolve(cfg *ProviderConfig) (*ProviderConfig, error) {
 		resolved.Timeout = 120
 	}
 
+	if resolved.Images == nil {
+		v := inferImageSupport(resolved.BaseURL, resolved.Model)
+		resolved.Images = &v
+	}
+
 	return &resolved, nil
 }
 
@@ -84,6 +90,37 @@ func NewProvider(cfg *ProviderConfig) (Provider, error) {
 		return nil, err
 	}
 	return NewProviderFromResolved(resolved)
+}
+
+// inferImageSupport guesses whether a provider+model combination accepts
+// image content parts.  Known vision-capable providers return true; unknown
+// providers default to false so the agent gracefully degrades instead of
+// crashing with a 400.
+func inferImageSupport(baseURL, model string) bool {
+	u := strings.ToLower(strings.TrimSpace(baseURL))
+	m := strings.ToLower(strings.TrimSpace(model))
+
+	// Anthropic Claude models support images.
+	if strings.Contains(u, "anthropic.com") {
+		return true
+	}
+	// OpenAI vision models.
+	if strings.Contains(u, "openai.com") {
+		return true
+	}
+	// Google Gemini models support images.
+	if strings.Contains(u, "googleapis.com") || strings.Contains(u, "generativelanguage") {
+		return true
+	}
+
+	// Model-name heuristics for providers that mix vision/text-only models.
+	for _, kw := range []string{"vision", "vl", "multimodal", "4o", "gpt-4-turbo"} {
+		if strings.Contains(m, kw) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func InferFromBaseURL(baseURL string) string {

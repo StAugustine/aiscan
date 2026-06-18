@@ -25,11 +25,21 @@ func (p *OpenAIProvider) Name() string {
 	return p.config.Provider
 }
 
+func (p *OpenAIProvider) supportsImages() bool {
+	if p.config.Images != nil {
+		return *p.config.Images
+	}
+	return false
+}
+
 func (p *OpenAIProvider) ChatCompletion(ctx context.Context, req *ChatCompletionRequest) (*ChatCompletionResponse, error) {
 	if req.Model == "" {
 		req.Model = p.config.Model
 	}
 	req.Stream = false
+	if !p.supportsImages() {
+		req.Messages = stripImageParts(req.Messages)
+	}
 
 	bodyBytes, err := marshalOpenAIRequest(req)
 	if err != nil {
@@ -58,6 +68,9 @@ func (p *OpenAIProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 		req.Model = p.config.Model
 	}
 	req.Stream = true
+	if !p.supportsImages() {
+		req.Messages = stripImageParts(req.Messages)
+	}
 
 	bodyBytes, err := marshalOpenAIRequest(req)
 	if err != nil {
