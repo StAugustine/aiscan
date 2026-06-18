@@ -14,12 +14,12 @@ func init() {
 				logger = telemetry.NopLogger()
 			}
 
-			tool, err := NewArsenalTool(logger)
+			cmd, err := NewArsenalCommand()
 			if err != nil {
 				logger.Warnf("arsenal init: %v", err)
 				return
 			}
-			reg.RegisterTool(tool)
+			reg.Register(cmd, "tools")
 		},
 	})
 }

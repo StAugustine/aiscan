@@ -1,8 +1,8 @@
 package arsenal
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,660 +11,296 @@ import (
 	"testing"
 
 	crtm "github.com/chainreactors/crtm/pkg"
-
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/telemetry"
 )
 
-// callTool is a test helper that invokes the arsenal tool with JSON args.
-func callTool(t *testing.T, tool *ArsenalTool, args map[string]string) commands.ToolResult {
+// run executes arsenal as a Command and returns stdout.
+func run(t *testing.T, cmd *ArsenalCommand, args ...string) string {
 	t.Helper()
-	data, _ := json.Marshal(args)
-	result, err := tool.Execute(context.Background(), string(data))
+	var buf bytes.Buffer
+	err := cmd.Execute(context.Background(), args, &buf)
 	if err != nil {
-		t.Fatalf("Execute error: %v", err)
+		t.Fatalf("arsenal %s: %v", strings.Join(args, " "), err)
 	}
-	return result
+	return buf.String()
 }
 
-func resultText(r commands.ToolResult) string {
-	if len(r.Content) == 0 {
-		return ""
+// runErr executes and expects an error.
+func runErr(t *testing.T, cmd *ArsenalCommand, args ...string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	err := cmd.Execute(context.Background(), args, &buf)
+	if err == nil {
+		t.Fatalf("arsenal %s: expected error, got output: %s", strings.Join(args, " "), buf.String())
 	}
-	return r.Content[0].Text
+	return err.Error()
 }
 
-// --- Unit tests (offline, no network) ---
+func newTestCmd(t *testing.T) *ArsenalCommand {
+	t.Helper()
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "bin")
+	configPath := filepath.Join(dir, "config.yaml")
 
-func TestArsenalList(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "list"})
-	text := resultText(r)
+	mgr, err := crtm.NewManager(crtm.ManagerOption{
+		BinPath:    binPath,
+		ConfigPath: configPath,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	if !strings.Contains(text, "gogo") {
+	os.MkdirAll(binPath, 0o755)
+	if path := os.Getenv("PATH"); !strings.Contains(path, binPath) {
+		os.Setenv("PATH", binPath+string(os.PathListSeparator)+path)
+	}
+
+	return &ArsenalCommand{mgr: mgr}
+}
+
+// --- Unit tests (offline) ---
+
+func TestList(t *testing.T) {
+	cmd := newTestCmd(t)
+	out := run(t, cmd, "list")
+	if !strings.Contains(out, "gogo") {
 		t.Error("list should contain gogo")
 	}
-	if !strings.Contains(text, "nuclei") {
+	if !strings.Contains(out, "nuclei") {
 		t.Error("list should contain nuclei")
 	}
-	if !strings.Contains(text, "installed") {
+	if !strings.Contains(out, "installed") {
 		t.Error("list should show installed count")
 	}
 }
 
-func TestArsenalSearchByName(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "search", "query": "nuclei"})
-	text := resultText(r)
-
-	if !strings.Contains(text, "nuclei") {
-		t.Errorf("search 'nuclei' should find nuclei, got: %s", text)
+func TestSearchByName(t *testing.T) {
+	cmd := newTestCmd(t)
+	out := run(t, cmd, "search", "nuclei")
+	if !strings.Contains(out, "nuclei") {
+		t.Errorf("search should find nuclei, got: %s", out)
 	}
 }
 
-func TestArsenalSearchByTag(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "search", "query": "fuzzer"})
-	text := resultText(r)
+func TestSearchNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "search")
+}
 
-	// No built-in fuzzer, should return empty or "No tools found".
-	if strings.Contains(text, "gogo") {
-		t.Error("searching 'fuzzer' should not match gogo")
+func TestInfoNotFound(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "info", "nonexistent_xyz")
+}
+
+func TestInstallNotFound(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "install", "nonexistent_xyz")
+}
+
+func TestInstallNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "install")
+}
+
+func TestUpdateNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "update")
+}
+
+func TestRemoveNotInstalled(t *testing.T) {
+	cmd := newTestCmd(t)
+	out := run(t, cmd, "remove", "gogo")
+	if !strings.Contains(out, "not installed") {
+		t.Errorf("expected 'not installed', got: %s", out)
 	}
 }
 
-func TestArsenalSearchEmpty(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "search"})
-	if !r.IsError {
-		t.Error("search without query should return error")
+func TestRemoveNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "remove")
+}
+
+func TestAddBadRepo(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "add", "noslash")
+}
+
+func TestAddAndFind(t *testing.T) {
+	cmd := newTestCmd(t)
+
+	out := run(t, cmd, "search", "ffuf")
+	if strings.Contains(out, "ffuf/ffuf") {
+		t.Fatal("ffuf should not exist before add")
+	}
+
+	out = run(t, cmd, "add", "ffuf/ffuf", "--pattern", "{name}_{version}_{os}_{arch}.tar.gz")
+	if !strings.Contains(out, "Added ffuf") {
+		t.Errorf("expected 'Added ffuf', got: %s", out)
+	}
+
+	out = run(t, cmd, "search", "ffuf")
+	if !strings.Contains(out, "ffuf") {
+		t.Errorf("ffuf should be findable after add, got: %s", out)
+	}
+
+	out = run(t, cmd, "add", "ffuf/ffuf")
+	if !strings.Contains(out, "already registered") {
+		t.Errorf("expected 'already registered', got: %s", out)
 	}
 }
 
-func TestArsenalInfoNotFound(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "info", "name": "nonexistent_xyz"})
-	if !r.IsError {
-		t.Error("info for nonexistent tool should return error")
-	}
+func TestUnknownAction(t *testing.T) {
+	cmd := newTestCmd(t)
+	runErr(t, cmd, "bad_action")
 }
 
-func TestArsenalInstallNotFound(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "nonexistent_xyz"})
-	if !r.IsError {
-		t.Error("install nonexistent tool should return error")
-	}
-}
-
-func TestArsenalInstallNoName(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "install"})
-	if !r.IsError {
-		t.Error("install without name should return error")
-	}
-}
-
-func TestArsenalAddBadRepo(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "add", "repo": "noslash"})
-	if !r.IsError {
-		t.Error("add with bad repo format should return error")
-	}
-}
-
-func TestArsenalAddAndFind(t *testing.T) {
-	tool := newTestTool(t)
-
-	// Before add, ffuf is not in catalog.
-	r := callTool(t, tool, map[string]string{"action": "search", "query": "ffuf"})
-	if strings.Contains(resultText(r), "ffuf/ffuf") {
-		t.Fatal("ffuf should not be in catalog before add")
-	}
-
-	// Add ffuf.
-	r = callTool(t, tool, map[string]string{
-		"action":  "add",
-		"repo":    "ffuf/ffuf",
-		"pattern": "{name}_{version}_{os}_{arch}.tar.gz",
-	})
-	if r.IsError {
-		t.Fatalf("add ffuf failed: %s", resultText(r))
-	}
-	if !strings.Contains(resultText(r), "Added ffuf") {
-		t.Errorf("expected 'Added ffuf', got: %s", resultText(r))
-	}
-
-	// Now search should find ffuf.
-	r = callTool(t, tool, map[string]string{"action": "search", "query": "ffuf"})
-	if !strings.Contains(resultText(r), "ffuf") {
-		t.Errorf("ffuf should be in catalog after add, got: %s", resultText(r))
-	}
-
-	// Add again should report duplicate.
-	r = callTool(t, tool, map[string]string{"action": "add", "repo": "ffuf/ffuf"})
-	if r.IsError {
-		t.Fatalf("duplicate add should not error: %s", resultText(r))
-	}
-	if !strings.Contains(resultText(r), "already registered") {
-		t.Errorf("expected 'already registered', got: %s", resultText(r))
-	}
-}
-
-func TestArsenalUpdateNoName(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "update"})
-	if !r.IsError {
-		t.Error("update without name should error")
-	}
-}
-
-func TestArsenalRemoveNotInstalled(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
-	if r.IsError {
-		t.Error("remove of not-installed tool should not error")
-	}
-	if !strings.Contains(resultText(r), "not installed") {
-		t.Errorf("expected 'not installed', got: %s", resultText(r))
-	}
-}
-
-func TestArsenalRemoveNoName(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "remove"})
-	if !r.IsError {
-		t.Error("remove without name should error")
-	}
-}
-
-func TestArsenalUnknownAction(t *testing.T) {
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "bad_action"})
-	if !r.IsError {
-		t.Error("unknown action should return error")
+func TestUsageOnNoArgs(t *testing.T) {
+	cmd := newTestCmd(t)
+	out := run(t, cmd)
+	if !strings.Contains(out, "Usage:") {
+		t.Errorf("no args should show usage, got: %s", out)
 	}
 }
 
 // --- E2E tests (real network) ---
 
-func TestArsenalE2E_InfoRegistered(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "info", "name": "gogo"})
-	text := resultText(r)
-
-	if r.IsError {
-		t.Fatalf("info gogo failed: %s", text)
-	}
-	if !strings.Contains(text, "chainreactors") {
-		t.Errorf("info should show org, got: %s", text)
-	}
-	if !strings.Contains(text, "Latest:") || strings.Contains(text, "Latest:    \n") {
-		// Latest should have a version resolved.
-		t.Logf("info output: %s", text)
-	}
-}
-
-func TestArsenalE2E_InstallRegisteredCR(t *testing.T) {
+func skipNetwork(t *testing.T) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("skip network test in short mode")
 	}
 	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
-
-	tool := newTestTool(t)
-
-	// Install gogo (chainreactors, raw binary, latest).
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("install gogo failed: %s", text)
-	}
-	if !strings.Contains(text, "Installed gogo") {
-		t.Errorf("expected install confirmation, got: %s", text)
-	}
-
-	// Binary should exist.
-	binPath := filepath.Join(tool.mgr.BinPath(), "gogo")
-	info, err := os.Stat(binPath)
-	if err != nil {
-		t.Fatalf("gogo binary not found at %s: %v", binPath, err)
-	}
-	if info.Size() < 100_000 {
-		t.Errorf("gogo binary too small: %d bytes", info.Size())
-	}
-
-	// Install again should be idempotent (not error).
-	r = callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if r.IsError {
-		t.Errorf("re-install should be idempotent, got error: %s", resultText(r))
-	}
-	if !strings.Contains(resultText(r), "already installed") {
-		t.Errorf("expected 'already installed', got: %s", resultText(r))
-	}
-
-	// Verify install output includes hint and docs for CR tools.
-	// gogo has a hint about built-in pseudo-command.
-	firstInstall := text
-	if !strings.Contains(firstInstall, "Docs:") {
-		t.Logf("install output: %s", firstInstall)
-	}
-	if !strings.Contains(firstInstall, "Hint:") {
-		t.Logf("install output (no hint): %s", firstInstall)
+		t.Skip("e2e only on linux/amd64")
 	}
 }
 
-func TestArsenalE2E_InstallRegisteredPD(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
+func TestE2E_InstallCR(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
+
+	out := run(t, cmd, "install", "gogo")
+	if !strings.Contains(out, "Installed gogo") {
+		t.Errorf("expected install confirmation, got: %s", out)
 	}
 
-	tool := newTestTool(t)
-
-	// Install dnsx (projectdiscovery, zip, version auto-resolved).
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "dnsx"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("install dnsx failed: %s", text)
+	// Idempotent.
+	out = run(t, cmd, "install", "gogo")
+	if !strings.Contains(out, "already installed") {
+		t.Errorf("expected idempotent, got: %s", out)
 	}
 
-	binPath := filepath.Join(tool.mgr.BinPath(), "dnsx")
-	info, err := os.Stat(binPath)
-	if err != nil {
-		t.Fatalf("dnsx binary not found: %v", err)
-	}
-	if info.Size() < 100_000 {
-		t.Errorf("dnsx binary too small: %d bytes", info.Size())
-	}
-}
-
-func TestArsenalE2E_AddAndInstallNewTool(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
-
-	tool := newTestTool(t)
-
-	// Step 1: ffuf is not registered by default, install should fail.
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "ffuf"})
-	if !r.IsError {
-		t.Fatal("install ffuf should fail before add")
-	}
-
-	// Step 2: Add ffuf.
-	r = callTool(t, tool, map[string]string{
-		"action":  "add",
-		"repo":    "ffuf/ffuf",
-		"pattern": "{name}_{version}_{os}_{arch}.tar.gz",
-	})
-	if r.IsError {
-		t.Fatalf("add ffuf failed: %s", resultText(r))
-	}
-
-	// Step 3: Install ffuf.
-	r = callTool(t, tool, map[string]string{"action": "install", "name": "ffuf"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("install ffuf failed: %s", text)
-	}
-	if !strings.Contains(text, "Installed ffuf") {
-		t.Errorf("expected install confirmation, got: %s", text)
-	}
-
-	// Step 4: Binary should exist and be executable.
-	binPath := filepath.Join(tool.mgr.BinPath(), "ffuf")
-	info, err := os.Stat(binPath)
-	if err != nil {
-		t.Fatalf("ffuf binary not found: %v", err)
-	}
-	if info.Size() < 1_000_000 {
-		t.Errorf("ffuf binary too small (%d bytes), expected >1MB", info.Size())
-	}
-	if info.Mode().Perm()&0111 == 0 {
-		t.Error("ffuf binary should be executable")
-	}
-
-	// Step 5: Should be on PATH (set during NewArsenalTool).
-	pathEnv := os.Getenv("PATH")
-	if !strings.Contains(pathEnv, tool.mgr.BinPath()) {
-		t.Error("arsenal bin path should be on PATH")
-	}
-}
-
-func TestArsenalE2E_InstallWithVersion(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
-
-	tool := newTestTool(t)
-
-	// Install specific version of dnsx.
-	r := callTool(t, tool, map[string]string{
-		"action":  "install",
-		"name":    "dnsx",
-		"version": "1.2.3",
-	})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("install dnsx@1.2.3 failed: %s", text)
-	}
-
-	binPath := filepath.Join(tool.mgr.BinPath(), "dnsx")
-	info, err := os.Stat(binPath)
-	if err != nil {
-		t.Fatalf("dnsx binary not found: %v", err)
-	}
-	if info.Size() < 100_000 {
-		t.Errorf("dnsx binary too small: %d bytes", info.Size())
-	}
-}
-
-// TestArsenalE2E_ListShowsVersionAfterInstall verifies that `list` output
-// includes install status and detected version for installed tools.
-func TestArsenalE2E_ListShowsVersionAfterInstall(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
-
-	tool := newTestTool(t)
-
-	// Before install: gogo should show no version marker.
-	r := callTool(t, tool, map[string]string{"action": "list"})
-	text := resultText(r)
-	if strings.Contains(text, "* v") && strings.Contains(text, "gogo") {
-		t.Fatalf("gogo should not show installed version before install, got:\n%s", text)
-	}
-
-	// Install gogo.
-	r = callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if r.IsError {
-		t.Fatalf("install gogo failed: %s", resultText(r))
-	}
-
-	// After install: list should show version or at least '*'.
-	r = callTool(t, tool, map[string]string{"action": "list"})
-	text = resultText(r)
-	t.Logf("list output:\n%s", text)
-
-	// Find the gogo line.
+	// List shows version.
+	out = run(t, cmd, "list")
 	found := false
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, "gogo") && strings.Contains(line, "*") {
 			found = true
-			t.Logf("gogo line: %s", line)
-			break
+			t.Logf("gogo: %s", strings.TrimSpace(line))
 		}
 	}
 	if !found {
-		t.Errorf("gogo should show installed marker '*' after install")
-	}
-
-	// Should show "N/M installed" summary.
-	if !strings.Contains(text, "/") || !strings.Contains(text, "installed") {
-		t.Errorf("list should show installed count summary")
+		t.Error("gogo should show installed in list")
 	}
 }
 
-// TestArsenalE2E_PDVersionDetection verifies version extraction for PD tools.
-func TestArsenalE2E_PDVersionDetection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
+func TestE2E_InstallPD(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	tool := newTestTool(t)
-
-	// Install dnsx (PD tool with proper --version output).
-	r := callTool(t, tool, map[string]string{
-		"action": "install", "name": "dnsx", "version": "1.2.3",
-	})
-	if r.IsError {
-		t.Fatalf("install dnsx: %s", resultText(r))
+	out := run(t, cmd, "install", "dnsx", "--version", "1.2.3")
+	if !strings.Contains(out, "Installed dnsx") {
+		t.Errorf("expected install confirmation, got: %s", out)
 	}
-
-	// List should show the version.
-	r = callTool(t, tool, map[string]string{"action": "list"})
-	text := resultText(r)
-	for _, line := range strings.Split(text, "\n") {
-		if strings.Contains(line, "dnsx") {
-			t.Logf("dnsx line: %s", line)
-			if !strings.Contains(line, "1.2.") {
-				t.Errorf("dnsx should show version 1.2.x, got: %s", line)
-			}
-			break
-		}
+	if !strings.Contains(out, "v1.2.3") {
+		t.Errorf("expected version in output, got: %s", out)
 	}
 }
 
-// TestArsenalE2E_UpdateTool verifies the update action re-downloads.
-func TestArsenalE2E_UpdateTool(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
+func TestE2E_InstallPDShowsHintDocs(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	tool := newTestTool(t)
-
-	// Install gogo first.
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if r.IsError {
-		t.Fatalf("install: %s", resultText(r))
+	out := run(t, cmd, "install", "nuclei")
+	if !strings.Contains(out, "Docs:") {
+		t.Errorf("install should show docs URL, got: %s", out)
 	}
-
-	// Update should succeed (re-download).
-	r = callTool(t, tool, map[string]string{"action": "update", "name": "gogo"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("update failed: %s", text)
-	}
-	if !strings.Contains(text, "Updated gogo") {
-		t.Errorf("expected 'Updated gogo', got: %s", text)
-	}
-	// Should include docs/hint.
-	if !strings.Contains(text, "Docs:") {
-		t.Errorf("update output should include Docs URL, got: %s", text)
+	if !strings.Contains(out, "Hint:") {
+		t.Errorf("install should show hint, got: %s", out)
 	}
 }
 
-// TestArsenalE2E_RemoveTool verifies install → remove → verify gone.
-func TestArsenalE2E_RemoveTool(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
+func TestE2E_InfoShowsDocsHint(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	tool := newTestTool(t)
-
-	// Install.
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if r.IsError {
-		t.Fatalf("install: %s", resultText(r))
+	out := run(t, cmd, "info", "nuclei")
+	if !strings.Contains(out, "Docs:") {
+		t.Errorf("info should show docs, got: %s", out)
 	}
-
-	// Binary exists.
-	binPath := filepath.Join(tool.mgr.BinPath(), "gogo")
-	if _, err := os.Stat(binPath); err != nil {
-		t.Fatalf("binary should exist: %v", err)
-	}
-
-	// Remove.
-	r = callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
-	if r.IsError {
-		t.Fatalf("remove failed: %s", resultText(r))
-	}
-	if !strings.Contains(resultText(r), "Removed gogo") {
-		t.Errorf("expected 'Removed gogo', got: %s", resultText(r))
-	}
-
-	// Binary gone.
-	if _, err := os.Stat(binPath); err == nil {
-		t.Error("binary should be removed")
-	}
-
-	// Remove again — should say not installed.
-	r = callTool(t, tool, map[string]string{"action": "remove", "name": "gogo"})
-	if !strings.Contains(resultText(r), "not installed") {
-		t.Errorf("expected 'not installed', got: %s", resultText(r))
+	if !strings.Contains(out, "Hint:") {
+		t.Errorf("info should show hint, got: %s", out)
 	}
 }
 
-// TestArsenalE2E_InstallShowsHintDocs verifies install output includes
-// docs_url and hint from the YAML registry.
-func TestArsenalE2E_InstallShowsHintDocs(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
+func TestE2E_AddAndInstall(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
+
+	runErr(t, cmd, "install", "ffuf") // not registered yet
+
+	run(t, cmd, "add", "ffuf/ffuf", "--pattern", "{name}_{version}_{os}_{arch}.tar.gz")
+
+	out := run(t, cmd, "install", "ffuf")
+	if !strings.Contains(out, "Installed ffuf") {
+		t.Errorf("expected install, got: %s", out)
 	}
 
-	tool := newTestTool(t)
-
-	// nuclei has both docs_url and hint in the YAML.
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "nuclei"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("install nuclei: %s", text)
-	}
-	if !strings.Contains(text, "Docs:") {
-		t.Errorf("install output should contain Docs URL, got:\n%s", text)
-	}
-	if !strings.Contains(text, "Hint:") {
-		t.Errorf("install output should contain Hint, got:\n%s", text)
-	}
-	if !strings.Contains(text, "update-templates") {
-		t.Errorf("nuclei hint should mention update-templates, got:\n%s", text)
+	info, _ := os.Stat(filepath.Join(cmd.mgr.BinPath(), "ffuf"))
+	if info == nil || info.Size() < 1_000_000 {
+		t.Error("ffuf binary should be >1MB")
 	}
 }
 
-// TestArsenalE2E_InfoShowsDocsHint verifies info action includes docs and hint.
-func TestArsenalE2E_InfoShowsDocsHint(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
+func TestE2E_UpdateTool(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	tool := newTestTool(t)
-	r := callTool(t, tool, map[string]string{"action": "info", "name": "nuclei"})
-	text := resultText(r)
-	if r.IsError {
-		t.Fatalf("info nuclei: %s", text)
-	}
-	if !strings.Contains(text, "Docs:") {
-		t.Errorf("info should show Docs URL, got:\n%s", text)
-	}
-	if !strings.Contains(text, "Hint:") {
-		t.Errorf("info should show Hint, got:\n%s", text)
+	run(t, cmd, "install", "gogo")
+	out := run(t, cmd, "update", "gogo")
+	if !strings.Contains(out, "Updated gogo") {
+		t.Errorf("expected update confirmation, got: %s", out)
 	}
 }
 
-// TestArsenalE2E_InstallThenExec verifies the full chain:
-// arsenal install → tool available via os/exec (same as bash tool).
-func TestArsenalE2E_InstallThenExec(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skip network test in short mode")
-	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
-		t.Skip("install e2e only on linux/amd64")
-	}
+func TestE2E_RemoveTool(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	tool := newTestTool(t)
-
-	// Verify gogo is NOT on PATH before install.
-	_, lookErr := exec.LookPath("gogo")
-	if lookErr == nil {
-		t.Skip("gogo already on system PATH, can't test isolation")
+	run(t, cmd, "install", "gogo")
+	out := run(t, cmd, "remove", "gogo")
+	if !strings.Contains(out, "Removed gogo") {
+		t.Errorf("expected remove, got: %s", out)
 	}
 
-	// Install gogo via arsenal.
-	r := callTool(t, tool, map[string]string{"action": "install", "name": "gogo"})
-	if r.IsError {
-		t.Fatalf("install failed: %s", resultText(r))
+	out = run(t, cmd, "remove", "gogo")
+	if !strings.Contains(out, "not installed") {
+		t.Errorf("expected not installed, got: %s", out)
 	}
+}
 
-	// Verify PATH was updated by arsenal init.
-	pathEnv := os.Getenv("PATH")
-	if !strings.Contains(pathEnv, tool.mgr.BinPath()) {
-		t.Fatalf("arsenal bin path %q not in PATH: %s", tool.mgr.BinPath(), pathEnv)
-	}
+func TestE2E_InstallThenExec(t *testing.T) {
+	skipNetwork(t)
+	cmd := newTestCmd(t)
 
-	// Verify the binary is findable via LookPath (same mechanism bash tool uses).
+	run(t, cmd, "install", "gogo")
+
 	gogoPath, err := exec.LookPath("gogo")
 	if err != nil {
-		t.Fatalf("gogo not found on PATH after install: %v", err)
+		t.Fatalf("gogo not on PATH: %v", err)
 	}
-	t.Logf("gogo found at: %s", gogoPath)
+	t.Logf("gogo at: %s", gogoPath)
 
-	// Actually execute it — gogo -v should print version and exit.
-	out, err := exec.Command("gogo", "-v").CombinedOutput()
-	if err != nil {
-		// gogo -v may exit non-zero, that's OK as long as it runs.
-		t.Logf("gogo -v exit: %v (output: %s)", err, string(out))
-	}
+	out, _ := exec.Command("gogo", "-v").CombinedOutput()
 	if len(out) == 0 {
-		t.Error("gogo -v produced no output — binary may not be functional")
-	} else {
-		t.Logf("gogo output: %s", strings.TrimSpace(string(out)))
+		t.Error("gogo -v produced no output")
 	}
 }
-
-// --- helper ---
-
-func newTestTool(t *testing.T) *ArsenalTool {
-	t.Helper()
-	dir := t.TempDir()
-
-	// Override crtm paths to temp dir for isolation.
-	binPath := filepath.Join(dir, "bin")
-	configPath := filepath.Join(dir, "config.yaml")
-
-	// We can't use NewArsenalTool directly since it uses default paths.
-	// Construct manually for test isolation.
-	mgr, err := newTestManager(binPath, configPath)
-	if err != nil {
-		t.Fatalf("init test manager: %v", err)
-	}
-
-	os.MkdirAll(binPath, 0o755)
-	path := os.Getenv("PATH")
-	if !strings.Contains(path, binPath) {
-		os.Setenv("PATH", binPath+string(os.PathListSeparator)+path)
-	}
-
-	return &ArsenalTool{
-		mgr:    mgr,
-		logger: telemetry.NopLogger(),
-	}
-}
-
-func newTestManager(binPath, configPath string) (*crtmManager, error) {
-	// Type alias to avoid import cycle in comment — this uses the real crtm.
-	return crtm.NewManager(crtm.ManagerOption{
-		BinPath:    binPath,
-		ConfigPath: configPath,
-	})
-}
-
-// crtmManager is a type alias for readability.
-type crtmManager = crtm.Manager

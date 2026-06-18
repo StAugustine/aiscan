@@ -3,14 +3,14 @@
 
 Security tool package manager. Search, install, update, remove CLI tools from chainreactors, projectdiscovery, and any GitHub repo.
 
-Installed tools are immediately available via `bash`.
+Installed tools are immediately available via bash. `arsenal` itself runs through bash.
 
 ## First step
 
-Before installing anything, call `arsenal(action="list")` to see what's available and what's already installed:
+Before installing anything, run `arsenal list` to see what's available and what's already installed:
 
-```
-arsenal(action="list")
+```bash
+arsenal list
 ```
 
 Output shows `*` and version for installed tools:
@@ -24,37 +24,40 @@ Output shows `*` and version for installed tools:
 
 ## Quick reference
 
-```
-arsenal(action="list")                                     — all tools + install status + version
-arsenal(action="search", query="port scanner")             — find tools by keyword/tag
-arsenal(action="info", name="nuclei")                      — detail + docs URL + hint + latest version
-arsenal(action="install", name="httpx")                    — install latest (idempotent)
-arsenal(action="install", name="dnsx", version="1.2.3")    — install pinned version
-arsenal(action="update", name="nuclei")                    — re-download latest version
-arsenal(action="remove", name="httpx")                     — delete installed binary
-arsenal(action="releases", name="nuclei")                  — check latest release tag
-arsenal(action="add", repo="ffuf/ffuf", pattern="{name}_{version}_{os}_{arch}.tar.gz") — register third-party repo
+```bash
+arsenal list                                        # all tools + install status + version
+arsenal search port scanner                         # find tools by keyword/tag
+arsenal info nuclei                                 # detail + docs URL + hint + latest version
+arsenal install httpx                               # install latest (idempotent)
+arsenal install dnsx --version 1.2.3                # install pinned version
+arsenal update nuclei                               # re-download latest version
+arsenal remove httpx                                # delete installed binary
+arsenal releases nuclei                             # check latest release tag
+arsenal add ffuf/ffuf --pattern "{name}_{version}_{os}_{arch}.tar.gz"  # register third-party repo
 ```
 
 ## Key behaviors
 
-- **install is idempotent** — already-installed tools return success, not error. Use `update` to refresh.
+- **install is idempotent** — already-installed tools return success, not error. Use `arsenal update` to refresh.
 - **version from git tag** — versions come from GitHub release tags, not filename parsing.
 - **install output includes docs + hint** — follow the hint (e.g. "run nuclei -update-templates").
 - **gogo/spray/zombie are built-in pseudo-commands** — no install needed for those. Arsenal has them for standalone binary use only.
 
 ## Typical workflow
 
-1. `arsenal(action="list")` — see what's installed and available
-2. `arsenal(action="search", query="subdomain")` — find tools for the task
-3. `arsenal(action="install", name="subfinder")` — install
-4. `bash(command="subfinder -d target.com")` — use via bash
+```bash
+arsenal list                          # see what's installed and available
+arsenal search subdomain              # find tools for the task
+arsenal install subfinder             # install
+subfinder -d target.com              # use directly
+```
 
 ## Adding unknown tools
 
-```
-arsenal(action="add", repo="ffuf/ffuf", pattern="{name}_{version}_{os}_{arch}.tar.gz")
-arsenal(action="install", name="ffuf")
+```bash
+arsenal add ffuf/ffuf --pattern "{name}_{version}_{os}_{arch}.tar.gz"
+arsenal install ffuf
+ffuf -u https://target.com/FUZZ -w wordlist.txt
 ```
 
 Common patterns: `{name}_{version}_{os}_{arch}.tar.gz` | `{name}_{version}_{os}_{arch}.zip` | `{name}_{os}_{arch}` (raw binary).

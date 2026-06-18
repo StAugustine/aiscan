@@ -4,33 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	crtm "github.com/chainreactors/crtm/pkg"
 	"github.com/chainreactors/crtm/pkg/registry"
-
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/telemetry"
 )
 
-type arsenalArgs struct {
-	Action  string `json:"action"           jsonschema:"description=Operation to perform,enum=search,enum=install,enum=update,enum=remove,enum=info,enum=list,enum=releases,enum=add"`
-	Name    string `json:"name,omitempty"    jsonschema:"description=Tool name (for install/update/remove/info/releases)"`
-	Query   string `json:"query,omitempty"   jsonschema:"description=Search keywords (for search action)"`
-	Version string `json:"version,omitempty" jsonschema:"description=Specific version (default: latest)"`
-	Repo    string `json:"repo,omitempty"    jsonschema:"description=GitHub owner/repo (for add action, e.g. ffuf/ffuf)"`
-	Pattern string `json:"pattern,omitempty" jsonschema:"description=Asset name pattern for add (e.g. {name}_{version}_{os}_{arch}.tar.gz)"`
+// ArsenalCommand is a pseudo-command invoked via bash:
+//
+//	bash(command="arsenal list")
+//	bash(command="arsenal install nuclei")
+//	bash(command="arsenal search port scanner")
+type ArsenalCommand struct {
+	mgr *crtm.Manager
 }
 
-// ArsenalTool exposes the crtm package manager to the LLM agent.
-type ArsenalTool struct {
-	mgr    *crtm.Manager
-	logger telemetry.Logger
-}
-
-func NewArsenalTool(logger telemetry.Logger) (*ArsenalTool, error) {
+func NewArsenalCommand() (*ArsenalCommand, error) {
 	home, _ := os.UserHomeDir()
 	base := filepath.Join(home, ".aiscan", "arsenal")
 
@@ -48,175 +40,188 @@ func NewArsenalTool(logger telemetry.Logger) (*ArsenalTool, error) {
 		os.Setenv("PATH", binPath+string(os.PathListSeparator)+path)
 	}
 
-	return &ArsenalTool{mgr: mgr, logger: logger}, nil
+	return &ArsenalCommand{mgr: mgr}, nil
 }
 
-func (t *ArsenalTool) Name() string { return "arsenal" }
+func (c *ArsenalCommand) Name() string { return "arsenal" }
 
-func (t *ArsenalTool) Description() string {
-	return `Security tool package manager. Search, install, update, and remove CLI tools from chainreactors, projectdiscovery, and any GitHub repo. Installed tools become immediately available via bash.`
+func (c *ArsenalCommand) Usage() string {
+	return `arsenal — security tool package manager
+
+Usage:
+  arsenal list                             all tools + install status + version
+  arsenal search <query>                   find tools by keyword/tag
+  arsenal info <name>                      detail + docs + hint + latest version
+  arsenal install <name> [--version VER]   install (idempotent, latest by default)
+  arsenal update <name> [--version VER]    re-download latest or pinned version
+  arsenal remove <name>                    delete installed binary
+  arsenal releases <name>                  check latest release tag
+  arsenal add <owner/repo> [--name NAME] [--pattern PAT]  register third-party repo
+
+Installed tools become immediately available via bash.`
 }
 
-func (t *ArsenalTool) Definition() commands.ToolDefinition {
-	return commands.ToolDef("arsenal", t.Description(), arsenalArgs{})
-}
-
-func (t *ArsenalTool) Execute(ctx context.Context, arguments string) (commands.ToolResult, error) {
-	args, err := commands.ParseArgs[arsenalArgs](arguments)
-	if err != nil {
-		return commands.ToolResult{}, err
+func (c *ArsenalCommand) Execute(_ context.Context, args []string, w io.Writer) error {
+	if len(args) == 0 {
+		io.WriteString(w, c.Usage()+"\n")
+		return nil
 	}
-	args.Action = strings.TrimSpace(strings.ToLower(args.Action))
-	args.Name = strings.TrimSpace(args.Name)
-	args.Query = strings.TrimSpace(args.Query)
 
-	switch args.Action {
-	case "search":
-		return t.search(args.Query)
-	case "list":
-		return t.list()
+	action := strings.ToLower(args[0])
+	rest := args[1:]
+
+	var result string
+	var err error
+
+	switch action {
+	case "list", "ls":
+		result = formatEntryList(c.mgr.ListTools(), c.mgr)
+	case "search", "find":
+		result, err = c.search(rest)
 	case "info":
-		return t.info(args.Name)
-	case "install":
-		return t.install(args.Name, args.Version)
-	case "update":
-		return t.update(args.Name, args.Version)
-	case "remove":
-		return t.remove(args.Name)
-	case "releases":
-		return t.releases(args.Name)
+		result, err = c.info(rest)
+	case "install", "i":
+		result, err = c.install(rest)
+	case "update", "upgrade":
+		result, err = c.update(rest)
+	case "remove", "rm", "uninstall":
+		result, err = c.remove(rest)
+	case "releases", "release":
+		result, err = c.releases(rest)
 	case "add":
-		return t.add(args.Repo, args.Name, args.Pattern)
+		result, err = c.add(rest)
 	default:
-		return commands.ErrorResult(fmt.Sprintf("unknown action %q; valid: search, list, info, install, update, remove, releases, add", args.Action)), nil
+		return fmt.Errorf("unknown command %q. Run 'arsenal' for usage", action)
 	}
+
+	if err != nil {
+		return err
+	}
+	if result != "" {
+		io.WriteString(w, result+"\n")
+	}
+	return nil
 }
 
-// --- actions ---
+// --- subcommands ---
 
-func (t *ArsenalTool) search(query string) (commands.ToolResult, error) {
-	if query == "" {
-		return commands.ErrorResult("query is required for search"), nil
+func (c *ArsenalCommand) search(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: arsenal search <query>")
 	}
-	results := t.mgr.Search(query)
+	query := strings.Join(args, " ")
+	results := c.mgr.Search(query)
 	if len(results) == 0 {
-		return commands.TextResult(fmt.Sprintf("No tools found for %q", query)), nil
+		return fmt.Sprintf("No tools found for %q", query), nil
 	}
-	return commands.TextResult(formatEntryList(results, t.mgr)), nil
+	return formatEntryList(results, c.mgr), nil
 }
 
-func (t *ArsenalTool) list() (commands.ToolResult, error) {
-	return commands.TextResult(formatEntryList(t.mgr.ListTools(), t.mgr)), nil
-}
-
-func (t *ArsenalTool) info(name string) (commands.ToolResult, error) {
-	if name == "" {
-		return commands.ErrorResult("name is required for info"), nil
+func (c *ArsenalCommand) info(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: arsenal info <name>")
 	}
-	info, err := t.mgr.GetToolInfo(name)
+	info, err := c.mgr.GetToolInfo(args[0])
 	if err != nil {
-		return commands.ErrorResult(err.Error()), nil
+		return "", err
 	}
-	return commands.TextResult(formatToolInfo(info)), nil
+	return formatToolInfo(info), nil
 }
 
-func (t *ArsenalTool) install(name, version string) (commands.ToolResult, error) {
+func (c *ArsenalCommand) install(args []string) (string, error) {
+	name, version := parseNameVersion(args)
 	if name == "" {
-		return commands.ErrorResult("name is required for install"), nil
+		return "", fmt.Errorf("usage: arsenal install <name> [--version VER]")
 	}
 
-	// Idempotent: if already installed, report success with current version.
-	if t.mgr.IsInstalled(name) {
-		ver := t.mgr.InstalledVersion(name)
-		return commands.TextResult(fmt.Sprintf("%s already installed (%s). Use update to refresh.", name, displayVer(ver))), nil
+	if c.mgr.IsInstalled(name) {
+		ver := c.mgr.InstalledVersion(name)
+		return fmt.Sprintf("%s already installed (%s). Use 'arsenal update %s' to refresh.", name, displayVer(ver), name), nil
 	}
 
 	var err error
 	if version != "" {
-		err = t.mgr.InstallVersion(name, version)
+		err = c.mgr.InstallVersion(name, version)
 	} else {
-		err = t.mgr.InstallTool(name)
+		err = c.mgr.InstallTool(name)
 	}
 	if err != nil {
-		return commands.ErrorResult(fmt.Sprintf("install %s: %s", name, err)), nil
+		return "", fmt.Errorf("install %s: %w", name, err)
 	}
 
-	ver := t.mgr.InstalledVersion(name)
-	result := fmt.Sprintf("Installed %s (%s). Available via bash.", name, displayVer(ver))
-	if entry, ok := t.mgr.Catalog().Find(name); ok {
-		if entry.DocsURL != "" {
-			result += "\nDocs: " + entry.DocsURL
-		}
-		if entry.Hint != "" {
-			result += "\nHint: " + entry.Hint
-		}
-	}
-	return commands.TextResult(result), nil
+	return c.formatPostInstall(name, "Installed"), nil
 }
 
-func (t *ArsenalTool) update(name, version string) (commands.ToolResult, error) {
+func (c *ArsenalCommand) update(args []string) (string, error) {
+	name, version := parseNameVersion(args)
 	if name == "" {
-		return commands.ErrorResult("name is required for update"), nil
+		return "", fmt.Errorf("usage: arsenal update <name> [--version VER]")
 	}
 
 	var err error
 	if version != "" {
-		err = t.mgr.InstallVersion(name, version)
+		err = c.mgr.InstallVersion(name, version)
 	} else {
-		err = t.mgr.UpdateTool(name)
+		err = c.mgr.UpdateTool(name)
 	}
 	if err != nil {
-		return commands.ErrorResult(fmt.Sprintf("update %s: %s", name, err)), nil
+		return "", fmt.Errorf("update %s: %w", name, err)
 	}
 
-	ver := t.mgr.InstalledVersion(name)
-	result := fmt.Sprintf("Updated %s (%s).", name, displayVer(ver))
-	if entry, ok := t.mgr.Catalog().Find(name); ok {
-		if entry.DocsURL != "" {
-			result += "\nDocs: " + entry.DocsURL
-		}
-		if entry.Hint != "" {
-			result += "\nHint: " + entry.Hint
-		}
-	}
-	return commands.TextResult(result), nil
+	return c.formatPostInstall(name, "Updated"), nil
 }
 
-func (t *ArsenalTool) remove(name string) (commands.ToolResult, error) {
-	if name == "" {
-		return commands.ErrorResult("name is required for remove"), nil
+func (c *ArsenalCommand) remove(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: arsenal remove <name>")
 	}
-	if !t.mgr.IsInstalled(name) {
-		return commands.TextResult(fmt.Sprintf("%s is not installed.", name)), nil
+	name := args[0]
+	if !c.mgr.IsInstalled(name) {
+		return fmt.Sprintf("%s is not installed.", name), nil
 	}
-	if err := t.mgr.RemoveTool(name); err != nil {
-		return commands.ErrorResult(fmt.Sprintf("remove %s: %s", name, err)), nil
+	if err := c.mgr.RemoveTool(name); err != nil {
+		return "", fmt.Errorf("remove %s: %w", name, err)
 	}
-	return commands.TextResult(fmt.Sprintf("Removed %s.", name)), nil
+	return fmt.Sprintf("Removed %s.", name), nil
 }
 
-func (t *ArsenalTool) releases(name string) (commands.ToolResult, error) {
-	if name == "" {
-		return commands.ErrorResult("name is required for releases"), nil
+func (c *ArsenalCommand) releases(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: arsenal releases <name>")
 	}
-	releases, err := t.mgr.ListReleases(name)
+	releases, err := c.mgr.ListReleases(args[0])
 	if err != nil {
-		return commands.ErrorResult(err.Error()), nil
+		return "", err
 	}
 	data, _ := json.MarshalIndent(releases, "", "  ")
-	return commands.TextResult(string(data)), nil
+	return string(data), nil
 }
 
-func (t *ArsenalTool) add(repo, name, pattern string) (commands.ToolResult, error) {
-	if repo == "" {
-		return commands.ErrorResult("repo is required for add (e.g. ffuf/ffuf)"), nil
+func (c *ArsenalCommand) add(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("usage: arsenal add <owner/repo> [--name NAME] [--pattern PAT]")
 	}
+
+	repo := args[0]
 	if !strings.Contains(repo, "/") {
-		return commands.ErrorResult("repo must be owner/repo format (e.g. ffuf/ffuf)"), nil
+		return "", fmt.Errorf("repo must be owner/repo format (e.g. ffuf/ffuf)")
+	}
+
+	name, pattern := "", ""
+	for i := 1; i < len(args)-1; i++ {
+		switch args[i] {
+		case "--name", "-n":
+			name = args[i+1]
+			i++
+		case "--pattern", "-p":
+			pattern = args[i+1]
+			i++
+		}
 	}
 	if pattern == "" {
 		pattern = "{name}_{version}_{os}_{arch}.tar.gz"
 	}
+
 	entry := registry.ToolEntry{
 		Name:         name,
 		Repo:         repo,
@@ -225,17 +230,49 @@ func (t *ArsenalTool) add(repo, name, pattern string) (commands.ToolResult, erro
 	if entry.Name == "" {
 		entry.Name = entry.RepoName()
 	}
-	added, err := t.mgr.AddCustomTool(entry)
+
+	added, err := c.mgr.AddCustomTool(entry)
 	if err != nil {
-		return commands.ErrorResult(fmt.Sprintf("add: %s", err)), nil
+		return "", fmt.Errorf("add: %w", err)
 	}
 	if !added {
-		return commands.TextResult(fmt.Sprintf("%s already registered.", repo)), nil
+		return fmt.Sprintf("%s already registered.", repo), nil
 	}
-	return commands.TextResult(fmt.Sprintf("Added %s from %s. Use arsenal install %s to install.", entry.Name, repo, entry.Name)), nil
+	return fmt.Sprintf("Added %s from %s. Run 'arsenal install %s' to install.", entry.Name, repo, entry.Name), nil
 }
 
 // --- helpers ---
+
+func (c *ArsenalCommand) formatPostInstall(name, verb string) string {
+	ver := c.mgr.InstalledVersion(name)
+	result := fmt.Sprintf("%s %s (%s). Available via bash.", verb, name, displayVer(ver))
+	if entry, ok := c.mgr.Catalog().Find(name); ok {
+		if entry.DocsURL != "" {
+			result += "\nDocs: " + entry.DocsURL
+		}
+		if entry.Hint != "" {
+			result += "\nHint: " + entry.Hint
+		}
+	}
+	return result
+}
+
+func parseNameVersion(args []string) (name, version string) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--version", "-V":
+			if i+1 < len(args) {
+				version = args[i+1]
+				i++
+			}
+		default:
+			if name == "" && !strings.HasPrefix(args[i], "-") {
+				name = args[i]
+			}
+		}
+	}
+	return
+}
 
 func displayVer(v string) string {
 	if v == "" || v == "installed" {
