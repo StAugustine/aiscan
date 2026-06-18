@@ -27,7 +27,7 @@ type ScanConfigOptions struct {
 }
 
 type LLMOptions struct {
-	Provider  string              `long:"provider" config:"provider" description:"LLM provider name (openai, deepseek, openrouter, ollama, etc.)"`
+	Provider  string              `long:"provider" config:"provider" description:"LLM provider type: openai (default, OpenAI-compatible) or anthropic"`
 	BaseURL   string              `long:"base-url" config:"base_url" description:"LLM API base URL"`
 	APIKey    string              `long:"api-key" config:"api_key" description:"LLM API key (or set env: OPENAI_API_KEY, AISCAN_API_KEY)"`
 	Model     string              `long:"model" config:"model" description:"LLM model name"`

@@ -56,8 +56,7 @@ var (
 	NewProviderFromResolved  = provider.NewProviderFromResolved
 	ResolveProvider          = provider.Resolve
 	InferProviderFromBaseURL = provider.InferFromBaseURL
-	KnownProviders           = provider.KnownProviders
-	APIKeyEnvName            = provider.APIKeyEnvName
+	NormalizeProvider        = provider.NormalizeProvider
 
 	ErrCallTimeout   = provider.ErrCallTimeout
 	ErrStreamStalled = provider.ErrStreamStalled

@@ -42,6 +42,6 @@ func ApplyDefaults(option *Option) {
 	option.IOANodeName = ResolveString(option.IOANodeName, DefaultIOANodeName)
 	option.Space = resolveSpace(option.Space)
 	if option.Model == "" {
-		option.Model = ResolveString(DefaultModel, "deepseek-v4-pro")
+		option.Model = DefaultModel
 	}
 }

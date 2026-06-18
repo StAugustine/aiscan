@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 )
 
@@ -40,67 +39,36 @@ type ProviderConfig struct {
 	Timeout  int    `yaml:"timeout"  config:"timeout"`
 }
 
-type providerPreset struct {
-	BaseURL   string
-	APIKeyEnv string
-}
-
-var presets = map[string]providerPreset{
-	"openai":     {"https://api.openai.com/v1", "OPENAI_API_KEY"},
-	"openrouter": {"https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"},
-	"deepseek":   {"https://api.deepseek.com/v1", "DEEPSEEK_API_KEY"},
-	"groq":       {"https://api.groq.com/openai/v1", "GROQ_API_KEY"},
-	"moonshot":   {"https://api.moonshot.cn/v1", "MOONSHOT_API_KEY"},
-	"ollama":     {"http://localhost:11434/v1", ""},
-	"anthropic":  {"https://api.anthropic.com/v1", "ANTHROPIC_API_KEY"},
-}
-
-func KnownProviders() []string {
-	names := make([]string, 0, len(presets))
-	for name := range presets {
-		names = append(names, name)
+func NormalizeProvider(name string) string {
+	if strings.EqualFold(name, "anthropic") {
+		return "anthropic"
 	}
-	sort.Strings(names)
-	return names
-}
-
-func APIKeyEnvName(providerName string) string {
-	preset, ok := presets[strings.ToLower(strings.TrimSpace(providerName))]
-	if !ok {
-		return ""
-	}
-	return preset.APIKeyEnv
+	return "openai"
 }
 
 func Resolve(cfg *ProviderConfig) (*ProviderConfig, error) {
 	resolved := *cfg
 
 	if resolved.Provider == "" {
-		resolved.Provider = InferFromBaseURL(resolved.BaseURL)
-		if resolved.Provider == "" {
+		if resolved.BaseURL != "" {
+			resolved.Provider = InferFromBaseURL(resolved.BaseURL)
+		} else {
 			resolved.Provider = "openai"
 		}
 	}
-
-	providerName := strings.ToLower(resolved.Provider)
+	resolved.Provider = NormalizeProvider(resolved.Provider)
 
 	if resolved.BaseURL == "" {
-		if preset, ok := presets[providerName]; ok {
-			resolved.BaseURL = preset.BaseURL
-		} else {
-			return nil, fmt.Errorf("unknown provider %q and no base URL specified", resolved.Provider)
+		switch resolved.Provider {
+		case "anthropic":
+			resolved.BaseURL = "https://api.anthropic.com/v1"
+		default:
+			resolved.BaseURL = "https://api.openai.com/v1"
 		}
 	}
 
 	if resolved.APIKey == "" {
-		if resolved.APIKey == "" && providerName != "ollama" {
-			if envName := APIKeyEnvName(providerName); envName != "" {
-				return nil, fmt.Errorf("no API key for provider %q: set --api-key, llm.api_key, %s, or AISCAN_API_KEY",
-					resolved.Provider, envName)
-			}
-			return nil, fmt.Errorf("no API key for provider %q: set --api-key, llm.api_key, or AISCAN_API_KEY",
-				resolved.Provider)
-		}
+		return nil, fmt.Errorf("no API key: set --api-key, llm.api_key, or AISCAN_API_KEY")
 	}
 
 	if resolved.Timeout <= 0 {
@@ -120,24 +88,10 @@ func NewProvider(cfg *ProviderConfig) (Provider, error) {
 
 func InferFromBaseURL(baseURL string) string {
 	baseURL = strings.ToLower(strings.TrimSpace(baseURL))
-	switch {
-	case strings.Contains(baseURL, "api.openai.com"):
-		return "openai"
-	case strings.Contains(baseURL, "api.anthropic.com"):
+	if strings.Contains(baseURL, "anthropic.com") {
 		return "anthropic"
-	case strings.Contains(baseURL, "deepseek.com"):
-		return "deepseek"
-	case strings.Contains(baseURL, "openrouter.ai"):
-		return "openrouter"
-	case strings.Contains(baseURL, "groq.com"):
-		return "groq"
-	case strings.Contains(baseURL, "moonshot.cn"):
-		return "moonshot"
-	case strings.Contains(baseURL, "localhost:11434"), strings.Contains(baseURL, "127.0.0.1:11434"):
-		return "ollama"
-	default:
-		return ""
 	}
+	return "openai"
 }
 
 func NewProviderFromResolved(cfg *ProviderConfig) (Provider, error) {

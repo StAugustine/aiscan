@@ -123,20 +123,8 @@ func selectedEnvProvider(option *Option, lookup envLookup) string {
 	if v := strings.ToLower(strings.TrimSpace(option.Provider)); v != "" {
 		return v
 	}
-	if v := agent.InferProviderFromBaseURL(option.BaseURL); v != "" {
-		return v
-	}
-	return providerHintFromEnv(lookup)
-}
-
-func providerHintFromEnv(lookup envLookup) string {
-	for _, name := range agent.KnownProviders() {
-		if firstEnv(lookup, providerEnvName(name, "BASE_URL"), providerEnvName(name, "BASEURL"), providerEnvName(name, "MODEL")) != "" {
-			return name
-		}
-		if envName := agent.APIKeyEnvName(name); envName != "" && firstEnv(lookup, envName) != "" {
-			return name
-		}
+	if option.BaseURL != "" {
+		return agent.InferProviderFromBaseURL(option.BaseURL)
 	}
 	return ""
 }
@@ -163,11 +151,13 @@ func providerModelEnv(providerName string, lookup envLookup) string {
 }
 
 func providerAPIKeyEnv(providerName string, lookup envLookup) string {
-	envName := agent.APIKeyEnvName(providerName)
-	if envName == "" {
-		return ""
+	providerName = strings.ToLower(strings.TrimSpace(providerName))
+	switch providerName {
+	case "anthropic":
+		return firstEnv(lookup, "ANTHROPIC_API_KEY")
+	default:
+		return firstEnv(lookup, "OPENAI_API_KEY")
 	}
-	return firstEnv(lookup, envName)
 }
 
 func providerEnvName(providerName, suffix string) string {

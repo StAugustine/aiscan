@@ -3,10 +3,10 @@ package config
 import "github.com/chainreactors/aiscan/pkg/agent"
 
 var (
-	DefaultProvider = "deepseek"
+	DefaultProvider = "openai"
 	DefaultBaseURL  = ""
 	DefaultAPIKey   = ""
-	DefaultModel    = "deepseek-v4-pro"
+	DefaultModel    = ""
 
 	DefaultScannerProxy = ""
 
