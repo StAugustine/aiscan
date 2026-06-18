@@ -162,18 +162,7 @@ func (r *RunResult) TotalTokens() int {
 
 // tool-specific accessors
 
-func (r *RunResult) LoopCalls() []AgentEvent    { return r.ToolCallsNamed("loop") }
 func (r *RunResult) SubagentCalls() []AgentEvent { return r.ToolCallsNamed("subagent") }
-
-func (r *RunResult) LoopCreateCount() int {
-	n := 0
-	for _, e := range r.LoopCalls() {
-		if strings.Contains(e.Args, `"create"`) {
-			n++
-		}
-	}
-	return n
-}
 
 func (r *RunResult) SubagentCreateCount() int {
 	n := 0

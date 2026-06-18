@@ -12,7 +12,7 @@ aiscan [全局参数] <subcommand> [子命令参数]
 
 | 命令 | 类型 | 功能 |
 | --- | --- | --- |
-| `agent` | agentic | LLM agent；无任务输入时进入交互式 REPL，`--loop` 时作为 IOA worker |
+| `agent` | agentic | LLM agent；无任务输入时进入交互式 REPL，`--ioa-url` 时作为 IOA worker |
 | `scan` | pipeline | 自动流水线：gogo → spray → zombie → neutron，可选 AI 验证/sniper/deep |
 | `gogo` | scanner | 主机存活、端口、服务、banner 和指纹发现 |
 | `spray` | scanner | Web 探测、HTTP 指纹、常见文件、爬取和路径检查 |
@@ -115,8 +115,7 @@ misc:
 | `-i, --input` | 目标输入（IP、URL、IP:port、CIDR），可重复 |
 | `-s, --skill` | 指定 skill 名称或文件路径，可重复 |
 | `--task-file` | 从文件读取任务描述 |
-| `--loop` | 作为 IOA loop worker 运行 |
-| `--heartbeat <分钟>` | loop 模式下 heartbeat 间隔（0 表示关闭，默认 0） |
+| `--heartbeat <分钟>` | heartbeat 间隔（0 表示关闭，默认 0） |
 | `--timeout <秒>` | 整体超时（默认 3600） |
 | `-e, --eval` | 目标评估标准 — 独立 LLM 判断任务是否达成 |
 
@@ -381,7 +380,7 @@ scan:
 | 机器可读输出 | `aiscan scan -i <target> -j` |
 | 人可读报告 | `aiscan scan -i <target> --report` |
 | 回看历史扫描记录 | `aiscan -F result.jsonl` |
-| 多 worker 协作 | `aiscan ioa serve` + `aiscan agent --loop --space case-1` |
+| 多 worker 协作 | `aiscan ioa serve` + `aiscan agent --ioa-url http://127.0.0.1:8765 --space case-1` |
 | 交互式探索 | `aiscan agent` |
 
 ---

@@ -70,7 +70,7 @@ go build -tags full -o aiscan-full ./cmd/aiscan
 - **多阶段扫描流水线** — `scan` 命令自动串联端口发现 → Web 探测 → 弱口令检测 → POC 检测，无需 LLM 也能运行
 - **AI Agent 模式** — 自然语言描述任务，agent 自主选择扫描路径、调用工具、分析结果、生成结论
 - **Goal Evaluation** — `-e` 指定评估标准，独立 evaluator LLM 判定任务完成度，fail 时自动注入反馈驱动 agent 重试
-- **IOA 分布式协作** — 多 agent 通过消息空间协同扫描，支持 loop worker 持续监听任务
+- **IOA 分布式协作** — 多 agent 通过消息空间协同扫描，支持 IOA worker 持续监听任务
 - **内置扫描引擎** — [gogo](https://github.com/chainreactors/gogo)（端口/服务）、[spray](https://github.com/chainreactors/spray)（Web/指纹）、[zombie](https://github.com/chainreactors/zombie)（弱口令）、[neutron](https://github.com/chainreactors/neutron)（POC）
 - **多 LLM 支持** — OpenAI、DeepSeek、Anthropic、OpenRouter、Groq、Moonshot、Ollama 等，支持多 provider 容错降级
 - **AI 增强扫描** — `--verify` 验证减少误报，`--sniper` 搜索公开漏洞，`--deep` 深度动态测试
@@ -190,8 +190,8 @@ aiscan agent
 # 启动 IOA Server
 aiscan ioa serve --ioa-url http://0.0.0.0:8765
 
-# 启动 Loop Worker
-aiscan agent --loop \
+# 启动 IOA worker
+aiscan agent \
   --ioa-url http://127.0.0.1:8765 \
   --ioa-node-name worker-1 \
   --space pentest-project \

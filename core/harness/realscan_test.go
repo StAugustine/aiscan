@@ -209,9 +209,6 @@ func TestRealAgentLoopScan(t *testing.T) {
 			"Report the initial scan results.", realSingleTarget, realSingleTarget, realSingleTarget),
 		Steps: Steps(
 			Tool("bash").ArgContains("gogo").NoError(),
-			Tool("loop").Action("create").Arg("name", "monitor"),
-			Tool("loop").Action("list"),
-			Tool("loop").Action("delete").Arg("name", "monitor"),
 		),
 		Ordered:  true,
 		Timeout:  180 * time.Second,
@@ -236,7 +233,7 @@ func TestRealIOALoopScanTask(t *testing.T) {
 
 	go func() {
 		h.RunWithTimeout(180*time.Second,
-			"agent", "--loop",
+			"agent", "--ioa-url", "http://127.0.0.1:8765",
 			"--ioa-url", srv.URL,
 			"--space", "real-scan",
 			"--ioa-node-name", "scanner-worker",

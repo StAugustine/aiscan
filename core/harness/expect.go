@@ -11,7 +11,6 @@ import (
 // ToolPattern describes an expected tool call. Built with the Tool() function
 // and refined with chainable methods.
 //
-//	Tool("loop").Action("create").Arg("name", "scanner").ResultHas("created")
 //	Tool("bash").ArgContains("gogo").NoError()
 //	Tool("subagent").Action("create").Arg("name", "worker").Arg("mode", "async")
 type ToolPattern struct {

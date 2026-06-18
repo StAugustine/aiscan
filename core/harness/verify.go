@@ -19,7 +19,7 @@ import (
 //	Verify(t, r).
 //	    OK().
 //	    Expect(Tool("bash").ArgContains("gogo").NoError()).
-//	    Expect(Tool("loop").Action("create").Arg("name", "scanner")).
+//	    Expect(Tool("subagent").Action("create").Arg("name", "worker")).
 //	    Done()
 //
 // Layer 2 — Intent (outcome-level):
@@ -27,11 +27,10 @@ import (
 //	Verify(t, r).
 //	    OK().
 //	    ExpectInOrder(
-//	        Tool("loop").Action("create").Arg("name", "scanner"),
-//	        Tool("loop").Action("list"),
-//	        Tool("loop").Action("delete").Arg("name", "scanner"),
+//	        Tool("subagent").Action("create").Arg("name", "worker"),
+//	        Tool("bash").ArgContains("scan"),
 //	    ).
-//	    OutputContains("scanner").
+//	    OutputContains("worker").
 //	    NoToolErrors().
 //	    MaxTurns(5).
 //	    Done()
@@ -275,20 +274,8 @@ func (v *Verifier) NoToolErrors() *Verifier {
 }
 
 // =====================================================================
-// Loop / Subagent shortcuts (built on Expect)
+// Subagent shortcuts (built on Expect)
 // =====================================================================
-
-func (v *Verifier) LoopCreated(name string) *Verifier {
-	return v.Expect(Tool("loop").Action("create").Arg("name", name))
-}
-
-func (v *Verifier) LoopDeleted(name string) *Verifier {
-	return v.Expect(Tool("loop").Action("delete").Arg("name", name))
-}
-
-func (v *Verifier) LoopListed() *Verifier {
-	return v.Expect(Tool("loop").Action("list"))
-}
 
 func (v *Verifier) SubagentCreated(name string) *Verifier {
 	return v.Expect(Tool("subagent").Arg("name", name))

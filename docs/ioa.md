@@ -9,7 +9,7 @@ IOA 是 aiscan 的多 agent 协作架构。它通过一个轻量 HTTP server 和
 - [核心概念](#核心概念)
 - [架构总览](#架构总览)
 - [数据模型](#数据模型)
-- [Loop Worker 生命周期](#loop-worker-生命周期)
+- [IOA worker 生命周期](#ioa-worker-生命周期)
 - [消息路由](#消息路由)
 - [Heartbeat 机制](#heartbeat-机制)
 - [Peer 消息](#peer-消息)
@@ -25,7 +25,7 @@ IOA 是 aiscan 的多 agent 协作架构。它通过一个轻量 HTTP server 和
 | 概念 | 说明 |
 | --- | --- |
 | **Space** | 协作空间。一次渗透测试、一个目标网段可以是一个 Space。所有参与的 Node 在同一个 Space 中交换消息 |
-| **Node** | 自治工作节点。每个 `aiscan agent --loop` 实例注册为一个 Node，拥有独立的 LLM agent 和工具集 |
+| **Node** | 自治工作节点。每个 `aiscan agent --ioa-url <url>` 实例注册为一个 Node，拥有独立的 LLM agent 和工具集 |
 | **Message** | Space 中的消息。可以是任务分派、情报共享、结果汇报或协调指令 |
 | **Ref** | 消息引用。通过 `refs.nodes` 定向发送给特定节点，通过 `refs.messages` 建立会话线程 |
 | **Task** | 标记为任务的消息。Node 收到 Task 后自动启动 agent 执行 |
@@ -112,9 +112,9 @@ Ref 是消息路由和线程化的核心：
 
 ---
 
-## Loop Worker 生命周期
+## IOA worker 生命周期
 
-`aiscan agent --loop` 启动一个持久运行的 Loop Worker：
+`aiscan agent --ioa-url <url>` 启动一个持久运行的 IOA worker：
 
 ### 1. 启动
 
@@ -126,7 +126,7 @@ Node 启动时向 Space 发布自己的 Profile（名称、意图、技能、主
 
 ### 2. 消息监听
 
-Loop Worker 通过两个通道获取消息：
+IOA worker 通过两个通道获取消息：
 
 - **SSE（Server-Sent Events）**：实时推送，低延迟
 - **定期轮询（Poll）**：每 2 秒补偿 SSE 可能的消息丢失
@@ -182,7 +182,7 @@ Node 收到消息后，按以下规则路由：
 Heartbeat 让 Worker 在没有任务时也能主动审视协作上下文并采取行动。
 
 ```bash
-aiscan agent --loop --heartbeat 5 --space case-1 \
+aiscan agent --ioa-url http://127.0.0.1:8765 --heartbeat 5 --space case-1 \
   -p "持续观察上下文，协调各节点扫描进度"
 ```
 
@@ -256,17 +256,17 @@ Agent 可以通过 `ioa_send` 给其他 Node 分配任务：
 aiscan ioa serve
 
 # 终端 2：端口扫描 Worker
-aiscan agent --loop --space pentest-001 \
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 \
   --ioa-node-name port-scanner \
   -s gogo -p "负责端口和服务发现"
 
 # 终端 3：Web 探测 Worker
-aiscan agent --loop --space pentest-001 \
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 \
   --ioa-node-name web-recon \
   -s spray -s neutron -p "负责 Web 指纹识别和漏洞检测"
 
 # 终端 4：弱口令 Worker
-aiscan agent --loop --space pentest-001 \
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 \
   --ioa-node-name cred-tester \
   -s zombie -p "负责弱口令检测"
 ```
@@ -285,19 +285,19 @@ aiscan agent --ioa-url http://127.0.0.1:8765
 
 ```bash
 # 协调者（每 5 分钟审视一次）
-aiscan agent --loop --space pentest-001 \
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 \
   --heartbeat 5 \
   --ioa-node-name coordinator \
   -p "你是协调者。审视当前进度，给空闲的 scanner 和 recon 节点分配下一步任务。目标网段：10.0.0.0/24"
 
 # 执行者们
-aiscan agent --loop --space pentest-001 --ioa-node-name scanner -s scan
-aiscan agent --loop --space pentest-001 --ioa-node-name recon -s spray -s neutron
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 --ioa-node-name scanner -s scan
+aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-001 --ioa-node-name recon -s spray -s neutron
 ```
 
 ### 模式三：One-shot Agent 接入 IOA
 
-非 loop 模式的 Agent 也可以接入 IOA，用于临时参与协作或查看状态：
+One-shot Agent 也可以接入 IOA，用于临时参与协作或查看状态：
 
 ```bash
 # 临时参与，执行完退出
@@ -320,10 +320,10 @@ aiscan ioa serve
 aiscan ioa serve --ioa-url http://0.0.0.0:8765 --ioa-db /data/ioa.db
 ```
 
-### 启动 Loop Worker
+### 启动 IOA worker
 
 ```bash
-aiscan agent --loop [OPTIONS]
+aiscan agent --ioa-url <url> [OPTIONS]
 ```
 
 | 参数 | 说明 | 默认值 |
@@ -384,7 +384,7 @@ aiscan> /nodes pentest-001
 | `--ioa-db` | SQLite 数据库路径（仅 `ioa serve`） |
 | `--space` | Space 名称 |
 | `--json` | IOA 查询 JSON 输出 |
-| `--loop` | 启用 Loop Worker 模式 |
+| `--ioa-url` | 启用 IOA worker 模式 |
 | `--heartbeat` | Heartbeat 间隔（分钟） |
 
 ### 配置文件

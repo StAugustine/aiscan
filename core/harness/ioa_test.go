@@ -25,7 +25,7 @@ func TestIOALoopReceivesTask(t *testing.T) {
 
 	go func() {
 		h.RunWithTimeout(60*time.Second,
-			"agent", "--loop",
+			"agent", "--ioa-url", "http://127.0.0.1:8765",
 			"--ioa-url", srv.URL,
 			"--space", "test-loop",
 			"-p", "I am a test worker",
@@ -81,7 +81,7 @@ func TestIOALoopMultipleWorkers(t *testing.T) {
 		i := i
 		go func() {
 			h.RunWithTimeout(45*time.Second,
-				"agent", "--loop",
+				"agent", "--ioa-url", "http://127.0.0.1:8765",
 				"--ioa-url", srv.URL,
 				"--space", "multi-worker",
 				"--ioa-node-name", fmt.Sprintf("worker-%d", i),
@@ -129,7 +129,7 @@ func TestIOALoopPeerMessage(t *testing.T) {
 
 	go func() {
 		h.RunWithTimeout(45*time.Second,
-			"agent", "--loop",
+			"agent", "--ioa-url", "http://127.0.0.1:8765",
 			"--ioa-url", srv.URL,
 			"--space", "peer-test",
 			"-p", "test worker",
@@ -190,7 +190,7 @@ func TestIOATaskSpawnsSubagents(t *testing.T) {
 
 	go func() {
 		h.RunWithTimeout(90*time.Second,
-			"agent", "--loop",
+			"agent", "--ioa-url", "http://127.0.0.1:8765",
 			"--ioa-url", srv.URL,
 			"--space", "subagent-fan",
 			"-p", "I am a worker that parallelizes tasks using subagents",
@@ -258,7 +258,7 @@ func TestIOATwoWorkersDispatch(t *testing.T) {
 		i := i
 		go func() {
 			h.RunWithTimeout(75*time.Second,
-				"agent", "--loop",
+				"agent", "--ioa-url", "http://127.0.0.1:8765",
 				"--ioa-url", srv.URL,
 				"--space", "dispatch-2",
 				"--ioa-node-name", fmt.Sprintf("worker-%d", i),
