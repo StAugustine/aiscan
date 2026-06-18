@@ -72,8 +72,8 @@ func (c *Command) Execute(ctx context.Context, args []string, w io.Writer) (err 
 			if c.engine != nil {
 				c.engine.InstallResourceProvider()
 			}
-			if debug && option != nil {
-				option.Quiet = false
+			if option != nil {
+				option.Quiet = !debug
 			}
 			return nil
 		},

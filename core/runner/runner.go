@@ -258,7 +258,7 @@ func runOneShotMode(ctx context.Context, option *cfg.Option, logger telemetry.Lo
 
 	a := agent.NewAgent(rt.Config.
 		WithSystemPrompt(rt.SystemPrompt).
-		WithStream(false))
+		WithStream(tui.AgentStreamingEnabled(option)))
 
 	var result *agent.Result
 	if option.EvalCriteria != "" {
@@ -422,14 +422,17 @@ func RunDirectScannerMode(ctx context.Context, option *cfg.Option, rest []string
 		scannerArgs = append(scannerArgs, "--no-color")
 	}
 	var stream io.Writer
-	if ShouldStreamScannerOutput(scannerArgs) {
+	streaming := ShouldStreamScannerOutput(scannerArgs)
+	if streaming {
 		stream = os.Stdout
 	}
 	out, err := application.Commands.ExecuteArgsStreaming(ctx, scannerArgs, stream)
 	if err != nil {
 		return err
 	}
-	fmt.Print(out)
+	if !streaming {
+		fmt.Print(out)
+	}
 	return nil
 }
 

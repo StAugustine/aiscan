@@ -3,6 +3,7 @@ module github.com/chainreactors/aiscan
 go 1.25.7
 
 require (
+	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/chainreactors/fingers v1.2.2-0.20260615064219-7e07a99c93e0
 	github.com/chainreactors/gogo/v2 v2.14.2-0.20260616122548-b8e5ed3b1b40
 	github.com/chainreactors/ioa v0.0.0-20260609170545-7ec2ed23664d
@@ -19,6 +20,7 @@ require (
 	github.com/go-rod/rod v0.116.2
 	github.com/go-rod/stealth v0.4.9
 	github.com/gookit/config/v2 v2.2.8
+	github.com/gorilla/websocket v1.5.3
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/muesli/termenv v0.16.0
@@ -53,7 +55,6 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/adrianbrad/queue v1.3.0 // indirect
 	github.com/akrylysov/pogreb v0.10.1 // indirect
-	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/antchfx/htmlquery v1.3.6 // indirect
@@ -127,7 +128,6 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gookit/goutil v0.7.5 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/gosimple/slug v1.15.0 // indirect
 	github.com/gosimple/unidecode v1.0.1 // indirect
 	github.com/gosnmp/gosnmp v1.43.2 // indirect
@@ -280,7 +280,7 @@ require (
 )
 
 replace (
-	github.com/chainreactors/ioa => /mnt/chainreactors/internet-of-agent
+	github.com/chainreactors/ioa => ../internet-of-agent
 	github.com/reeflective/console => github.com/chainreactors/malice-network/external/console v0.0.0-20260422184128-e856ed004d32
 	github.com/reeflective/readline => github.com/chainreactors/malice-network/external/readline v0.0.0-20260422184128-e856ed004d32
 )

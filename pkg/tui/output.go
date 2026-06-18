@@ -31,6 +31,11 @@ const (
 	toolResultPreviewLines  = 6
 	toolResultPreviewWidth  = 140
 	toolFetchBodyLines      = 4
+
+	toolIndent       = "    "    // 4-space indent for tool ⎿ lines
+	toolResultIndent = "       " // 7-space indent for tool │ result lines
+
+	thinkingPreviewMaxLines = 20
 )
 
 // ---------------------------------------------------------------------------
@@ -52,20 +57,17 @@ type AgentOutput struct {
 	Quiet    bool
 	tools    map[string]agentToolSummary
 
-	// Streaming state. When stream is true, EventMessageUpdate writes freshly-
-	// arrived content to stdout token-by-token. Reasoning/thinking content is
-	// buffered and flushed line-by-line (verbose mode only).
-	stream             bool
-	streamPrinted      int    // bytes of content already flushed to stdout
-	reasoningProcessed int    // bytes of cumulative reasoning already fed into thinkingBuf
-	thinkingBuf        string // unflushed partial reasoning line
-	thinkingOpen       bool   // <thinking> tag has been printed (needs closing)
-	streamLineOpen     bool   // streamed text left the cursor mid-line
-	didStream               bool   // this run streamed assistant text; Final may skip duplicate
-	lastStreamed             string // full cumulative content of the streamed turn
-	lastReasoningFull       string // full cumulative reasoning text for flush-on-close
-	streamReasoningPrinted  int    // bytes of reasoning already flushed to stderr
-	aborted                 bool   // current run was interrupted; drop late bus events/finals
+	// Streaming state.
+	stream                 bool
+	streamPrinted          int    // bytes of content already flushed to stdout
+	streamBuf              string // content buffered for paragraph-level markdown rendering
+	streamReasoningPrinted int    // bytes of reasoning flushed as complete lines
+	lastReasoningFull      string // full cumulative reasoning (for flushing remainder on close)
+	reasoningBlockOpen     bool   // <thinking> printed, awaiting </thinking>
+	streamLineOpen         bool   // cursor mid-line, needs \n
+	didStream              bool   // Final() dedup flag
+	lastStreamed            string // full cumulative content of the streamed turn
+	aborted                bool   // current run was interrupted
 
 	// Pretty-render state. The REPL runs inside a PTY that may be forwarded to a
 	// remote agent (aider), so transient chrome is gated by mode+tty: spinners,
@@ -169,12 +171,10 @@ func (o *AgentOutput) Start(label, text string) {
 
 	text = compactAgentLine(text, agentStatusPreviewLimit)
 	if text == "" {
-		fmt.Fprintf(o.stderr, "%s> %s%s\n",
-			o.color.Code(output.ANSIBold), label, o.color.Code(output.ANSIReset))
+		fmt.Fprintf(o.stderr, "%s\n", o.bold("> "+label))
 		return
 	}
-	fmt.Fprintf(o.stderr, "%s> %s:%s %s\n",
-		o.color.Code(output.ANSIBold), label, o.color.Code(output.ANSIReset), text)
+	fmt.Fprintf(o.stderr, "%s %s\n", o.bold("> "+label+":"), text)
 }
 
 func (o *AgentOutput) Empty() {
@@ -188,8 +188,7 @@ func (o *AgentOutput) Empty() {
 	}
 	o.spinner.Stop()
 	o.ensureStreamNewlineLocked()
-	fmt.Fprintf(o.stderr, "%sNo output.%s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.dim("No output."))
 }
 
 func (o *AgentOutput) Final(content string) {
@@ -226,30 +225,14 @@ func (o *AgentOutput) Queued(text string) {
 	o.ensureStreamNewlineLocked()
 	text = compactAgentLine(text, agentStatusPreviewLimit)
 	if text == "" {
-		fmt.Fprintf(o.stderr, "%squeued%s\n",
-			o.color.Code(output.ANSIBold), o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.bold("queued"))
 		return
 	}
-	fmt.Fprintf(o.stderr, "%squeued:%s %s\n",
-		o.color.Code(output.ANSIBold), o.color.Code(output.ANSIReset), text)
+	fmt.Fprintf(o.stderr, "%s %s\n", o.bold("queued:"), text)
 }
 
 func (o *AgentOutput) QueuedFollowUp(text string) {
-	if o == nil || o.Quiet {
-		return
-	}
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.spinner.Stop()
-	o.ensureStreamNewlineLocked()
-	text = compactAgentLine(text, agentStatusPreviewLimit)
-	if text == "" {
-		fmt.Fprintf(o.stderr, "%squeued follow-up%s\n",
-			o.color.Code(output.ANSIBold), o.color.Code(output.ANSIReset))
-		return
-	}
-	fmt.Fprintf(o.stderr, "%squeued follow-up:%s %s\n",
-		o.color.Code(output.ANSIBold), o.color.Code(output.ANSIReset), text)
+	o.Queued("follow-up: " + text)
 }
 
 func (o *AgentOutput) Stopping() {
@@ -260,8 +243,7 @@ func (o *AgentOutput) Stopping() {
 	defer o.mu.Unlock()
 	o.spinner.Stop()
 	o.ensureStreamNewlineLocked()
-	fmt.Fprintf(o.stderr, "%sStopping current task...%s\n",
-		o.color.Code(output.ANSIYellow), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.colored(output.ANSIYellow, "Stopping current task..."))
 }
 
 func (o *AgentOutput) Stopped() {
@@ -272,8 +254,7 @@ func (o *AgentOutput) Stopped() {
 	defer o.mu.Unlock()
 	o.spinner.Stop()
 	o.ensureStreamNewlineLocked()
-	fmt.Fprintf(o.stderr, "%sTask stopped.%s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.dim("Task stopped."))
 }
 
 func (o *AgentOutput) Error(err error) {
@@ -334,18 +315,18 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 	switch event.Type {
 	case agent.EventTurnStart:
 		o.streamPrinted = 0
-		o.reasoningProcessed = 0
-		o.thinkingBuf = ""
+		o.streamReasoningPrinted = 0
+		o.lastReasoningFull = ""
 		if o.canAnimate() {
-			o.spinner.Start(o.thinkingLabel())
+			o.spinner.Start("thinking")
 		}
 	case agent.EventMessageUpdate:
-		// First visible token settles any in-flight spinner before streaming.
 		o.spinner.Stop()
 		o.streamDelta(event)
 	case agent.EventToolExecutionStart:
 		o.spinner.Stop()
-		o.closeThinking()
+		o.flushStreamBuf()
+		o.closeReasoningBlock()
 		o.toolStart(event)
 		if o.canAnimate() {
 			o.spinner.Start(o.toolSpinnerLabel(event))
@@ -371,17 +352,14 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 	}
 }
 
-// streamDelta prints only the newly-arrived suffix of the assistant's visible
-// content. The bus delivers the full cumulative message on each update, so we
-// track how much we have already flushed and emit the remainder. When verbose
-// mode is enabled, reasoning/thinking content is flushed line-by-line in dim
-// color so incomplete lines buffer until a newline arrives.
+// streamDelta renders newly-arrived assistant content. Text content streams
+// token-by-token to stdout. Reasoning content (verbose mode) is buffered and
+// flushed line-by-line to stderr in dim color.
 func (o *AgentOutput) streamDelta(event agent.Event) {
 	if o.Quiet || !o.stream || o.stdout == nil {
 		return
 	}
 
-	// Stream reasoning content line-by-line when verbose.
 	if o.verbose && event.Message.ReasoningContent != nil {
 		reasoning := *event.Message.ReasoningContent
 		o.lastReasoningFull = reasoning
@@ -389,13 +367,13 @@ func (o *AgentOutput) streamDelta(event agent.Event) {
 		if lastNL >= 0 {
 			flushTo := lastNL + 1
 			if flushTo > o.streamReasoningPrinted {
-				delta := reasoning[o.streamReasoningPrinted:flushTo]
-				if o.streamReasoningPrinted == 0 {
+				if !o.reasoningBlockOpen {
 					o.ensureStreamNewlineLocked()
-					fmt.Fprintf(o.stderr, "%s<thinking>%s\n",
-						o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+					fmt.Fprintln(o.stderr, o.dim("<thinking>"))
+					o.reasoningBlockOpen = true
 				}
-				fmt.Fprint(o.stderr, o.color.Code(output.ANSIDim)+delta+o.color.Code(output.ANSIReset))
+				delta := reasoning[o.streamReasoningPrinted:flushTo]
+				fmt.Fprint(o.stderr, o.dim(delta))
 				o.streamReasoningPrinted = flushTo
 			}
 		}
@@ -408,49 +386,66 @@ func (o *AgentOutput) streamDelta(event agent.Event) {
 	if len(content) <= o.streamPrinted {
 		return
 	}
-	// Close thinking block when content starts arriving.
-	if o.streamPrinted == 0 && o.streamReasoningPrinted > 0 {
-		o.flushAndCloseThinking()
+	if o.streamPrinted == 0 && o.reasoningBlockOpen {
+		o.closeReasoningBlock()
 	}
+
 	delta := content[o.streamPrinted:]
-	fmt.Fprint(o.stdout, delta)
 	o.streamPrinted = len(content)
-	o.streamLineOpen = !strings.HasSuffix(content, "\n")
 	o.didStream = true
 	o.lastStreamed = content
+
+	if !o.markdown {
+		fmt.Fprint(o.stdout, delta)
+		o.streamLineOpen = !strings.HasSuffix(content, "\n")
+		return
+	}
+
+	o.streamBuf += delta
+	flushPoint := findParagraphFlushPoint(o.streamBuf)
+	if flushPoint <= 0 {
+		return
+	}
+	o.renderAndFlush(o.streamBuf[:flushPoint])
+	o.streamBuf = o.streamBuf[flushPoint:]
 }
 
-// flushAndCloseThinking flushes any remaining buffered reasoning content (the
-// last incomplete line) and prints the </thinking> closing tag. Must be called
-// with o.mu held.
-func (o *AgentOutput) flushAndCloseThinking() {
-	if o.streamReasoningPrinted == 0 {
+// flushStreamBuf renders any remaining buffered content and writes it to
+// stdout. Called before tool execution and at turn end.
+func (o *AgentOutput) flushStreamBuf() {
+	if o.streamBuf == "" {
+		return
+	}
+	o.renderAndFlush(o.streamBuf)
+	o.streamBuf = ""
+}
+
+// renderAndFlush renders text through glamour (if enabled) and writes to stdout.
+func (o *AgentOutput) renderAndFlush(text string) {
+	if o.markdown {
+		if rendered := renderAgentMarkdown(text, true); rendered != "" {
+			text = rendered
+		}
+	}
+	fmt.Fprint(o.stdout, text)
+	if !strings.HasSuffix(text, "\n") {
+		fmt.Fprintln(o.stdout)
+	}
+	o.streamLineOpen = false
+}
+
+// closeReasoningBlock flushes any remaining buffered reasoning line and prints
+// the </thinking> closing tag. No-op if no block is open.
+func (o *AgentOutput) closeReasoningBlock() {
+	if !o.reasoningBlockOpen {
 		return
 	}
 	if len(o.lastReasoningFull) > o.streamReasoningPrinted {
-		remaining := o.lastReasoningFull[o.streamReasoningPrinted:]
-		fmt.Fprintf(o.stderr, "%s%s%s\n",
-			o.color.Code(output.ANSIDim), remaining, o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.dim(o.lastReasoningFull[o.streamReasoningPrinted:]))
+		o.streamReasoningPrinted = len(o.lastReasoningFull)
 	}
-	fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
-	o.streamReasoningPrinted = len(o.lastReasoningFull)
-}
-
-// closeThinking flushes any in-progress streaming thinking block and prints
-// the closing tag so tool output appears after reasoning, not interleaved.
-func (o *AgentOutput) closeThinking() {
-	if o.thinkingOpen {
-		if o.thinkingBuf != "" {
-			fmt.Fprintf(o.stderr, "%s%s%s\n",
-				o.color.Code(output.ANSIDim), o.thinkingBuf, o.color.Code(output.ANSIReset))
-			o.thinkingBuf = ""
-		}
-		fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
-			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
-		o.thinkingOpen = false
-	}
-	o.flushAndCloseThinking()
+	fmt.Fprintln(o.stderr, o.dim("</thinking>"))
+	o.reasoningBlockOpen = false
 }
 
 // ---------------------------------------------------------------------------
@@ -477,20 +472,16 @@ func (o *AgentOutput) canHyperlink() bool {
 func (o *AgentOutput) beginRun() {
 	o.resetStreamState()
 	o.aborted = false
-	if o.tools == nil {
-		o.tools = make(map[string]agentToolSummary)
-		return
-	}
-	for id := range o.tools {
-		delete(o.tools, id)
-	}
+	o.tools = make(map[string]agentToolSummary)
 }
 
 func (o *AgentOutput) resetStreamState() {
 	o.didStream = false
 	o.streamPrinted = 0
+	o.streamBuf = ""
 	o.streamReasoningPrinted = 0
 	o.lastReasoningFull = ""
+	o.reasoningBlockOpen = false
 	o.streamLineOpen = false
 	o.lastStreamed = ""
 }
@@ -504,12 +495,36 @@ func (o *AgentOutput) ensureStreamNewlineLocked() {
 }
 
 // ---------------------------------------------------------------------------
-// Spinner label helpers
+// Rendering helpers — reduce o.color.Code() boilerplate
 // ---------------------------------------------------------------------------
 
-func (o *AgentOutput) thinkingLabel() string {
-	return "thinking"
+func (o *AgentOutput) dim(text string) string {
+	return o.color.Code(output.ANSIDim) + text + o.color.Code(output.ANSIReset)
 }
+
+func (o *AgentOutput) bold(text string) string {
+	return o.color.Code(output.ANSIBold) + text + o.color.Code(output.ANSIReset)
+}
+
+func (o *AgentOutput) colored(code, text string) string {
+	return o.color.Code(code) + text + o.color.Code(output.ANSIReset)
+}
+
+func (o *AgentOutput) toolLine(symbol, text string) {
+	fmt.Fprintf(o.stderr, "%s%s %s\n", toolIndent, o.dim(symbol), text)
+}
+
+func (o *AgentOutput) resultLine(text string) {
+	if text == "" {
+		fmt.Fprintf(o.stderr, "%s%s\n", toolResultIndent, o.dim("│"))
+	} else {
+		fmt.Fprintf(o.stderr, "%s%s %s\n", toolResultIndent, o.dim("│"), text)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Spinner label helpers
+// ---------------------------------------------------------------------------
 
 func (o *AgentOutput) toolSpinnerLabel(event agent.Event) string {
 	name := strings.TrimSpace(event.ToolName)
@@ -545,18 +560,15 @@ func (o *AgentOutput) toolStart(event agent.Event) {
 	o.ensureStreamNewlineLocked()
 
 	display := o.hyperlinkSummary(name, event.Arguments, summary)
-	header := fmt.Sprintf("  %s⎿ %s%s started%s",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSICyan), name, o.color.Code(output.ANSIReset))
+	label := o.dim("⎿ ") + o.colored(output.ANSICyan, name+" started")
 	if display != "" {
-		header += fmt.Sprintf("%s  %s%s",
-			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset), display)
+		label += o.dim("  ") + display
 	}
-	fmt.Fprintln(o.stderr, header)
+	fmt.Fprintf(o.stderr, "%s%s\n", toolIndent, label)
 
 	if o.debug {
 		if args := compactAgentJSON(event.Arguments, agentDebugPreviewLimit); args != "" {
-			fmt.Fprintf(o.stderr, "  %sargs: %s%s\n",
-				o.color.Code(output.ANSIDim), args, o.color.Code(output.ANSIReset))
+			fmt.Fprintf(o.stderr, "%s%s\n", toolIndent, o.dim("args: "+args))
 		}
 	}
 }
@@ -580,9 +592,8 @@ func (o *AgentOutput) toolEnd(event agent.Event) {
 		if summary.summary != "" {
 			errText = summary.summary + ": " + errText
 		}
-		fmt.Fprintf(o.stderr, "  %s⎿ %s%s failed%s  %s\n",
-			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIRed), name,
-			o.color.Code(output.ANSIReset),
+		fmt.Fprintf(o.stderr, "%s%s  %s\n", toolIndent,
+			o.dim("⎿ ")+o.colored(output.ANSIRed, name+" failed"),
 			compactAgentLine(errText, agentStatusPreviewLimit))
 		o.forgetTool(event.ToolCallID)
 		return
@@ -592,47 +603,46 @@ func (o *AgentOutput) toolEnd(event agent.Event) {
 	if result == "" {
 		o.ensureStreamNewlineLocked()
 		if elapsed := elapsedToolText(summary.started); elapsed != "" {
-			fmt.Fprintf(o.stderr, "  %s⎿ %s done %s%s\n",
-				o.color.Code(output.ANSIDim),
-				firstNonEmptyString(summary.name, event.ToolName, "tool"),
-				elapsed, o.color.Code(output.ANSIReset))
+			fmt.Fprintf(o.stderr, "%s%s\n", toolIndent,
+				o.dim("⎿ "+firstNonEmptyString(summary.name, event.ToolName, "tool")+" done "+elapsed))
 		}
 		o.forgetTool(event.ToolCallID)
 		return
 	}
 
 	o.ensureStreamNewlineLocked()
-	o.renderToolResult(firstNonEmptyString(summary.name, event.ToolName), result, elapsedToolText(summary.started))
+	highlightPath := ""
+	toolNameForResult := firstNonEmptyString(summary.name, event.ToolName)
+	if event.ToolName == "read" || summary.name == "read" {
+		if args := decodeToolArguments(event.Arguments); args != nil {
+			highlightPath = stringArg(args, "path")
+		}
+	}
+	o.renderToolResult(toolNameForResult, result, elapsedToolText(summary.started), highlightPath)
 	o.forgetTool(event.ToolCallID)
 }
 
-func (o *AgentOutput) renderToolResult(toolName, result, elapsed string) {
+func (o *AgentOutput) renderToolResult(toolName, result, elapsed, highlightPath string) {
 	preview := buildToolResultPreview(toolName, result, o.debug)
 	if len(preview.lines) == 0 {
 		return
 	}
 
+	if highlightPath != "" && o.markdown {
+		preview.lines = highlightReadResult(highlightPath, preview.lines, o.color)
+	}
+
 	if len(preview.lines) == 1 && !preview.truncated {
-		fmt.Fprintf(o.stderr, "  %s⎿%s %s\n",
-			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset), preview.lines[0])
+		o.toolLine("⎿", preview.lines[0])
 		return
 	}
 
-	fmt.Fprintf(o.stderr, "  %s⎿%s %s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset), toolResultTitle(toolName, elapsed))
+	o.toolLine("⎿", toolResultTitle(toolName, elapsed))
 	for _, line := range preview.lines {
-		if line == "" {
-			fmt.Fprintf(o.stderr, "    %s│%s\n",
-				o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
-			continue
-		}
-		fmt.Fprintf(o.stderr, "    %s│%s %s\n",
-			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset), line)
+		o.resultLine(line)
 	}
-
 	if preview.truncated {
-		fmt.Fprintf(o.stderr, "    %s… +%d lines hidden%s\n",
-			o.color.Code(output.ANSIDim), preview.hidden, o.color.Code(output.ANSIReset))
+		fmt.Fprintf(o.stderr, "%s%s\n", toolResultIndent, o.dim(fmt.Sprintf("… +%d lines hidden", preview.hidden)))
 	}
 }
 
@@ -712,33 +722,25 @@ func buildFetchToolResultPreview(lines []string, debug bool) toolResultPreview {
 	if hidden < 0 {
 		hidden = 0
 	}
-	return finalizeToolResultPreviewWithHidden(selected, hidden)
-}
-
-func selectToolResultLines(lines []string, maxLines int) toolResultPreview {
-	if maxLines <= 0 || maxLines >= len(lines) {
-		return finalizeToolResultPreview(lines, lines)
-	}
-	return finalizeToolResultPreview(lines, lines[:maxLines])
-}
-
-func finalizeToolResultPreview(all, selected []string) toolResultPreview {
-	return finalizeToolResultPreviewWithHidden(selected, len(all)-len(selected))
-}
-
-func finalizeToolResultPreviewWithHidden(selected []string, hidden int) toolResultPreview {
 	display := make([]string, 0, len(selected))
 	for _, line := range selected {
 		display = append(display, truncateToolResultLine(line, toolResultPreviewWidth))
 	}
-	if hidden < 0 {
-		hidden = 0
+	return toolResultPreview{lines: display, truncated: hidden > 0, hidden: hidden}
+}
+
+func selectToolResultLines(lines []string, maxLines int) toolResultPreview {
+	hidden := 0
+	selected := lines
+	if maxLines > 0 && maxLines < len(lines) {
+		selected = lines[:maxLines]
+		hidden = len(lines) - maxLines
 	}
-	return toolResultPreview{
-		lines:     display,
-		truncated: hidden > 0,
-		hidden:    hidden,
+	display := make([]string, 0, len(selected))
+	for _, line := range selected {
+		display = append(display, truncateToolResultLine(line, toolResultPreviewWidth))
 	}
+	return toolResultPreview{lines: display, truncated: hidden > 0, hidden: hidden}
 }
 
 func normalizeToolResultLines(result string) []string {
@@ -796,10 +798,10 @@ func toolResultTitle(toolName, elapsed string) string {
 // ---------------------------------------------------------------------------
 
 func (o *AgentOutput) turnEnd(event agent.Event) {
+	o.flushStreamBuf()
 	o.ensureStreamNewlineLocked()
 
-	// Close any still-open thinking block from streaming.
-	o.flushAndCloseThinking()
+	o.closeReasoningBlock()
 
 	if !o.Quiet {
 		// Render reasoning content when verbose and it wasn't already streamed
@@ -896,29 +898,23 @@ func (o *AgentOutput) agentEnd(event agent.Event) {
 // Goal evaluation output
 // ---------------------------------------------------------------------------
 
-const thinkingPreviewMaxLines = 20
-
 func (o *AgentOutput) renderThinkingBlock(reasoning string) {
 	if o.stderr == nil {
 		return
 	}
 	lines := strings.Split(reasoning, "\n")
-	fmt.Fprintf(o.stderr, "%s<thinking>%s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.dim("<thinking>"))
 	limit := len(lines)
 	if limit > thinkingPreviewMaxLines {
 		limit = thinkingPreviewMaxLines
 	}
 	for _, line := range lines[:limit] {
-		fmt.Fprintf(o.stderr, "%s%s%s\n",
-			o.color.Code(output.ANSIDim), line, o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.dim(line))
 	}
 	if len(lines) > thinkingPreviewMaxLines {
-		fmt.Fprintf(o.stderr, "%s… +%d lines hidden%s\n",
-			o.color.Code(output.ANSIDim), len(lines)-thinkingPreviewMaxLines, o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.dim(fmt.Sprintf("… +%d lines hidden", len(lines)-thinkingPreviewMaxLines)))
 	}
-	fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
-		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.dim("</thinking>"))
 }
 
 func (o *AgentOutput) evalStart(event agent.Event) {
@@ -938,11 +934,10 @@ func (o *AgentOutput) evalEnd(event agent.Event) {
 		return
 	}
 	if event.EvalPass {
-		fmt.Fprintf(o.stderr, "%s[eval] pass — %s%s\n",
-			o.color.Code(output.ANSIGreen), event.EvalReason, o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.colored(output.ANSIGreen, "[eval] pass — "+event.EvalReason))
 	} else {
-		fmt.Fprintf(o.stderr, "%s[eval] fail (round %d) — %s%s\n",
-			o.color.Code(output.ANSIYellow), event.EvalRound+1, event.EvalReason, o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.colored(output.ANSIYellow,
+			fmt.Sprintf("[eval] fail (round %d) — %s", event.EvalRound+1, event.EvalReason)))
 	}
 }
 
@@ -954,8 +949,8 @@ func (o *AgentOutput) evalError(event agent.Event) {
 	if event.EvalError != "" {
 		detail = event.EvalError
 	}
-	fmt.Fprintf(o.stderr, "%s[eval] error (round %d) — %s, continuing...%s\n",
-		o.color.Code(output.ANSIYellow), event.EvalRound+1, detail, o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.colored(output.ANSIYellow,
+		fmt.Sprintf("[eval] error (round %d) — %s, continuing...", event.EvalRound+1, detail)))
 }
 
 // ---------------------------------------------------------------------------
@@ -990,19 +985,15 @@ func (o *AgentOutput) renderUserIntent(body string) {
 	if o == nil || o.stderr == nil {
 		return
 	}
-	title := "user"
-	top := o.color.Code(output.ANSIDim) + "╭─ " + o.color.Code(output.ANSIReset) +
-		o.color.Code(output.ANSIBold) + title + o.color.Code(output.ANSIReset)
-	fmt.Fprintln(o.stderr, top)
+	fmt.Fprintln(o.stderr, o.dim("╭─ ")+o.bold("user"))
 	if strings.TrimSpace(body) == "" {
-		fmt.Fprintf(o.stderr, "%s│%s\n", o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+		fmt.Fprintln(o.stderr, o.dim("│"))
 	} else {
 		for _, line := range strings.Split(body, "\n") {
-			fmt.Fprintf(o.stderr, "%s│%s %s\n",
-				o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset), line)
+			fmt.Fprintf(o.stderr, "%s %s\n", o.dim("│"), line)
 		}
 	}
-	fmt.Fprintf(o.stderr, "%s╰─%s\n", o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	fmt.Fprintln(o.stderr, o.dim("╰─"))
 }
 
 func shouldRenderUserIntent(body string) bool {

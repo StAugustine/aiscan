@@ -81,6 +81,7 @@ type MiscOptions struct {
 	ViewFormat string `short:"o" long:"output" description:"Output format for -F: terminal (default), markdown" default:"terminal"`
 	ViewOutput string `short:"f" long:"file" description:"Write -F output to file instead of stdout"`
 	Debug      bool   `long:"debug" config:"debug" description:"Enable debug logging"`
+	Verbose    bool   `short:"v" long:"verbose" config:"verbose" description:"Show LLM thinking/reasoning content"`
 	Quiet      bool   `short:"q" long:"quiet" config:"quiet" description:"Quiet mode"`
 	NoColor    bool   `long:"no-color" config:"no_color" description:"Disable ANSI colors in scanner output"`
 	Version    bool   `long:"version" description:"Print version and exit"`
