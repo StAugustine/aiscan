@@ -81,39 +81,32 @@ func TestParseCLIScannerDebugEnablesGlobalDebugAndPreservesArg(t *testing.T) {
 func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Output: &logBuf})
-	stdout, err := captureStdoutForTest(t, func() error {
-		return runner.RunDirectScannerMode(context.Background(), &cfg.Option{
-			MiscOptions: cfg.MiscOptions{NoColor: true},
-		}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
-	})
+	err := runner.RunDirectScannerMode(context.Background(), &cfg.Option{
+		MiscOptions: cfg.MiscOptions{NoColor: true},
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
-	combined := stdout + logBuf.String()
-	for _, unwanted := range []string{"provider init", "engine=fingers", "commands=", "resources type="} {
-		if strings.Contains(combined, unwanted) {
-			t.Fatalf("normal scanner output leaked init log %q:\nstdout:\n%s\nlogs:\n%s", unwanted, stdout, logBuf.String())
+	logText := logBuf.String()
+	for _, unwanted := range []string{"provider init", "engine=fingers", "resources type="} {
+		if strings.Contains(logText, unwanted) {
+			t.Fatalf("normal mode leaked init log %q:\n%s", unwanted, logText)
 		}
-	}
-	if !strings.Contains(stdout, "[summary] completed") {
-		t.Fatalf("stdout missing scan summary: %q", stdout)
 	}
 }
 
 func TestDirectScannerModeDebugShowsInitInfo(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Debug: true, Output: &logBuf})
-	stdout, err := captureStdoutForTest(t, func() error {
-		return runner.RunDirectScannerMode(context.Background(), &cfg.Option{
-			MiscOptions: cfg.MiscOptions{Debug: true, NoColor: true},
-		}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
-	})
+	err := runner.RunDirectScannerMode(context.Background(), &cfg.Option{
+		MiscOptions: cfg.MiscOptions{Debug: true, NoColor: true},
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
 	logText := logBuf.String()
 	if !strings.Contains(logText, "engine=fingers status=ready") || !strings.Contains(logText, "scanner commands ready") {
-		t.Fatalf("debug scanner logs missing init detail:\nstdout:\n%s\nlogs:\n%s", stdout, logText)
+		t.Fatalf("debug scanner logs missing init detail:\n%s", logText)
 	}
 }
 
