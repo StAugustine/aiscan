@@ -46,6 +46,7 @@ Available only when they appear in the runtime pseudo-command list:
 
 - `passive`: domain/ICP seed → IPs, CIDRs, domains via cyberspace search (FOFA/Hunter/Shodan/etc.)
 - `katana`: deep web crawling with full parameter discovery
+- `playwright`: headless Chromium browser for JS-rendered pages, screenshots, network capture, and interactive verification. Reference: `aiscan://skills/playwright/SKILL.md`. Key commands: `playwright goto <url>`, `playwright screenshot <url>`, `playwright open <url> --session s1`, `playwright discover s1`, `playwright close s1`.
 
 ### Utilities
 

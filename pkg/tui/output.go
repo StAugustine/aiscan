@@ -48,18 +48,24 @@ type AgentOutput struct {
 	markdown bool
 	color    output.Color
 	debug    bool
+	verbose  bool
 	Quiet    bool
 	tools    map[string]agentToolSummary
 
-	// Live streaming of assistant text deltas (Claude-Code-style): when stream
-	// is true, EventMessageUpdate writes the freshly-arrived suffix to stdout so
-	// the answer appears token-by-token instead of buffering the whole turn.
-	stream         bool
-	streamPrinted  int    // bytes of the current turn's content already flushed
-	streamLineOpen bool   // streamed text left the shared TTY cursor mid-line
-	didStream      bool   // this Run streamed assistant text; Final may skip duplicate re-render
-	lastStreamed   string // full cumulative content of the streamed turn
-	aborted        bool   // current run was interrupted; drop late bus events/finals
+	// Streaming state. When stream is true, EventMessageUpdate writes freshly-
+	// arrived content to stdout token-by-token. Reasoning/thinking content is
+	// buffered and flushed line-by-line (verbose mode only).
+	stream             bool
+	streamPrinted      int    // bytes of content already flushed to stdout
+	reasoningProcessed int    // bytes of cumulative reasoning already fed into thinkingBuf
+	thinkingBuf        string // unflushed partial reasoning line
+	thinkingOpen       bool   // <thinking> tag has been printed (needs closing)
+	streamLineOpen     bool   // streamed text left the cursor mid-line
+	didStream               bool   // this run streamed assistant text; Final may skip duplicate
+	lastStreamed             string // full cumulative content of the streamed turn
+	lastReasoningFull       string // full cumulative reasoning text for flush-on-close
+	streamReasoningPrinted  int    // bytes of reasoning already flushed to stderr
+	aborted                 bool   // current run was interrupted; drop late bus events/finals
 
 	// Pretty-render state. The REPL runs inside a PTY that may be forwarded to a
 	// remote agent (aider), so transient chrome is gated by mode+tty: spinners,
@@ -80,10 +86,12 @@ type agentToolSummary struct {
 func NewAgentOutput(option *cfg.Option) *AgentOutput {
 	markdown := stdoutMarkdownEnabled(option)
 	debug := false
+	verbose := false
 	quiet := false
 	noColor := false
 	if option != nil {
 		debug = option.Debug
+		verbose = option.Verbose
 		quiet = option.Quiet
 		noColor = option.NoColor
 	}
@@ -96,6 +104,7 @@ func NewAgentOutput(option *cfg.Option) *AgentOutput {
 		markdown: markdown,
 		color:    color,
 		debug:    debug,
+		verbose:  verbose,
 		Quiet:    quiet,
 		tools:    make(map[string]agentToolSummary),
 		stream:   stdoutDeltaStreamingEnabled(option),
@@ -324,8 +333,9 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 	}
 	switch event.Type {
 	case agent.EventTurnStart:
-		// Each assistant turn starts a fresh cumulative message.
 		o.streamPrinted = 0
+		o.reasoningProcessed = 0
+		o.thinkingBuf = ""
 		if o.canAnimate() {
 			o.spinner.Start(o.thinkingLabel())
 		}
@@ -335,6 +345,7 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 		o.streamDelta(event)
 	case agent.EventToolExecutionStart:
 		o.spinner.Stop()
+		o.closeThinking()
 		o.toolStart(event)
 		if o.canAnimate() {
 			o.spinner.Start(o.toolSpinnerLabel(event))
@@ -362,12 +373,34 @@ func (o *AgentOutput) HandleEvent(event agent.Event) {
 
 // streamDelta prints only the newly-arrived suffix of the assistant's visible
 // content. The bus delivers the full cumulative message on each update, so we
-// track how much we have already flushed and emit the remainder. Reasoning and
-// in-flight tool-call argument deltas carry no visible content and are skipped.
+// track how much we have already flushed and emit the remainder. When verbose
+// mode is enabled, reasoning/thinking content is flushed line-by-line in dim
+// color so incomplete lines buffer until a newline arrives.
 func (o *AgentOutput) streamDelta(event agent.Event) {
 	if o.Quiet || !o.stream || o.stdout == nil {
 		return
 	}
+
+	// Stream reasoning content line-by-line when verbose.
+	if o.verbose && event.Message.ReasoningContent != nil {
+		reasoning := *event.Message.ReasoningContent
+		o.lastReasoningFull = reasoning
+		lastNL := strings.LastIndex(reasoning, "\n")
+		if lastNL >= 0 {
+			flushTo := lastNL + 1
+			if flushTo > o.streamReasoningPrinted {
+				delta := reasoning[o.streamReasoningPrinted:flushTo]
+				if o.streamReasoningPrinted == 0 {
+					o.ensureStreamNewlineLocked()
+					fmt.Fprintf(o.stderr, "%s<thinking>%s\n",
+						o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+				}
+				fmt.Fprint(o.stderr, o.color.Code(output.ANSIDim)+delta+o.color.Code(output.ANSIReset))
+				o.streamReasoningPrinted = flushTo
+			}
+		}
+	}
+
 	content := ""
 	if event.Message.Content != nil {
 		content = *event.Message.Content
@@ -375,12 +408,49 @@ func (o *AgentOutput) streamDelta(event agent.Event) {
 	if len(content) <= o.streamPrinted {
 		return
 	}
+	// Close thinking block when content starts arriving.
+	if o.streamPrinted == 0 && o.streamReasoningPrinted > 0 {
+		o.flushAndCloseThinking()
+	}
 	delta := content[o.streamPrinted:]
 	fmt.Fprint(o.stdout, delta)
 	o.streamPrinted = len(content)
 	o.streamLineOpen = !strings.HasSuffix(content, "\n")
 	o.didStream = true
 	o.lastStreamed = content
+}
+
+// flushAndCloseThinking flushes any remaining buffered reasoning content (the
+// last incomplete line) and prints the </thinking> closing tag. Must be called
+// with o.mu held.
+func (o *AgentOutput) flushAndCloseThinking() {
+	if o.streamReasoningPrinted == 0 {
+		return
+	}
+	if len(o.lastReasoningFull) > o.streamReasoningPrinted {
+		remaining := o.lastReasoningFull[o.streamReasoningPrinted:]
+		fmt.Fprintf(o.stderr, "%s%s%s\n",
+			o.color.Code(output.ANSIDim), remaining, o.color.Code(output.ANSIReset))
+	}
+	fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
+		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	o.streamReasoningPrinted = len(o.lastReasoningFull)
+}
+
+// closeThinking flushes any in-progress streaming thinking block and prints
+// the closing tag so tool output appears after reasoning, not interleaved.
+func (o *AgentOutput) closeThinking() {
+	if o.thinkingOpen {
+		if o.thinkingBuf != "" {
+			fmt.Fprintf(o.stderr, "%s%s%s\n",
+				o.color.Code(output.ANSIDim), o.thinkingBuf, o.color.Code(output.ANSIReset))
+			o.thinkingBuf = ""
+		}
+		fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
+			o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+		o.thinkingOpen = false
+	}
+	o.flushAndCloseThinking()
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +489,8 @@ func (o *AgentOutput) beginRun() {
 func (o *AgentOutput) resetStreamState() {
 	o.didStream = false
 	o.streamPrinted = 0
+	o.streamReasoningPrinted = 0
+	o.lastReasoningFull = ""
 	o.streamLineOpen = false
 	o.lastStreamed = ""
 }
@@ -725,6 +797,38 @@ func toolResultTitle(toolName, elapsed string) string {
 
 func (o *AgentOutput) turnEnd(event agent.Event) {
 	o.ensureStreamNewlineLocked()
+
+	// Close any still-open thinking block from streaming.
+	o.flushAndCloseThinking()
+
+	if !o.Quiet {
+		// Render reasoning content when verbose and it wasn't already streamed
+		// (non-streaming / -p mode).
+		if o.verbose && o.streamReasoningPrinted == 0 {
+			if event.Message.ReasoningContent != nil {
+				reasoning := strings.TrimSpace(*event.Message.ReasoningContent)
+				if reasoning != "" {
+					o.renderThinkingBlock(reasoning)
+				}
+			}
+		}
+
+		// Render assistant text content if it wasn't already streamed.
+		if o.streamPrinted == 0 {
+			if event.Message.Content != nil {
+				content := strings.TrimSpace(*event.Message.Content)
+				if content != "" {
+					rendered := renderAgentMarkdown(content, o.markdown)
+					if rendered != "" {
+						fmt.Fprintln(o.stdout, rendered)
+					}
+					o.didStream = true
+					o.lastStreamed = content
+				}
+			}
+		}
+	}
+
 	if o.Quiet || !o.debug {
 		return
 	}
@@ -791,6 +895,31 @@ func (o *AgentOutput) agentEnd(event agent.Event) {
 // ---------------------------------------------------------------------------
 // Goal evaluation output
 // ---------------------------------------------------------------------------
+
+const thinkingPreviewMaxLines = 20
+
+func (o *AgentOutput) renderThinkingBlock(reasoning string) {
+	if o.stderr == nil {
+		return
+	}
+	lines := strings.Split(reasoning, "\n")
+	fmt.Fprintf(o.stderr, "%s<thinking>%s\n",
+		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+	limit := len(lines)
+	if limit > thinkingPreviewMaxLines {
+		limit = thinkingPreviewMaxLines
+	}
+	for _, line := range lines[:limit] {
+		fmt.Fprintf(o.stderr, "%s%s%s\n",
+			o.color.Code(output.ANSIDim), line, o.color.Code(output.ANSIReset))
+	}
+	if len(lines) > thinkingPreviewMaxLines {
+		fmt.Fprintf(o.stderr, "%s… +%d lines hidden%s\n",
+			o.color.Code(output.ANSIDim), len(lines)-thinkingPreviewMaxLines, o.color.Code(output.ANSIReset))
+	}
+	fmt.Fprintf(o.stderr, "%s</thinking>%s\n",
+		o.color.Code(output.ANSIDim), o.color.Code(output.ANSIReset))
+}
 
 func (o *AgentOutput) evalStart(event agent.Event) {
 	if o.Quiet || o.stderr == nil {
