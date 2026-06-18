@@ -297,8 +297,8 @@ Examples:
   aiscan ioa serve --ioa-token mysecret
   aiscan ioa spaces --ioa-url http://token@127.0.0.1:8765
   aiscan ioa messages default --ioa-url http://token@127.0.0.1:8765
-  aiscan agent --loop -p "localhost web scanner" -s aiscan --space case-1
-  aiscan agent --loop --heartbeat 5 --space case-1 -p "coordinate next scan steps"`, cfg.ScannerUsageLines())
+  aiscan agent --ioa-url http://127.0.0.1:8765 -p "localhost web scanner" -s aiscan --space case-1
+  aiscan agent --ioa-url http://127.0.0.1:8765 --heartbeat 5 --space case-1 -p "coordinate next scan steps"`, cfg.ScannerUsageLines())
 	return parser
 }
 

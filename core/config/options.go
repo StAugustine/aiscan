@@ -57,7 +57,6 @@ type AgentOptions struct {
 	Inputs         []string `short:"i" long:"input" description:"Target input: IP, URL, IP:port, or CIDR. Can specify multiple"`
 	Skills         []string `short:"s" long:"skill" description:"Skill to apply (name or file path). Can specify multiple"`
 	TaskFile       string   `long:"task-file" description:"File containing task description"`
-	Loop           bool     `long:"loop" description:"Run as an IOA loop worker instead of local agent mode"`
 	Heartbeat      int      `long:"heartbeat" description:"Heartbeat interval in minutes: periodically wake the agent to review context (0 disables)" default:"0"`
 	Timeout        int      `long:"timeout" config:"timeout" description:"Overall timeout in seconds" default:"3600"`
 	EvalCriteria   string   `short:"e" long:"eval" config:"eval_criteria" description:"Goal evaluation criteria — an independent LLM evaluates whether the task was achieved"`
@@ -70,7 +69,7 @@ type IOAOptions struct {
 	IOAToken    string `long:"ioa-token" config:"token" description:"IOA server access key (for 'ioa serve'; auto-generated if empty)"`
 	IOANodeID   string `long:"ioa-node-id" description:"Existing IOA node id for agent tools"`
 	IOANodeName string `long:"ioa-node-name" config:"node_name" description:"IOA node name when auto-registering"`
-	Space       string `long:"space" config:"space" description:"IOA space name for 'aiscan agent --loop'" default:"default"`
+	Space       string `long:"space" config:"space" description:"IOA space name" default:"default"`
 	IOAJSON     bool   `long:"json" description:"Output IOA query results in JSON format"`
 }
 

@@ -13,17 +13,14 @@ import (
 // Instead of writing imperative test code, define an Intent and call Run.
 //
 //	Intent{
-//	    Name:   "loop-lifecycle",
-//	    Prompt: "Create loop 'scanner', list, then delete it.",
+//	    Name:   "subagent-lifecycle",
+//	    Prompt: "Create a sync subagent to scan localhost.",
 //	    Steps: Steps(
-//	        Tool("loop").Action("create").Arg("name", "scanner").ResultHas("created"),
-//	        Tool("loop").Action("list").ResultHas("scanner"),
-//	        Tool("loop").Action("delete").Arg("name", "scanner"),
+//	        Tool("subagent").Action("create").Arg("name", "scanner"),
 //	    ),
-//	    Ordered:        true,
-//	    OutputContains: []string{"scanner"},
-//	    MaxTurns:       6,
-//	    NoErrors:       true,
+//	    Ordered:  true,
+//	    MaxTurns: 4,
+//	    NoErrors: true,
 //	}.Run(t, h)
 type Intent struct {
 	Name      string

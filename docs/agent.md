@@ -28,10 +28,10 @@
 | 条件 | 模式 | 行为 |
 | --- | --- | --- |
 | 提供 `-p`、`--task-file`、`-i` 或 stdin pipe | **One-shot** | 执行任务后退出 |
-| 指定 `--loop` | **Loop worker** | 连接 IOA server，注册节点，监听并执行任务 |
+| 指定 `--ioa-url` | **IOA worker** | 连接 IOA server，注册节点，监听并执行任务 |
 | 无任何输入 | **交互式 REPL** | 进入交互命令行，支持会话保持和连续追问 |
 
-判断逻辑：`--loop` 优先级最高；其次检查是否存在任务输入（prompt、目标、文件、stdin）；均不满足时进入 REPL。
+判断逻辑：`--ioa-url` 优先级最高；其次检查是否存在任务输入（prompt、目标、文件、stdin）；均不满足时进入 REPL。
 
 ---
 
@@ -232,9 +232,7 @@ Agent 在运行时可使用以下工具，由 LLM 自主选择调用。
 | `web_search` ★ | Web 搜索，查询 CVE/Exploit/安全情报 | 优先使用 provider 原生搜索，回退 Tavily |
 | `fetch` | 抓取 URL 内容为可读文本 | |
 | `finish` ★ | 显式终止 agent 循环（`ToolResult.Terminate`） | 终止工具 |
-| `checkpoint` | 提交阶段性验证/分析结论 | 终止工具 |
 | `subagent` | 创建子 agent（sync 同步 / async 异步 / fork 分支） | |
-| `loop` | 周期性任务调度（create/list/delete） | |
 
 ### Scanner 伪命令（通过 bash 工具调用）
 

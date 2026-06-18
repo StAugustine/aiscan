@@ -217,8 +217,8 @@ func (rt *AgentRuntime) Close() {
 // ---------------------------------------------------------------------------
 
 func RunAgentMode(ctx context.Context, option *cfg.Option, logger telemetry.Logger, setInterrupt ...func(func() bool)) error {
-	if option.Loop {
-		return runLoop(ctx, option, logger)
+	if option.IOAURL != "" {
+		return runIOAAgent(ctx, option, logger)
 	}
 	var si func(func() bool)
 	if len(setInterrupt) > 0 {
@@ -307,14 +307,11 @@ func runInteractiveMode(ctx context.Context, option *cfg.Option, logger telemetr
 }
 
 // ---------------------------------------------------------------------------
-// Agent loop (IOA swarm worker)
+// Agent with IOA connection
 // ---------------------------------------------------------------------------
 
-func runLoop(ctx context.Context, option *cfg.Option, logger telemetry.Logger) error {
+func runIOAAgent(ctx context.Context, option *cfg.Option, logger telemetry.Logger) error {
 	ioaURL := option.IOAURL
-	if ioaURL == "" {
-		ioaURL = "http://127.0.0.1:8765"
-	}
 
 	rt, err := NewAgentRuntime(ctx, option, logger, &RuntimeConfig{
 		NoOutput: true,

@@ -12,7 +12,7 @@ import (
 	cfg "github.com/chainreactors/aiscan/core/config"
 	"github.com/chainreactors/aiscan/core/runner"
 	"github.com/chainreactors/aiscan/pkg/agent"
-	
+
 	"github.com/chainreactors/aiscan/pkg/commands"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/tui"
@@ -112,7 +112,7 @@ func TestDirectScannerModeDebugShowsInitInfo(t *testing.T) {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
 	logText := logBuf.String()
-	if !strings.Contains(logText, "engine=fingers status=ready") || !strings.Contains(logText, "commands=") {
+	if !strings.Contains(logText, "engine=fingers status=ready") || !strings.Contains(logText, "scanner commands ready") {
 		t.Fatalf("debug scanner logs missing init detail:\nstdout:\n%s\nlogs:\n%s", stdout, logText)
 	}
 }
@@ -394,12 +394,11 @@ func TestScannerAIIntentInjectsCommandSkill(t *testing.T) {
 	}
 }
 
-func TestParseCLIAgentLoopFlag(t *testing.T) {
+func TestParseCLIAgentIOAFlag(t *testing.T) {
 	parsed, err := parseCLI([]string{
 		"--debug",
 		"--cyberhub-mode", "override",
 		"agent",
-		"--loop",
 		"-p", "scan localhost",
 		"-s", "aiscan",
 		"--space", "case-1",
@@ -413,18 +412,11 @@ func TestParseCLIAgentLoopFlag(t *testing.T) {
 		t.Fatalf("mode = %s, want %s", parsed.Mode, cfg.RunModeAgent)
 	}
 	opt := parsed.Option
-	if !opt.Debug || !opt.Loop || opt.Prompt != "scan localhost" || opt.Space != "case-1" || opt.Heartbeat != 5 || opt.Model != "gpt-4o" || opt.CyberhubMode != "override" {
+	if !opt.Debug || opt.Prompt != "scan localhost" || opt.Space != "case-1" || opt.Heartbeat != 5 || opt.Model != "gpt-4o" || opt.CyberhubMode != "override" {
 		t.Fatalf("option = %#v", opt)
 	}
 	if !reflect.DeepEqual(opt.Skills, []string{"aiscan"}) {
 		t.Fatalf("skills = %#v", opt.Skills)
-	}
-}
-
-func TestParseCLILoopCommandRemoved(t *testing.T) {
-	parsed, err := parseCLI([]string{"loop"})
-	if err == nil && parsed.Mode != cfg.RunModeNoCommand {
-		t.Fatalf("mode = %s, want no command or parse error", parsed.Mode)
 	}
 }
 
