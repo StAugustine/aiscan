@@ -68,6 +68,8 @@ Sessions persist a browser page across multiple tool calls. This enables multi-s
 ### open / close / sessions
 ```bash
 playwright open <url> [--session <name>] [--timeout <seconds>] [--op-timeout <seconds>] [--no-speed-up]
+                      [--headed]              # Launch with GUI (non-headless)
+                      [--cdp <ws-url>]         # Connect to external browser via CDP endpoint
 playwright close <session>
 playwright sessions
 ```
@@ -145,11 +147,13 @@ playwright go-forward <session>
 ```
 
 ### dialog (XSS verification)
-Capture JavaScript alert/confirm/prompt dialogs. Arm the listener before triggering the payload.
+Capture JavaScript alert/confirm/prompt dialogs.
 ```bash
-playwright dialog <session> --arm     # Start listening
-playwright dialog <session> --check   # Return captured dialogs (JSON)
-playwright dialog <session> --disarm  # Stop listening
+playwright dialog-accept <session> [prompt-text]  # Accept the next dialog (one-shot)
+playwright dialog-dismiss <session>               # Dismiss the next dialog (one-shot)
+playwright dialog <session> --arm                 # Start listening (captures all dialogs)
+playwright dialog <session> --check               # Return captured dialogs (JSON)
+playwright dialog <session> --disarm              # Stop listening
 ```
 
 ### Storage Management (playwright-cli aligned)
@@ -183,6 +187,14 @@ playwright sessionstorage-delete <session> <key>       # Delete a sessionStorage
 playwright sessionstorage-clear <session>              # Clear all sessionStorage
 ```
 
+#### State
+Save and load the full browser state (cookies + localStorage) in Playwright-compatible JSON format.
+```bash
+playwright state-save <session> <file>               # Save cookies + localStorage to file
+playwright state-load <session> <file>               # Load cookies + localStorage from file
+```
+Also available as flags: `open --save-storage <file>` / `open --load-storage <file>` / `close --save-storage <file>`.
+
 ### DevTools
 
 #### console
@@ -192,11 +204,32 @@ playwright console <session>           # Show all captured console messages
 playwright console <session> --clear   # Clear captured messages
 ```
 
+#### snapshot
+Capture the page's accessibility tree. More compact than raw HTML — ideal for understanding page structure.
+```bash
+playwright snapshot <session>                # Full accessibility tree
+playwright snapshot <session> --depth 3      # Limit tree depth
+```
+
+#### requests / request
+Network requests are auto-captured from session open. List all or inspect a specific request.
+```bash
+playwright requests <session>                # List all captured requests (index, method, status, URL)
+playwright request <session> <index>         # Show full detail (headers, post data, response headers)
+```
+
+#### route-list
+List active request interception rules set via `route`.
+```bash
+playwright route-list <session>              # List all active routes
+```
+
 ### Headers & Interception
 ```bash
 playwright set-extra-headers <session> <json>          # Add extra HTTP headers (e.g. Authorization)
 playwright set-viewport <session> <width> <height>     # Set viewport dimensions
 playwright route <session> <pattern> --fulfill|--abort|--continue [options]
+playwright route-list <session>                        # List active routes
 playwright unroute <session>                           # Remove all request interception routes
 ```
 
@@ -339,11 +372,17 @@ Use browser automation when evidence depends on rendered DOM, user interaction, 
 | `console` | `console` | auto-captured from session open |
 | `route` | `route` | |
 | `unroute` | `unroute` | |
-| `snapshot` | — | not implemented (use `discover` for form/element discovery) |
-| `tab-list` / `tab-new` / `tab-close` | — | not implemented (use multiple sessions) |
-| `dialog-accept` / `dialog-dismiss` | `dialog --arm` | aiscan auto-accepts and captures all dialogs |
+| `snapshot` | `snapshot` | CDP Accessibility tree |
+| `requests` | `requests` | auto-captured from session open |
+| `request` | `request` | show detail with headers/body |
+| `route-list` | `route-list` | |
+| `dialog-accept` | `dialog-accept` | one-shot accept |
+| `dialog-dismiss` | `dialog-dismiss` | one-shot dismiss |
+| `state-save` / `state-load` | `state-save` / `state-load` | also `--save-storage`/`--load-storage` flags |
 | `resize` | `set-viewport` | |
-| `state-save` / `state-load` | `--save-storage` / `--load-storage` | flags on `open` / `close` |
+| `tab-list` / `tab-new` / `tab-close` | — | use multiple sessions |
+| `attach --cdp=<url>` | `open --cdp <url>` | connect to external browser |
+| `open` (headed) | `open --headed` | launch with GUI |
 
 ## aiscan Extensions (no playwright-cli equivalent)
 
@@ -357,7 +396,9 @@ Use browser automation when evidence depends on rendered DOM, user interaction, 
 ## Notes
 
 - The browser launches on first use (lazy init) and is reused across calls.
+- Use `--headed` on `open` to launch with a GUI window; use `--cdp <ws-url>` to connect to an existing browser (e.g. Chrome DevTools).
 - Stateless commands use fresh incognito contexts. Session commands persist pages.
+- Network requests are auto-captured from session open — use `requests`/`request` to inspect.
 - Stealth mode is always enabled (go-rod/stealth).
 - Katana JS scripts (page-init.js + utils.js) are injected into session pages with **hooks activated** for:
   - Event listener capture (`window.__eventListeners`)

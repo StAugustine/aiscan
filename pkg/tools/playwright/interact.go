@@ -527,7 +527,6 @@ func networkCaptureStop(ctx context.Context, sess *Session) (string, error) {
 		sess.networkActive = false
 
 		entries := sess.networkRecorder.snapshot()
-		sess.networkRecorder = nil
 
 		if len(entries) == 0 {
 			return fmt.Sprintf("Network capture stopped on session %q (no requests captured)", sess.Name), nil

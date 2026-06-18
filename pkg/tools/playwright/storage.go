@@ -347,3 +347,41 @@ func (c *Command) execWebStorageClear(ctx context.Context, args []string, storag
 		return fmt.Sprintf("Cleared %d %s item(s)", count, storageType), nil
 	})
 }
+
+// ---------------------------------------------------------------------------
+// state-save / state-load
+// ---------------------------------------------------------------------------
+
+func (c *Command) execStateSave(ctx context.Context, args []string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("playwright state-save: usage: playwright state-save <session> <file>")
+	}
+	sess, err := c.getSession(args[0])
+	if err != nil {
+		return "", err
+	}
+	outPath := resolvePath(c.workDir, args[1])
+	return sess.withPage(ctx, func(page *rod.Page) (string, error) {
+		if err := saveStorageState(page, outPath); err != nil {
+			return "", fmt.Errorf("playwright state-save: %w", err)
+		}
+		return fmt.Sprintf("State saved: %s", outPath), nil
+	})
+}
+
+func (c *Command) execStateLoad(ctx context.Context, args []string) (string, error) {
+	if len(args) < 2 {
+		return "", fmt.Errorf("playwright state-load: usage: playwright state-load <session> <file>")
+	}
+	sess, err := c.getSession(args[0])
+	if err != nil {
+		return "", err
+	}
+	inPath := resolvePath(c.workDir, args[1])
+	return sess.withPage(ctx, func(page *rod.Page) (string, error) {
+		if err := loadStorageState(page, inPath); err != nil {
+			return "", fmt.Errorf("playwright state-load: %w", err)
+		}
+		return fmt.Sprintf("State loaded: %s", inPath), nil
+	})
+}

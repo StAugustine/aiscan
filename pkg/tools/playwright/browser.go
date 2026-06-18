@@ -42,6 +42,10 @@ type Command struct {
 	// Proxy URL for Chrome's --proxy-server flag. Updated via SetProxy().
 	proxyMu  sync.RWMutex
 	proxyURL string
+
+	// Browser mode: headed (GUI) vs headless, optional CDP endpoint.
+	headed bool
+	cdpURL string
 }
 
 // New creates a playwright pseudo-command.
@@ -54,6 +58,23 @@ func (c *Command) SetProxy(proxyURLStr string) {
 	c.proxyMu.Lock()
 	defer c.proxyMu.Unlock()
 	c.proxyURL = proxyURLStr
+}
+
+// SetBrowserMode switches between headed/headless and optional CDP endpoint.
+// If the mode changes while a browser is running, it is closed and re-launched.
+func (c *Command) SetBrowserMode(headed bool, cdpURL string) {
+	c.mu.Lock()
+	changed := c.browser != nil && (headed != c.headed || cdpURL != c.cdpURL)
+	c.mu.Unlock()
+
+	if changed {
+		c.Close()
+	}
+
+	c.mu.Lock()
+	c.headed = headed
+	c.cdpURL = cdpURL
+	c.mu.Unlock()
 }
 
 func (c *Command) Name() string { return "playwright" }
@@ -78,6 +99,8 @@ Session Subcommands (multi-step interactive workflows):
              [--op-timeout secs]                  Per-operation timeout for session commands
              [--no-speed-up]                      Disable setTimeout/setInterval acceleration
              [--record]                           Enable action recording for template codegen
+             [--headed]                           Launch browser with GUI (non-headless)
+             [--cdp <ws-url>]                     Connect to an external browser via CDP endpoint
   close <session>                                 Close a session and release resources
   sessions                                        List all active sessions
 
@@ -145,8 +168,20 @@ Session Subcommands (multi-step interactive workflows):
     sessionstorage-delete <session> <key>       Delete a sessionStorage item
     sessionstorage-clear <session>              Clear all sessionStorage
 
+  State Management:
+    state-save <session> <file>                 Save cookies + localStorage to file
+    state-load <session> <file>                 Load cookies + localStorage from file
+
   DevTools:
     console <session> [--clear]                 Show/clear captured console messages
+    snapshot <session> [--depth N]              Capture accessibility tree snapshot
+    requests <session>                          List all captured network requests
+    request <session> <index>                   Show full detail for a specific request
+    route-list <session>                        List active route interception rules
+
+  Dialog (playwright-cli aligned):
+    dialog-accept <session> [prompt-text]       Accept the next JS dialog
+    dialog-dismiss <session>                    Dismiss the next JS dialog
 
 Recording (nuclei headless template codegen):
   record <session> --start                            Start recording actions
@@ -383,6 +418,30 @@ func (c *Command) Execute(ctx context.Context, args []string, w io.Writer) error
 	case "unroute":
 		result, err = c.execUnroute(ctx, subArgs)
 
+	// --- Snapshot ---
+	case "snapshot":
+		result, err = c.execSnapshot(ctx, subArgs)
+
+	// --- Request inspection ---
+	case "requests":
+		result, err = c.execRequests(ctx, subArgs)
+	case "request":
+		result, err = c.execRequestDetail(ctx, subArgs)
+	case "route-list":
+		result, err = c.execRouteList(ctx, subArgs)
+
+	// --- State ---
+	case "state-save":
+		result, err = c.execStateSave(ctx, subArgs)
+	case "state-load":
+		result, err = c.execStateLoad(ctx, subArgs)
+
+	// --- Dialog (playwright-cli aligned) ---
+	case "dialog-accept":
+		result, err = c.execDialogAccept(ctx, subArgs)
+	case "dialog-dismiss":
+		result, err = c.execDialogDismiss(ctx, subArgs)
+
 	// --- Recording ---
 	case "record":
 		result, err = c.execRecord(ctx, subArgs)
@@ -431,31 +490,41 @@ func (c *Command) getOrLaunchBrowser() (*rod.Browser, error) {
 		return c.browser, nil
 	}
 
-	l := launcher.New().
-		Leakless(false).
-		Headless(true).
-		Set("disable-gpu").
-		Set("no-sandbox").
-		Set("disable-dev-shm-usage").
-		Set("ignore-certificate-errors").
-		Set("allow-insecure-localhost")
+	var b *rod.Browser
 
-	c.proxyMu.RLock()
-	proxy := c.proxyURL
-	c.proxyMu.RUnlock()
-	if proxy != "" {
-		l = l.Set("proxy-server", proxy)
-	}
+	if c.cdpURL != "" {
+		// Connect to an external browser via CDP WebSocket endpoint.
+		b = rod.New().ControlURL(c.cdpURL)
+		if err := b.Connect(); err != nil {
+			return nil, fmt.Errorf("playwright: connect to CDP %s failed: %w", c.cdpURL, err)
+		}
+	} else {
+		l := launcher.New().
+			Leakless(false).
+			Headless(!c.headed).
+			Set("disable-gpu").
+			Set("no-sandbox").
+			Set("disable-dev-shm-usage").
+			Set("ignore-certificate-errors").
+			Set("allow-insecure-localhost")
 
-	controlURL, err := l.Launch()
-	if err != nil {
-		return nil, fmt.Errorf("playwright: launch failed: %w", err)
-	}
+		c.proxyMu.RLock()
+		proxy := c.proxyURL
+		c.proxyMu.RUnlock()
+		if proxy != "" {
+			l = l.Set("proxy-server", proxy)
+		}
 
-	b := rod.New().ControlURL(controlURL)
-	if err := b.Connect(); err != nil {
-		l.Kill()
-		return nil, fmt.Errorf("playwright: connect failed: %w", err)
+		controlURL, err := l.Launch()
+		if err != nil {
+			return nil, fmt.Errorf("playwright: launch failed: %w", err)
+		}
+
+		b = rod.New().ControlURL(controlURL)
+		if err := b.Connect(); err != nil {
+			l.Kill()
+			return nil, fmt.Errorf("playwright: connect failed: %w", err)
+		}
 	}
 
 	c.browser = b
@@ -1285,11 +1354,14 @@ func resolvePath(workDir, file string) string {
 
 // netEntry used in network capture output formatting.
 type netEntry struct {
-	Method      string `json:"method"`
-	URL         string `json:"url"`
-	Status      int    `json:"status"`
-	ContentType string `json:"content_type"`
-	Size        int    `json:"size"`
+	Method      string            `json:"method"`
+	URL         string            `json:"url"`
+	Status      int               `json:"status"`
+	ContentType string            `json:"content_type"`
+	Size        int               `json:"size"`
+	ReqHeaders  map[string]string `json:"req_headers,omitempty"`
+	PostData    string            `json:"post_data,omitempty"`
+	RespHeaders map[string]string `json:"resp_headers,omitempty"`
 }
 
 type networkRecorder struct {
@@ -1312,6 +1384,13 @@ func (r *networkRecorder) requestWillBeSent(e *proto.NetworkRequestWillBeSent) {
 	entry := r.ensureLocked(e.RequestID)
 	entry.Method = e.Request.Method
 	entry.URL = e.Request.URL
+	entry.PostData = e.Request.PostData
+	if len(e.Request.Headers) > 0 {
+		entry.ReqHeaders = make(map[string]string, len(e.Request.Headers))
+		for k, v := range e.Request.Headers {
+			entry.ReqHeaders[k] = v.Str()
+		}
+	}
 }
 
 func (r *networkRecorder) responseReceived(e *proto.NetworkResponseReceived) {
@@ -1327,6 +1406,12 @@ func (r *networkRecorder) responseReceived(e *proto.NetworkResponseReceived) {
 	}
 	entry.Status = e.Response.Status
 	entry.ContentType = responseContentType(e.Response)
+	if len(e.Response.Headers) > 0 {
+		entry.RespHeaders = make(map[string]string, len(e.Response.Headers))
+		for k, v := range e.Response.Headers {
+			entry.RespHeaders[k] = v.Str()
+		}
+	}
 }
 
 func (r *networkRecorder) loadingFinished(e *proto.NetworkLoadingFinished) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -123,4 +124,80 @@ func dialogDisarm(sess *Session) (string, error) {
 	data, _ := json.MarshalIndent(events, "", "  ")
 	return fmt.Sprintf("Dialog listener disarmed on session %q - captured %d dialog(s):\n%s",
 		sess.Name, len(events), string(data)), nil
+}
+
+// ---------------------------------------------------------------------------
+// dialog-accept / dialog-dismiss (playwright-cli aligned, one-shot)
+// ---------------------------------------------------------------------------
+
+func (c *Command) execDialogAccept(ctx context.Context, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("playwright dialog-accept: session name required")
+	}
+	promptText := ""
+	if len(args) > 1 {
+		promptText = strings.Join(args[1:], " ")
+	}
+	return dialogSetupOneShot(ctx, c, args[0], true, promptText)
+}
+
+func (c *Command) execDialogDismiss(ctx context.Context, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", fmt.Errorf("playwright dialog-dismiss: session name required")
+	}
+	return dialogSetupOneShot(ctx, c, args[0], false, "")
+}
+
+func dialogSetupOneShot(ctx context.Context, cmd *Command, sessName string, accept bool, promptText string) (string, error) {
+	sess, err := cmd.getSession(sessName)
+	if err != nil {
+		return "", err
+	}
+
+	return sess.withPage(ctx, func(page *rod.Page) (string, error) {
+		sess.dialogMu.Lock()
+		if sess.dialogCancel != nil {
+			sess.dialogCancel()
+		}
+		sess.dialogMu.Unlock()
+
+		if err := (proto.PageEnable{}).Call(page); err != nil {
+			return "", fmt.Errorf("playwright dialog: enable page events: %w", err)
+		}
+
+		listenCtx, cancel := context.WithCancel(context.Background())
+
+		sess.dialogMu.Lock()
+		sess.dialogCancel = cancel
+		sess.dialogArmed = true
+		sess.dialogEvents = nil
+		sess.dialogMu.Unlock()
+
+		listenerPage := sess.Page.Context(listenCtx)
+		go listenerPage.EachEvent(func(e *proto.PageJavascriptDialogOpening) {
+			ev := DialogEvent{
+				Type:    string(e.Type),
+				Message: e.Message,
+				URL:     e.URL,
+				Time:    time.Now().Format(time.RFC3339),
+			}
+			sess.dialogMu.Lock()
+			sess.dialogEvents = append(sess.dialogEvents, ev)
+			sess.dialogArmed = false
+			sess.dialogMu.Unlock()
+
+			_ = proto.PageHandleJavaScriptDialog{
+				Accept:     accept,
+				PromptText: promptText,
+			}.Call(listenerPage)
+
+			cancel()
+		})()
+
+		action := "accept"
+		if !accept {
+			action = "dismiss"
+		}
+		return fmt.Sprintf("Dialog handler armed (will %s next dialog) on session %q", action, sess.Name), nil
+	})
 }

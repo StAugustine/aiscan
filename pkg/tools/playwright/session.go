@@ -57,6 +57,7 @@ type Session struct {
 	hijackMu      sync.Mutex
 	hijackRouter  *rod.HijackRouter
 	hijackRunning bool
+	routeEntries  []routeEntry
 
 	// Action recording for nuclei headless template generation.
 	rec *recorder
@@ -64,6 +65,11 @@ type Session struct {
 	// playwright-cli parity: save-storage / save-har on close
 	saveStoragePath string
 	saveHARPath     string
+}
+
+type routeEntry struct {
+	Pattern string
+	Mode    string
 }
 
 // withPage serializes a single operation against the persistent page and
@@ -229,6 +235,9 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 
 	if o.proxyServer != "" {
 		c.SetProxy(o.proxyServer)
+	}
+	if o.headed || o.cdpURL != "" {
+		c.SetBrowserMode(o.headed, o.cdpURL)
 	}
 
 	c.sessionsMu.Lock()
@@ -403,24 +412,22 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 		})
 	}
 
-	// Start HAR recording if requested (same as playwright-cli --save-har).
-	if o.saveHARPath != "" {
-		sess.networkMu.Lock()
-		sess.networkRecorder = newNetworkRecorder()
-		sess.networkActive = true
-		if err := (proto.NetworkEnable{}).Call(page); err == nil {
-			capCtx, capCancel := context.WithCancel(context.Background())
-			sess.networkCancel = capCancel
-			capturedPage := page.Context(capCtx)
-			go capturedPage.EachEvent(
-				sess.networkRecorder.requestWillBeSent,
-				sess.networkRecorder.responseReceived,
-				sess.networkRecorder.loadingFinished,
-				sess.networkRecorder.loadingFailed,
-			)()
-		}
-		sess.networkMu.Unlock()
+	// Auto-capture network requests (always on for `requests` command + optional HAR).
+	sess.networkMu.Lock()
+	sess.networkRecorder = newNetworkRecorder()
+	sess.networkActive = true
+	if err := (proto.NetworkEnable{}).Call(page); err == nil {
+		capCtx, capCancel := context.WithCancel(context.Background())
+		sess.networkCancel = capCancel
+		capturedPage := page.Context(capCtx)
+		go capturedPage.EachEvent(
+			sess.networkRecorder.requestWillBeSent,
+			sess.networkRecorder.responseReceived,
+			sess.networkRecorder.loadingFinished,
+			sess.networkRecorder.loadingFailed,
+		)()
 	}
+	sess.networkMu.Unlock()
 
 	c.sessionsMu.Lock()
 	c.sessions[o.sessName] = sess
@@ -570,6 +577,8 @@ type openOpts struct {
 	proxyBypass      string
 	blockSW          bool
 	record           bool
+	headed           bool
+	cdpURL           string
 }
 
 func parseOpenOpts(args []string, usage string) (openOpts, error) {
@@ -698,6 +707,14 @@ func parseOpenOpts(args []string, usage string) (openOpts, error) {
 			o.blockSW = true
 		case "--record":
 			o.record = true
+		case "--headed":
+			o.headed = true
+		case "--cdp":
+			if i+1 >= len(args) {
+				return o, fmt.Errorf("playwright open: --cdp requires a WebSocket URL")
+			}
+			i++
+			o.cdpURL = args[i]
 		default:
 			if strings.HasPrefix(args[i], "-") {
 				return o, fmt.Errorf("playwright open: unknown flag: %s", args[i])
