@@ -263,8 +263,8 @@ func (r *AgentConsole) Start() error {
 func (r *AgentConsole) startFastInput() error {
 	reader := bufio.NewReader(os.Stdin)
 	for {
-		if err := r.ctx.Err(); err != nil {
-			return nil
+		if r.ctx.Err() != nil {
+			return nil //nolint:nilerr // context cancellation is clean shutdown
 		}
 
 		fmt.Fprint(os.Stderr, r.promptString())
@@ -284,7 +284,7 @@ func (r *AgentConsole) startFastInput() error {
 
 		done, execErr := r.handleInputLine(line)
 		if execErr != nil {
-			if errors.Is(execErr, context.Canceled) && r.ctx.Err() != nil {
+			if errors.Is(execErr, context.Canceled) && r.ctx.Err() != nil { //nolint:nilerr // clean shutdown
 				fmt.Fprintln(os.Stdout)
 				return nil
 			}
@@ -320,8 +320,8 @@ func readFastInputLine(ctx context.Context, reader *bufio.Reader) (string, error
 
 func (r *AgentConsole) startReadline() error {
 	for {
-		if err := r.ctx.Err(); err != nil {
-			return nil
+		if r.ctx.Err() != nil {
+			return nil //nolint:nilerr // context cancellation is clean shutdown
 		}
 
 		r.readlineActive.Store(true)
@@ -343,7 +343,7 @@ func (r *AgentConsole) startReadline() error {
 
 		done, err := r.handleInputLine(line)
 		if err != nil {
-			if errors.Is(err, context.Canceled) && r.ctx.Err() != nil {
+			if errors.Is(err, context.Canceled) && r.ctx.Err() != nil { //nolint:nilerr // clean shutdown
 				fmt.Fprintln(os.Stdout)
 				return nil
 			}

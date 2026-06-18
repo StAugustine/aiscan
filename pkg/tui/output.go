@@ -43,7 +43,7 @@ const (
 // ---------------------------------------------------------------------------
 
 // AgentOutput renders agent events and assistant content to the terminal. It is
-// safe for concurrent use: a sync.Mutex serialises HandleEvent, streamDelta,
+// safe for concurrent use: a sync.Mutex serializes HandleEvent, streamDelta,
 // and lifecycle methods so streaming tokens and bus events from different
 // goroutines never interleave output.
 type AgentOutput struct {
@@ -1208,7 +1208,7 @@ func terminalWidth() int {
 
 // trimRenderedMarkdownLineEnds strips trailing visible whitespace from each
 // line while preserving ANSI escape sequences that follow the last visible
-// character. This avoids the "invisible trailing spaces" artefact from glamour
+// character. This avoids the "invisible trailing spaces" artifact from glamour
 // padding without clobbering reset sequences that close styled spans.
 func trimRenderedMarkdownLineEnds(s string) string {
 	if s == "" {
