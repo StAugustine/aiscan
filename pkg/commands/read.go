@@ -3,16 +3,13 @@ package commands
 import (
 	"bufio"
 	"context"
-	"encoding/base64"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/chainreactors/aiscan/pkg/agent/truncate"
-
 )
 
 const (
@@ -289,16 +286,21 @@ func readImageFile(resolved, displayPath, mime string, size int64) (ToolResult, 
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(io.LimitReader(f, maxImageSize+1))
+	opt, err := optimizeImage(f, mime)
 	if err != nil {
-		return ToolResult{}, fmt.Errorf("read image: %w", err)
+		return ToolResult{}, fmt.Errorf("optimize image: %w", err)
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(data)
+	desc := fmt.Sprintf("Read image file [%s] (%d bytes)", opt.MimeType, len(opt.Base64Data)*3/4)
+	if opt.OrigW > 0 && (opt.OrigW != opt.FinalW || opt.OrigH != opt.FinalH) {
+		desc = fmt.Sprintf("Read image file [%s] (original %dx%d, resized to %dx%d)",
+			opt.MimeType, opt.OrigW, opt.OrigH, opt.FinalW, opt.FinalH)
+	}
+
 	return ToolResult{
 		Content: []ContentBlock{
-			TextBlock(fmt.Sprintf("Read image file [%s] (%d bytes)", mime, len(data))),
-			ImageBlock(mime, b64),
+			TextBlock(desc),
+			ImageBlock(opt.MimeType, opt.Base64Data),
 		},
 	}, nil
 }
