@@ -190,11 +190,11 @@ func TestTmuxCapturePaneIncremental(t *testing.T) {
 
 	tmux.Execute(context.Background(), []string{"new-session", "-d", "-s", "inc", "echo part1; sleep 1; echo part2"}, io.Discard)
 
-	// Poll until part1 appears in output
+	// Poll until part1 appears in output (use --full to avoid advancing incremental cursor)
 	deadline := time.After(3 * time.Second)
 	for {
 		var peekBuf strings.Builder
-		tmux.Execute(context.Background(), []string{"capture-pane", "-t", "inc"}, &peekBuf)
+		tmux.Execute(context.Background(), []string{"capture-pane", "-t", "inc", "--full"}, &peekBuf)
 		if strings.Contains(peekBuf.String(), "part1") {
 			break
 		}

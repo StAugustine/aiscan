@@ -6,7 +6,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/chainreactors/fingers v1.2.2-0.20260615064219-7e07a99c93e0
 	github.com/chainreactors/gogo/v2 v2.14.2-0.20260616122548-b8e5ed3b1b40
-	github.com/chainreactors/ioa v0.0.0-20260609170545-7ec2ed23664d
+	github.com/chainreactors/ioa v0.1.1-0.20260618070057-ec99736bed74
 	github.com/chainreactors/logs v0.0.0-20260508055944-c678762ed15c
 	github.com/chainreactors/neutron v0.0.0-20260615055126-a9bbe4fc3e95
 	github.com/chainreactors/parsers v0.0.0-20260608085142-3d2c51baa8fe
@@ -33,6 +33,7 @@ require (
 	github.com/reeflective/readline v1.1.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ysmood/gson v0.7.3
+	golang.org/x/image v0.42.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -266,7 +267,6 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa // indirect
-	golang.org/x/image v0.42.0 // indirect
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
@@ -281,7 +281,6 @@ require (
 )
 
 replace (
-	github.com/chainreactors/ioa => ../internet-of-agent
 	github.com/reeflective/console => github.com/chainreactors/malice-network/external/console v0.0.0-20260422184128-e856ed004d32
 	github.com/reeflective/readline => github.com/chainreactors/malice-network/external/readline v0.0.0-20260422184128-e856ed004d32
 )

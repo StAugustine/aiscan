@@ -126,6 +126,12 @@ func selectedEnvProvider(option *Option, lookup envLookup) string {
 	if option.BaseURL != "" {
 		return agent.InferProviderFromBaseURL(option.BaseURL)
 	}
+	if firstEnv(lookup, "ANTHROPIC_API_KEY") != "" {
+		return "anthropic"
+	}
+	if firstEnv(lookup, "OPENAI_API_KEY") != "" {
+		return "openai"
+	}
 	return ""
 }
 

@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.2.3 — Playwright 全面升级 + Provider 双协议简化 + TUI 流式渲染 + IOA 架构精简
+
+本版本包含 **Breaking Changes**。核心变更：Playwright 浏览器自动化对齐 microsoft/playwright-cli 接口，Provider 层简化为 openai/anthropic 双协议，TUI 流式 Markdown 渲染，移除 `--loop` 和 `checkpoint`/`loop` custom tool。
+
+### Breaking Changes
+
+- **`--loop` 移除**: 设置 `--ioa-url` 即自动启用 IOA worker 模式，不再需要单独的 `--loop` flag。迁移：`aiscan agent --loop --ioa-url http://... --space s1` → `aiscan agent --ioa-url http://... --space s1`
+- **`checkpoint`/`loop` tool 移除**: `checkpoint` 已迁移到 IOA protocol（`ioa_send checkpoint`），verify/sniper 子 agent 改用 `finish` tool + 结构化 status header；`loop` 不再作为 LLM custom tool 暴露，LoopScheduler 内部机制（`--heartbeat`）保留
+- **Provider 简化为双协议**: 移除 deepseek/groq/moonshot/ollama/openrouter 等独立 provider type，统一为 openai（OpenAI-compatible）和 anthropic 两种协议，通过 `--base-url` 指定实际端点
+- **`-q` 静默模式移除**: 被 `-v`/`-vv` 分级详细度替代
+
+### New Features
+
+**Playwright — 对齐 microsoft/playwright-cli 接口**
+
+- 新增 `cookie-list`/`cookie-get`/`cookie-set`/`cookie-delete`/`cookie-clear` 五个独立 cookie 命令
+- 新增 `storage-list`/`storage-get`/`storage-set`/`storage-delete`/`storage-clear` 覆盖 localStorage 和 sessionStorage 完整 CRUD
+- 新增 `console`：通过 `EvalOnNewDocument` JS 注入，从 session open 开始自动捕获 `console.log/warn/error`
+- 新增 `snapshot`：CDP `Accessibility.getFullAXTree` 获取可访问性树，支持 `--depth` 控制层级
+- 新增 `requests`/`request <index>`：session open 时自动启动网络捕获，列出全部请求或查看单条详情（headers、post data）
+- 新增 `route-list`、`state-save`/`state-load`、`dialog-accept`/`dialog-dismiss`
+- `open` 新增 `--headed`（GUI 窗口）和 `--cdp <endpoint>`（连接已有浏览器）
+- 移除 session GC/TTL 机制，session 持久存活直到 `close` 或进程退出，LRU 8 上限保留
+
+**图像优化 — LLM 视觉输入管线**
+
+- 截图自动优化：缩放至 2000×2000 以内，PNG vs JPEG 双编码取较小，渐进降质直到 base64 < 4.5MB
+- 非视觉模型自动降级：基于 provider type + model 名推断图像支持能力，不支持时替换为文字提示
+
+**TUI — 流式 Markdown 渲染 + 分级详细度**
+
+- 段落缓冲式 Markdown 渲染 + chroma 语法高亮（read tool 结果带行号）
+- `-v`/`-vv` 分级详细度：默认流式内容 + turn 统计；`-v` 显示 tool call 详情；`-vv` 显示 thinking content
+- 每个 turn 结束显示 `[turn N | tools=X | input=Y (+ Z cached) output=W | Ns]`
+- Agent 结束显示 `[agent STATUS | turns=N | input=Y (+ Z cached) output=W | Ns]`
+
+**Evaluator — Context Window 感知 + inherit_context**
+
+- 内置模型 context window 查询表（Claude/DeepSeek/GPT/Gemini/Qwen/Kimi），未匹配 fallback 128k
+- verdict 新增 `inherit_context`：evaluator LLM 决定下一轮是否继承对话历史，`false` 时 `agent.Reset()`
+- system prompt 明确阈值：>80% 必须 reset，>50% 建议 reset，<=50% 默认继承
+
+**IOA — Token Auth**
+
+- server 端 `--ioa-token` 设置访问密钥，client 端 `http://token@host:port` URL 格式自动认证
+- `ensureNode` 通过 `EnsureRegistered` type assertion 实现 auth-aware 节点注册
+
+### Bug Fixes
+
+- **Anthropic 兼容 API**: 第三方端点（如 DeepSeek `/anthropic`）不识别 `type: "custom"` tool 类型返回 400。改为仅在 `anthropic.com` 端点发送该字段，第三方省略
+- **环境变量 provider 推断**: 仅设 `OPENAI_API_KEY` 或 `ANTHROPIC_API_KEY` 时未自动推断 provider，导致 env alias 失效。修复：从 API key env var 存在性推断 provider
+- **tmux 增量读取**: `capture-pane` poll 循环意外推进增量游标，导致 `--new` 读取为空。修复：poll 改用 `--full`
+- **evaluator 历史丢失**: evaluator 仅收到当轮消息，重试时丢失前几轮 context。改为传入完整 transcript
+- **非视觉模型图像拒绝**: 不支持 multimodal 的 provider 收到 `image_url` 返回 400。新增 per-provider 图像支持推断 + strip
+
+---
+
 ## v0.2.2 (2026-06-16)
 
 新增 goal evaluation 闭环机制——独立 LLM 评估 agent 任务完成度并自动注入反馈驱动重试；内嵌 katana 爬虫引擎支持 headless 浏览器；新增多 provider 容错降级链；重构 TUI/REPL 为统一 pkg/tui 模块；大幅整理包结构，aiscan 专用包从 pkg/ 移入 core/。

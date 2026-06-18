@@ -142,8 +142,8 @@ func TestParseCLIAgentAcceptsLLMFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if resolved.Provider != "deepseek" {
-		t.Fatalf("resolved provider = %q, want deepseek", resolved.Provider)
+	if resolved.Provider != "openai" {
+		t.Fatalf("resolved provider = %q, want openai (DeepSeek uses OpenAI-compatible protocol)", resolved.Provider)
 	}
 }
 
@@ -176,8 +176,8 @@ func TestParseCLIScanExtractsLLMFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if resolved.Provider != "deepseek" {
-		t.Fatalf("resolved provider = %q, want deepseek", resolved.Provider)
+	if resolved.Provider != "openai" {
+		t.Fatalf("resolved provider = %q, want openai (DeepSeek uses OpenAI-compatible protocol)", resolved.Provider)
 	}
 }
 
