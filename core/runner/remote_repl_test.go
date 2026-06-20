@@ -9,8 +9,8 @@ import (
 	cfg "github.com/chainreactors/aiscan/core/config"
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
 	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/remotepty"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
+	"github.com/chainreactors/utils/pty"
 )
 
 func TestRemoteREPLOpenerUsesRuntimeManagerWithoutProvider(t *testing.T) {
@@ -32,34 +32,34 @@ func TestRemoteREPLOpenerUsesRuntimeManagerWithoutProvider(t *testing.T) {
 		t.Fatal("pty manager unavailable")
 	}
 
-	messages := make(chan remotepty.Frame, 64)
-	router := remotepty.NewRouter(mgr, remotepty.WithOpener("repl", NewRemoteREPLOpener(rt, mgr)))
+	messages := make(chan pty.Frame, 64)
+	router := pty.NewRouter(mgr, pty.WithOpener("repl", NewRemoteREPLOpener(rt, mgr)))
 	defer router.Close()
 
-	router.Handle(ctx, remotepty.Frame{
-		Type:     remotepty.FrameOpen,
+	router.Handle(ctx, pty.Frame{
+		Type:     pty.FrameOpen,
 		StreamID: "term-repl",
 		Kind:     "repl",
 		Name:     "remote-repl-test",
-	}, func(frame remotepty.Frame) { messages <- frame })
-	waitForFrame(t, messages, time.Second, func(frame remotepty.Frame) bool {
-		if frame.Type == remotepty.FrameError {
+	}, func(frame pty.Frame) { messages <- frame })
+	waitForFrame(t, messages, time.Second, func(frame pty.Frame) bool {
+		if frame.Type == pty.FrameError {
 			t.Fatalf("unexpected pty error: %s", frame.Error)
 		}
-		return frame.Type == remotepty.FrameOpened
+		return frame.Type == pty.FrameOpened
 	})
 
-	router.Handle(ctx, remotepty.Frame{Type: remotepty.FrameInput, StreamID: "term-repl", Data: []byte("/status\r")}, func(frame remotepty.Frame) {
+	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("/status\r")}, func(frame pty.Frame) {
 		messages <- frame
 	})
-	waitForFrame(t, messages, 3*time.Second, func(frame remotepty.Frame) bool {
-		if frame.Type == remotepty.FrameError {
+	waitForFrame(t, messages, 3*time.Second, func(frame pty.Frame) bool {
+		if frame.Type == pty.FrameError {
 			t.Fatalf("unexpected pty error: %s", frame.Error)
 		}
-		return frame.Type == remotepty.FrameOutput && strings.Contains(string(frame.Data), "not configured")
+		return frame.Type == pty.FrameOutput && strings.Contains(string(frame.Data), "not configured")
 	})
 
-	router.Handle(ctx, remotepty.Frame{Type: remotepty.FrameInput, StreamID: "term-repl", Data: []byte("!tmux new-session -d -s webtask echo tmux_remote_ok\r")}, func(frame remotepty.Frame) {
+	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("!tmux new-session -d -s webtask echo tmux_remote_ok\r")}, func(frame pty.Frame) {
 		messages <- frame
 	})
 	waitForCondition(t, 3*time.Second, func() bool {
@@ -100,7 +100,7 @@ func waitForCondition(t *testing.T, timeout time.Duration, predicate func() bool
 	}
 }
 
-func waitForFrame(t *testing.T, ch <-chan remotepty.Frame, timeout time.Duration, match func(remotepty.Frame) bool) remotepty.Frame {
+func waitForFrame(t *testing.T, ch <-chan pty.Frame, timeout time.Duration, match func(pty.Frame) bool) pty.Frame {
 	t.Helper()
 	deadline := time.After(timeout)
 	for {
@@ -111,7 +111,7 @@ func waitForFrame(t *testing.T, ch <-chan remotepty.Frame, timeout time.Duration
 			}
 		case <-deadline:
 			t.Fatalf("timeout waiting for matching frame")
-			return remotepty.Frame{}
+			return pty.Frame{}
 		}
 	}
 }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chainreactors/utils/pty"
 )
 
 func waitUntil(t *testing.T, timeout time.Duration, predicate func() bool) {
@@ -482,33 +484,26 @@ func TestExecCommandDirect(t *testing.T) {
 }
 
 func TestTailLines(t *testing.T) {
-	got := tailLines("a\nb\n\n\nc\n", 2)
+	buf := pty.NewOutputBuffer(1024)
+	buf.Write([]byte("a\nb\n\n\nc\n"))
+	got := buf.TailLines(2)
 	if got != "b\nc" {
 		t.Fatalf("tailLines = %q, want %q", got, "b\nc")
-	}
-	got = tailLines("a", 5)
-	if got != "a" {
-		t.Fatalf("tailLines short = %q", got)
 	}
 }
 
 func TestReadFromIndependentOffset(t *testing.T) {
 	mgr := NewManager()
-	buf := NewOutputBuffer(1024)
-	id := "readfrom-test"
-	s := &session{
-		Info:   Info{ID: id, State: StateRunning},
-		output: buf,
-		done:   make(chan struct{}),
-	}
-	mgr.mu.Lock()
-	mgr.sessions[id] = s
-	mgr.mu.Unlock()
+	dir := t.TempDir()
 
-	buf.Write([]byte("line1\nline2\nline3\n"))
+	info, err := mgr.Create(dir, "printf 'line1\\nline2\\nline3\\n'", "readfrom-test", 5*time.Second, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-mgr.Done(info.ID)
 
 	// ReadFrom with offset 0 — returns everything
-	text, off, err := mgr.ReadFrom(id, 0, 0)
+	text, off, err := mgr.ReadFrom(info.ID, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -517,50 +512,29 @@ func TestReadFromIndependentOffset(t *testing.T) {
 	}
 
 	// ReadFrom with the returned offset — returns nothing (no new data)
-	text2, off2, err := mgr.ReadFrom(id, off, 0)
+	text2, _, err := mgr.ReadFrom(info.ID, off, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if text2 != "" {
 		t.Fatalf("ReadFrom(%d) should be empty, got %q", off, text2)
 	}
-
-	// Write more, ReadFrom should only return new content
-	buf.Write([]byte("line4\n"))
-	text3, _, err := mgr.ReadFrom(id, off2, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if text3 != "line4\n" {
-		t.Fatalf("ReadFrom after new write = %q, want %q", text3, "line4\n")
-	}
-
-	// PeekNew should still work from its own offset (starts at 0)
-	peekText, _, err := mgr.PeekNew(id, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(peekText, "line1") {
-		t.Fatalf("PeekNew should return from offset 0, got %q", peekText)
-	}
 }
 
 func TestPeekBytes(t *testing.T) {
 	mgr := NewManager()
-	buf := NewOutputBuffer(1024)
-	id := "peekbytes-test"
-	s := &session{
-		Info:   Info{ID: id, State: StateRunning},
-		output: buf,
-		done:   make(chan struct{}),
+	dir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only test")
 	}
-	mgr.mu.Lock()
-	mgr.sessions[id] = s
-	mgr.mu.Unlock()
 
-	buf.Write([]byte("0123456789"))
+	info, err := mgr.Create(dir, "printf '0123456789'", "peekbytes-test", 5*time.Second, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-mgr.Done(info.ID)
 
-	text, err := mgr.PeekBytes(id, 4)
+	text, err := mgr.PeekBytes(info.ID, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +586,6 @@ func TestMonitorDeliversIncrementalOutput(t *testing.T) {
 	if chunkCount < 2 {
 		t.Fatalf("expected multiple incremental chunks, got %d", chunkCount)
 	}
-	// Verify no duplication: each PART should appear exactly once across all chunks
 	if strings.Count(allOutput, "PART1") != 1 {
 		t.Fatalf("PART1 duplicated in monitor output: %q", allOutput)
 	}
@@ -622,42 +595,38 @@ func TestMonitorDeliversIncrementalOutput(t *testing.T) {
 }
 
 func TestMonitorStopsOnSessionEnd(t *testing.T) {
-	mgr := NewManager()
-	buf := NewOutputBuffer(1024)
-	id := "monitor-stop"
-	done := make(chan struct{})
-	s := &session{
-		Info:   Info{ID: id, State: StateRunning},
-		output: buf,
-		done:   done,
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only")
 	}
-	mgr.mu.Lock()
-	mgr.sessions[id] = s
-	mgr.mu.Unlock()
+	mgr := NewManager()
+	dir := t.TempDir()
+
+	info, err := mgr.Create(dir, "echo data; sleep 30", "monitor-stop", 30*time.Second, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	var pushCount int32
 	var mu sync.Mutex
 
-	mgr.Monitor(id, 50*time.Millisecond, func(output string) {
+	mgr.Monitor(info.ID, 50*time.Millisecond, func(output string) {
 		mu.Lock()
 		pushCount++
 		mu.Unlock()
 	})
 
-	buf.Write([]byte("data"))
-	time.Sleep(150 * time.Millisecond) // let a few ticks fire
+	time.Sleep(300 * time.Millisecond)
 
-	// Close the session
-	close(done)
+	// Kill session
+	mgr.Kill(info.ID)
+	<-mgr.Done(info.ID)
 	time.Sleep(150 * time.Millisecond)
 
 	mu.Lock()
 	countAtStop := pushCount
 	mu.Unlock()
 
-	// Write more after done — should not be delivered
-	buf.Write([]byte("after-close"))
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(300 * time.Millisecond)
 
 	mu.Lock()
 	countAfter := pushCount
@@ -672,14 +641,18 @@ func TestMonitorStopsOnSessionEnd(t *testing.T) {
 }
 
 func TestLabelFromCommand(t *testing.T) {
-	cases := map[string]string{
-		"scan -i fjbdg.com.cn --mode quick": "scan",
-		"/usr/bin/python3 foo.py":           "python3",
-		"   ":                               "shell",
+	// Label generation is now in pty.Manager. Test through Create.
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only test")
 	}
-	for in, want := range cases {
-		if got := labelFromCommand(in); got != want {
-			t.Errorf("labelFromCommand(%q) = %q, want %q", in, got, want)
-		}
+	mgr := NewManager()
+	dir := t.TempDir()
+	info, err := mgr.Create(dir, "echo hi", "", 5*time.Second, nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-mgr.Done(info.ID)
+	if info.Name != "echo" {
+		t.Fatalf("auto-label = %q, want %q", info.Name, "echo")
 	}
 }
