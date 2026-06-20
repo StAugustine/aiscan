@@ -38,3 +38,11 @@ func ShellCommand(cmdLine string) *exec.Cmd {
 	}
 	return exec.Command(shell(), "-c", cmdLine)
 }
+
+// DefaultShellCommand returns the binary and args for an interactive shell.
+func DefaultShellCommand() (string, []string) {
+	if runtime.GOOS == "windows" {
+		return "cmd", nil
+	}
+	return shell(), nil
+}

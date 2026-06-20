@@ -134,6 +134,25 @@ func (b *OutputBuffer) TailBytes(n int) string {
 	return string(b.buf[len(b.buf)-n:])
 }
 
+func (b *OutputBuffer) TailBytesWithOffset(n int) (string, int64) {
+	data, offset := b.TailRawBytesWithOffset(n)
+	return string(data), offset
+}
+
+func (b *OutputBuffer) TailRawBytesWithOffset(n int) ([]byte, int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	end := b.baseOffset + int64(len(b.buf))
+	if n <= 0 || n >= len(b.buf) {
+		out := make([]byte, len(b.buf))
+		copy(out, b.buf)
+		return out, end
+	}
+	out := make([]byte, n)
+	copy(out, b.buf[len(b.buf)-n:])
+	return out, end
+}
+
 func (b *OutputBuffer) AppendError(msg string) {
 	_, _ = b.Write([]byte("\n[task error] " + msg + "\n"))
 }

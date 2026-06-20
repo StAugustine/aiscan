@@ -4,27 +4,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/chainreactors/aiscan/core/output"
+	"github.com/chainreactors/aiscan/pkg/webproto"
 	"github.com/gorilla/websocket"
 )
 
 // WSMessage is the single message type for all agent↔web communication.
-type WSMessage struct {
-	Type    string          `json:"type"`
-	TaskID  string          `json:"task_id,omitempty"`
-	Data    string          `json:"data,omitempty"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-}
+type WSMessage = webproto.Message
 
 // AgentInfo is the public view of a connected agent.
 type AgentInfo struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Commands  []string  `json:"commands,omitempty"`
-	Busy      bool      `json:"busy"`
-	ConnectAt time.Time `json:"connected_at"`
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Commands  []string               `json:"commands,omitempty"`
+	Busy      bool                   `json:"busy"`
+	ConnectAt time.Time              `json:"connected_at"`
+	Identity  webproto.AgentIdentity `json:"identity,omitempty"`
+	Stats     webproto.AgentStats    `json:"stats,omitempty"`
 }
 
 type taskResult struct {
@@ -40,6 +40,8 @@ type remoteAgent struct {
 	conn      *websocket.Conn
 	sendCh    chan WSMessage
 	connectAt time.Time
+	identity  webproto.AgentIdentity
+	stats     webproto.AgentStats
 
 	mu    sync.Mutex
 	tasks map[string]chan taskResult
@@ -55,20 +57,25 @@ func (a *remoteAgent) info() AgentInfo {
 		Commands:  a.commands,
 		Busy:      len(a.tasks) > 0,
 		ConnectAt: a.connectAt,
+		Identity:  a.identity,
+		Stats:     a.stats,
 	}
 }
 
 // AgentPool manages connected remote aiscan agents via WebSocket.
 type AgentPool struct {
-	mu     sync.RWMutex
-	agents map[string]*remoteAgent
-	hub    *Hub
+	mu      sync.RWMutex
+	agents  map[string]*remoteAgent
+	hub     *Hub
+	ptyMu   sync.RWMutex
+	ptySubs map[string]chan WSMessage
 }
 
 func NewAgentPool(hub *Hub) *AgentPool {
 	return &AgentPool{
-		agents: make(map[string]*remoteAgent),
-		hub:    hub,
+		agents:  make(map[string]*remoteAgent),
+		hub:     hub,
+		ptySubs: make(map[string]chan WSMessage),
 	}
 }
 
@@ -157,6 +164,19 @@ func (p *AgentPool) DispatchCommand(agentID, taskID, command string) (<-chan tas
 	return ch, nil
 }
 
+func (p *AgentPool) SendAgentMessage(agentID string, msg WSMessage) error {
+	a := p.get(agentID)
+	if a == nil {
+		return fmt.Errorf("agent %s not connected", agentID)
+	}
+	select {
+	case a.sendCh <- msg:
+		return nil
+	default:
+		return fmt.Errorf("agent %s send channel full", agentID)
+	}
+}
+
 func (p *AgentPool) CancelTask(agentID, taskID string) {
 	a := p.get(agentID)
 	if a == nil {
@@ -166,6 +186,119 @@ func (p *AgentPool) CancelTask(agentID, taskID string) {
 	case a.sendCh <- WSMessage{Type: "cancel", TaskID: taskID}:
 	default:
 	}
+}
+
+// HandleTerminalWS bridges one browser terminal WebSocket to one remote agent.
+// The browser sends pty.* messages; the pool assigns a stream_id and relays
+// matching agent responses back.
+func (p *AgentPool) HandleTerminalWS(agentID string, w http.ResponseWriter, r *http.Request) {
+	if p.get(agentID) == nil {
+		writeError(w, http.StatusNotFound, "agent not connected")
+		return
+	}
+
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	terminalID := generateID()
+	events, unsubscribe := p.subscribePTY(terminalID)
+	defer unsubscribe()
+	defer p.CloseTerminal(agentID, terminalID)
+
+	done := make(chan struct{})
+	defer close(done)
+
+	var writeMu sync.Mutex
+	write := func(msg WSMessage) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteJSON(msg)
+	}
+
+	go func() {
+		for {
+			select {
+			case msg, ok := <-events:
+				if !ok {
+					return
+				}
+				_ = write(msg)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	for {
+		var msg WSMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		if !isTerminalMessage(msg.Type) {
+			_ = write(WSMessage{Type: "pty.error", StreamID: terminalID, Data: "unsupported terminal message"})
+			continue
+		}
+		msg.StreamID = terminalID
+		msg.TaskID = ""
+		if err := p.SendAgentMessage(agentID, msg); err != nil {
+			_ = write(WSMessage{Type: "pty.error", StreamID: terminalID, Data: err.Error()})
+			return
+		}
+	}
+}
+
+func (p *AgentPool) CancelPTY(agentID, terminalID string) {
+	_ = p.SendAgentMessage(agentID, WSMessage{Type: "pty.kill", StreamID: terminalID})
+}
+
+func (p *AgentPool) CloseTerminal(agentID, terminalID string) {
+	_ = p.SendAgentMessage(agentID, WSMessage{Type: "pty.detach", StreamID: terminalID})
+}
+
+func isTerminalMessage(msgType string) bool {
+	return strings.HasPrefix(msgType, "pty.")
+}
+
+func (p *AgentPool) subscribePTY(terminalID string) (<-chan WSMessage, func()) {
+	ch := make(chan WSMessage, 64)
+	p.ptyMu.Lock()
+	p.ptySubs[terminalID] = ch
+	p.ptyMu.Unlock()
+	return ch, func() {
+		p.ptyMu.Lock()
+		if p.ptySubs[terminalID] == ch {
+			delete(p.ptySubs, terminalID)
+			close(ch)
+		}
+		p.ptyMu.Unlock()
+	}
+}
+
+func (p *AgentPool) forwardPTYMessage(msg WSMessage) bool {
+	if !isTerminalMessage(msg.Type) || msg.StreamID == "" {
+		return false
+	}
+	p.ptyMu.RLock()
+	ch := p.ptySubs[msg.StreamID]
+	if ch != nil {
+		select {
+		case ch <- msg:
+		default:
+			select {
+			case <-ch:
+			default:
+			}
+			select {
+			case ch <- msg:
+			default:
+			}
+		}
+	}
+	p.ptyMu.RUnlock()
+	return ch != nil
 }
 
 // --- WebSocket handler ---
@@ -188,10 +321,7 @@ func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 		return
 	}
-	var info struct {
-		Name     string   `json:"name"`
-		Commands []string `json:"commands"`
-	}
+	var info webproto.RegisterPayload
 	if reg.Payload != nil {
 		_ = json.Unmarshal(reg.Payload, &info)
 	}
@@ -206,6 +336,8 @@ func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
 		conn:      conn,
 		sendCh:    make(chan WSMessage, 32),
 		connectAt: time.Now(),
+		identity:  info.Identity,
+		stats:     info.Stats,
 		tasks:     make(map[string]chan taskResult),
 		done:      make(chan struct{}),
 	}
@@ -254,7 +386,19 @@ func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
+	if p.forwardPTYMessage(msg) {
+		return
+	}
+
 	switch msg.Type {
+	case "agent.stats":
+		var stats webproto.AgentStats
+		if len(msg.Payload) > 0 && json.Unmarshal(msg.Payload, &stats) == nil {
+			a.mu.Lock()
+			a.stats = stats
+			a.mu.Unlock()
+		}
+
 	case "output":
 		if p.hub != nil && msg.TaskID != "" {
 			data := stripANSI(msg.Data)
@@ -279,6 +423,7 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 			ch <- res
 			close(ch)
 		}
+		p.recordScanResultStats(a, msg.Payload)
 
 	case "error":
 		a.mu.Lock()
@@ -303,6 +448,24 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 			p.hub.Broadcast(msg.TaskID, HubEvent{Type: "progress", Data: raw})
 		}
 	}
+}
+
+func (p *AgentPool) recordScanResultStats(a *remoteAgent, payload json.RawMessage) {
+	if a == nil || len(payload) == 0 {
+		return
+	}
+	var result output.Result
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return
+	}
+	a.mu.Lock()
+	a.stats.Assets += len(result.Assets)
+	if result.Summary.Loots > 0 {
+		a.stats.Loots += result.Summary.Loots
+	} else {
+		a.stats.Loots += len(result.Loots)
+	}
+	a.mu.Unlock()
 }
 
 func formatTelemetryProgress(msg WSMessage) string {
