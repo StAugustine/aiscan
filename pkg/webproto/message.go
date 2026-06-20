@@ -8,7 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
-	"github.com/chainreactors/aiscan/pkg/remotepty"
+	"github.com/chainreactors/utils/pty"
 )
 
 type Message struct {
@@ -76,26 +76,26 @@ type PTYPayload struct {
 	Sessions  []tmux.Info `json:"sessions,omitempty"`
 }
 
-func MessageToFrame(msg Message) (remotepty.Frame, error) {
+func MessageToFrame(msg Message) (pty.Frame, error) {
 	frameType, ok := frameTypeFromMessage(msg.Type)
 	if !ok {
-		return remotepty.Frame{}, fmt.Errorf("unsupported pty message: %s", msg.Type)
+		return pty.Frame{}, fmt.Errorf("unsupported pty message: %s", msg.Type)
 	}
 	payload, err := DecodePTYPayload(msg.Payload)
 	if err != nil {
-		return remotepty.Frame{}, err
+		return pty.Frame{}, err
 	}
 	data, err := decodeData(payload.Data, payload.DataB64)
 	if err != nil {
-		return remotepty.Frame{}, err
+		return pty.Frame{}, err
 	}
 	if len(data) == 0 {
 		data, err = decodeData(msg.Data, msg.DataB64)
 		if err != nil {
-			return remotepty.Frame{}, err
+			return pty.Frame{}, err
 		}
 	}
-	frame := remotepty.Frame{
+	frame := pty.Frame{
 		Type:      frameType,
 		StreamID:  msg.StreamID,
 		SessionID: payload.SessionID,
@@ -125,14 +125,14 @@ func MessageToFrame(msg Message) (remotepty.Frame, error) {
 	return frame, nil
 }
 
-func FrameToMessage(frame remotepty.Frame) Message {
+func FrameToMessage(frame pty.Frame) Message {
 	msg := Message{
 		Type:     messageTypeFromFrame(frame.Type),
 		StreamID: frame.StreamID,
 	}
 	switch frame.Type {
-	case remotepty.FrameOpen, remotepty.FrameAttach, remotepty.FrameInput, remotepty.FrameResize,
-		remotepty.FrameDetach, remotepty.FrameKill, remotepty.FrameList:
+	case pty.FrameOpen, pty.FrameAttach, pty.FrameInput, pty.FrameResize,
+		pty.FrameDetach, pty.FrameKill, pty.FrameList:
 		payload := PTYPayload{
 			SessionID: frame.SessionID,
 			Command:   frame.Command,
@@ -146,15 +146,15 @@ func FrameToMessage(frame remotepty.Frame) Message {
 		}
 		encodePayloadData(&payload, frame.Data)
 		msg.Payload = mustMarshal(payload)
-	case remotepty.FrameOutput:
+	case pty.FrameOutput:
 		encodeMessageData(&msg, frame.Data)
-	case remotepty.FrameError:
+	case pty.FrameError:
 		if frame.Error != "" {
 			msg.Data = frame.Error
 		} else {
 			msg.Data = string(frame.Data)
 		}
-	case remotepty.FrameOpened:
+	case pty.FrameOpened:
 		msg.Payload = mustMarshal(map[string]any{
 			"session_id": frame.SessionID,
 			"kind":       frame.Kind,
@@ -162,16 +162,16 @@ func FrameToMessage(frame remotepty.Frame) Message {
 			"pid":        sessionPID(frame),
 			"session":    frame.Session,
 		})
-	case remotepty.FrameAttached:
+	case pty.FrameAttached:
 		msg.Payload = mustMarshal(map[string]any{
 			"session_id": frame.SessionID,
 			"session":    frame.Session,
 		})
-	case remotepty.FrameDetached:
+	case pty.FrameDetached:
 		msg.Payload = mustMarshal(map[string]any{"session_id": frame.SessionID})
-	case remotepty.FrameSessions:
+	case pty.FrameSessions:
 		msg.Payload = mustMarshal(map[string]any{"sessions": frame.Sessions})
-	case remotepty.FrameClosed:
+	case pty.FrameClosed:
 		msg.Payload = mustMarshal(map[string]any{
 			"session_id": frame.SessionID,
 			"state":      frame.State,
@@ -192,46 +192,46 @@ func DecodePTYPayload(raw json.RawMessage) (PTYPayload, error) {
 	return payload, nil
 }
 
-func messageTypeFromFrame(frameType remotepty.FrameType) string {
+func messageTypeFromFrame(frameType pty.FrameType) string {
 	if frameType == "" {
 		return ""
 	}
 	return "pty." + string(frameType)
 }
 
-func frameTypeFromMessage(msgType string) (remotepty.FrameType, bool) {
+func frameTypeFromMessage(msgType string) (pty.FrameType, bool) {
 	if !strings.HasPrefix(msgType, "pty.") {
 		return "", false
 	}
 	switch strings.TrimPrefix(msgType, "pty.") {
-	case string(remotepty.FrameOpen):
-		return remotepty.FrameOpen, true
-	case string(remotepty.FrameOpened):
-		return remotepty.FrameOpened, true
-	case string(remotepty.FrameAttach):
-		return remotepty.FrameAttach, true
-	case string(remotepty.FrameAttached):
-		return remotepty.FrameAttached, true
-	case string(remotepty.FrameInput):
-		return remotepty.FrameInput, true
-	case string(remotepty.FrameOutput):
-		return remotepty.FrameOutput, true
-	case string(remotepty.FrameResize):
-		return remotepty.FrameResize, true
-	case string(remotepty.FrameDetach):
-		return remotepty.FrameDetach, true
-	case string(remotepty.FrameDetached):
-		return remotepty.FrameDetached, true
-	case string(remotepty.FrameKill):
-		return remotepty.FrameKill, true
-	case string(remotepty.FrameList):
-		return remotepty.FrameList, true
-	case string(remotepty.FrameSessions):
-		return remotepty.FrameSessions, true
-	case string(remotepty.FrameClosed):
-		return remotepty.FrameClosed, true
-	case string(remotepty.FrameError):
-		return remotepty.FrameError, true
+	case string(pty.FrameOpen):
+		return pty.FrameOpen, true
+	case string(pty.FrameOpened):
+		return pty.FrameOpened, true
+	case string(pty.FrameAttach):
+		return pty.FrameAttach, true
+	case string(pty.FrameAttached):
+		return pty.FrameAttached, true
+	case string(pty.FrameInput):
+		return pty.FrameInput, true
+	case string(pty.FrameOutput):
+		return pty.FrameOutput, true
+	case string(pty.FrameResize):
+		return pty.FrameResize, true
+	case string(pty.FrameDetach):
+		return pty.FrameDetach, true
+	case string(pty.FrameDetached):
+		return pty.FrameDetached, true
+	case string(pty.FrameKill):
+		return pty.FrameKill, true
+	case string(pty.FrameList):
+		return pty.FrameList, true
+	case string(pty.FrameSessions):
+		return pty.FrameSessions, true
+	case string(pty.FrameClosed):
+		return pty.FrameClosed, true
+	case string(pty.FrameError):
+		return pty.FrameError, true
 	default:
 		return "", false
 	}
@@ -278,7 +278,7 @@ func mustMarshal(v any) json.RawMessage {
 	return data
 }
 
-func sessionPID(frame remotepty.Frame) int {
+func sessionPID(frame pty.Frame) int {
 	if frame.Session == nil {
 		return 0
 	}

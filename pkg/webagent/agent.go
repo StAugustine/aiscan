@@ -21,7 +21,7 @@ import (
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
 	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/remotepty"
+	"github.com/chainreactors/utils/pty"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 	"github.com/gorilla/websocket"
@@ -232,7 +232,7 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 				send(webproto.Message{Type: "pty.error", StreamID: msg.StreamID, Data: err.Error()})
 				continue
 			}
-			ptyRouter.Handle(ctx, frame, func(out remotepty.Frame) {
+			ptyRouter.Handle(ctx, frame, func(out pty.Frame) {
 				send(webproto.FrameToMessage(out))
 			})
 			continue
@@ -266,13 +266,17 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 	}
 }
 
-func newPTYRouter(reg *commands.CommandRegistry, rt *runner.AgentRuntime) *remotepty.Router {
+func newPTYRouter(reg *commands.CommandRegistry, rt *runner.AgentRuntime) *pty.Router {
 	mgr := registryPTYManager(reg)
-	openers := remotepty.DefaultOpeners(mgr, remotepty.DefaultSessionTimeout, remotepty.DefaultEnv())
+	var baseMgr *pty.Manager
+	if mgr != nil {
+		baseMgr = mgr.Manager
+	}
+	openers := pty.DefaultOpeners(baseMgr, pty.DefaultSessionTimeout, pty.DefaultEnv())
 	if rt != nil {
 		openers["repl"] = runner.NewRemoteREPLOpener(rt, mgr)
 	}
-	return remotepty.NewRouter(mgr, remotepty.WithOpeners(openers))
+	return pty.NewRouter(baseMgr, pty.WithOpeners(openers))
 }
 
 func registryPTYManager(reg *commands.CommandRegistry) *tmux.Manager {
@@ -292,7 +296,7 @@ func registryPTYManager(reg *commands.CommandRegistry) *tmux.Manager {
 	return manager.Manager()
 }
 
-func subscribePTYSessions(ctx context.Context, mgr *tmux.Manager, router *remotepty.Router, send func(webproto.Message)) func() {
+func subscribePTYSessions(ctx context.Context, mgr *tmux.Manager, router *pty.Router, send func(webproto.Message)) func() {
 	if mgr == nil || router == nil || send == nil {
 		return func() {}
 	}
@@ -328,15 +332,15 @@ func subscribePTYSessions(ctx context.Context, mgr *tmux.Manager, router *remote
 	}
 }
 
-func broadcastPTYSessions(mgr *tmux.Manager, router *remotepty.Router, send func(webproto.Message)) {
+func broadcastPTYSessions(mgr *tmux.Manager, router *pty.Router, send func(webproto.Message)) {
 	streamIDs := router.StreamIDs()
 	if len(streamIDs) == 0 {
 		return
 	}
 	sessions := mgr.List()
 	for _, streamID := range streamIDs {
-		send(webproto.FrameToMessage(remotepty.Frame{
-			Type:     remotepty.FrameSessions,
+		send(webproto.FrameToMessage(pty.Frame{
+			Type:     pty.FrameSessions,
 			StreamID: streamID,
 			Sessions: sessions,
 		}))

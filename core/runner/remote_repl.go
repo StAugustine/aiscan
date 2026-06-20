@@ -8,18 +8,18 @@ import (
 	cfg "github.com/chainreactors/aiscan/core/config"
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
-	"github.com/chainreactors/aiscan/pkg/remotepty"
 	"github.com/chainreactors/aiscan/pkg/tui"
+	"github.com/chainreactors/utils/pty"
 	rlterm "github.com/reeflective/readline/terminal"
 )
 
-func NewRemoteREPLOpener(rt *AgentRuntime, mgr *tmux.Manager) remotepty.OpenFunc {
-	return func(ctx context.Context, spec remotepty.OpenSpec) (remotepty.OpenResult, error) {
+func NewRemoteREPLOpener(rt *AgentRuntime, mgr *tmux.Manager) pty.OpenFunc {
+	return func(ctx context.Context, spec pty.OpenSpec) (pty.OpenResult, error) {
 		if rt == nil || rt.App == nil {
-			return remotepty.OpenResult{}, fmt.Errorf("remote repl requires an agent runtime")
+			return pty.OpenResult{}, fmt.Errorf("remote repl requires an agent runtime")
 		}
 		if mgr == nil {
-			return remotepty.OpenResult{}, fmt.Errorf("pty manager unavailable")
+			return pty.OpenResult{}, fmt.Errorf("pty manager unavailable")
 		}
 		option := rt.Option
 		if option == nil {
@@ -42,15 +42,15 @@ func NewRemoteREPLOpener(rt *AgentRuntime, mgr *tmux.Manager) remotepty.OpenFunc
 			},
 		}
 		control := rlterm.NewControl(true, 80, 24)
-		info, err := mgr.CreateInteractiveFunc(ctx, spec.Name, "aiscan remote repl", remotepty.DefaultSessionTimeout, false, func(replCtx context.Context, input io.Reader, output io.Writer) error {
+		info, err := mgr.CreateInteractiveFunc(ctx, spec.Name, "aiscan remote repl", pty.DefaultSessionTimeout, false, func(replCtx context.Context, input io.Reader, output io.Writer) error {
 			return tui.RunRemoteAgentConsoleWithControl(replCtx, option, appInfo, session, input, output, control, rt.Bus)
 		})
 		if err != nil {
-			return remotepty.OpenResult{}, err
+			return pty.OpenResult{}, err
 		}
 		mgr.SetKind(info.ID, "repl")
 		info.Kind = "repl"
-		return remotepty.OpenResult{
+		return pty.OpenResult{
 			Info: info,
 			Resize: func(cols, rows int) {
 				control.SetSize(cols, rows)

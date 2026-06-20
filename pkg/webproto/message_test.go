@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
-	"github.com/chainreactors/aiscan/pkg/remotepty"
+	"github.com/chainreactors/utils/pty"
 )
 
 func TestPTYResponsePayloadRoundTripPreservesSessions(t *testing.T) {
 	info := tmux.Info{ID: "session-1", Kind: "repl", Name: "main-repl", State: tmux.StateRunning}
-	msg := FrameToMessage(remotepty.Frame{
-		Type:     remotepty.FrameSessions,
+	msg := FrameToMessage(pty.Frame{
+		Type:     pty.FrameSessions,
 		StreamID: "term-1",
 		Sessions: []tmux.Info{info},
 	})
@@ -36,8 +36,8 @@ func TestPTYResponsePayloadRoundTripPreservesSessions(t *testing.T) {
 
 func TestPTYResponsePayloadRoundTripPreservesAttachedSession(t *testing.T) {
 	info := tmux.Info{ID: "session-1", Kind: "repl", Name: "main-repl", State: tmux.StateRunning}
-	msg := FrameToMessage(remotepty.Frame{
-		Type:      remotepty.FrameAttached,
+	msg := FrameToMessage(pty.Frame{
+		Type:      pty.FrameAttached,
 		StreamID:  "term-1",
 		SessionID: info.ID,
 		Session:   &info,
