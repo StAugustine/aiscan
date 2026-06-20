@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chainreactors/aiscan/core/eventbus"
 )
 
 type State string
@@ -37,6 +39,7 @@ const (
 
 type Info struct {
 	ID        string    `json:"id"`
+	Kind      string    `json:"kind,omitempty"`
 	Name      string    `json:"name,omitempty"`
 	Command   string    `json:"command"`
 	PID       int       `json:"pid"`
@@ -47,21 +50,39 @@ type Info struct {
 	KillCause string    `json:"kill_cause,omitempty"`
 }
 
+type EventAction string
+
+const (
+	EventSessionCreated EventAction = "created"
+	EventSessionUpdated EventAction = "updated"
+	EventSessionOutput  EventAction = "output"
+	EventSessionClosed  EventAction = "closed"
+)
+
+type Event struct {
+	Action      EventAction `json:"action"`
+	Info        Info        `json:"info"`
+	OutputBytes int         `json:"output_bytes,omitempty"`
+}
+
 type session struct {
 	Info
-	cmd       *exec.Cmd          // nil for func sessions
-	output    *OutputBuffer
-	pty       *ptyHandle         // nil for func sessions
-	pumpDone  <-chan struct{}     // nil for func sessions
-	done      chan struct{}
-	peekOff   int64
-	cancel    context.CancelFunc // non-nil for func sessions
+	cmd        *exec.Cmd // nil for func sessions and platform-managed PTY sessions
+	output     *OutputBuffer
+	pty        *ptyHandle      // nil for func sessions
+	input      *io.PipeWriter  // non-nil for input-capable in-process sessions
+	pumpDone   <-chan struct{} // nil for func sessions
+	done       chan struct{}
+	peekOff    int64
+	cancel     context.CancelFunc // non-nil for func sessions
+	closeInput func(error)
 }
 
 type Manager struct {
 	mu       sync.Mutex
 	sessions map[string]*session
 	onDone   func(Info)
+	events   *eventbus.Bus[Event]
 	bufCap   int
 
 	commands func(name string) (Command, bool)
@@ -69,7 +90,20 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return &Manager{sessions: make(map[string]*session)}
+	return &Manager{sessions: make(map[string]*session), events: eventbus.New[Event]()}
+}
+
+func (m *Manager) Subscribe(fn func(Event)) func() {
+	if fn == nil {
+		return func() {}
+	}
+	m.mu.Lock()
+	if m.events == nil {
+		m.events = eventbus.New[Event]()
+	}
+	events := m.events
+	m.mu.Unlock()
+	return events.Subscribe(fn)
 }
 
 func (m *Manager) SetOnDone(fn func(Info)) {
@@ -190,6 +224,16 @@ func stripCommentsAndBlanks(input string) string {
 
 // Create starts a shell command in a PTY session.
 func (m *Manager) Create(workDir, cmdLine, name string, timeout time.Duration, env []string, outputFile string) (Info, error) {
+	return m.create(workDir, cmdLine, name, timeout, env, outputFile, true)
+}
+
+// CreateRaw starts a shell command in a PTY session and preserves terminal
+// control bytes in captured output. Use this for remote terminal attach.
+func (m *Manager) CreateRaw(workDir, cmdLine, name string, timeout time.Duration, env []string, outputFile string) (Info, error) {
+	return m.create(workDir, cmdLine, name, timeout, env, outputFile, false)
+}
+
+func (m *Manager) create(workDir, cmdLine, name string, timeout time.Duration, env []string, outputFile string, stripANSI bool) (Info, error) {
 	if strings.TrimSpace(cmdLine) == "" {
 		return Info{}, errors.New("empty command")
 	}
@@ -198,7 +242,7 @@ func (m *Manager) Create(workDir, cmdLine, name string, timeout time.Duration, e
 	if len(env) > 0 {
 		c.Env = mergeEnv(os.Environ(), env)
 	}
-	return m.start(c, cmdLine, name, timeout, outputFile)
+	return m.start(c, cmdLine, name, timeout, outputFile, stripANSI)
 }
 
 // CreateFunc starts a goroutine-based session. The function fn runs in a
@@ -218,7 +262,7 @@ func (m *Manager) CreateFunc(parentCtx context.Context, name string, timeout tim
 		return Info{}, err
 	}
 
-	buf, err := m.newBuffer("")
+	buf, err := m.newBuffer("", true)
 	if err != nil {
 		return Info{}, err
 	}
@@ -230,6 +274,7 @@ func (m *Manager) CreateFunc(parentCtx context.Context, name string, timeout tim
 
 	info := Info{
 		ID:        id,
+		Kind:      "task",
 		Name:      name,
 		Command:   name,
 		StartedAt: time.Now(),
@@ -240,8 +285,69 @@ func (m *Manager) CreateFunc(parentCtx context.Context, name string, timeout tim
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
+	m.watchOutput(s)
+	m.emit(Event{Action: EventSessionCreated, Info: info})
 
 	go m.superviseFunc(s, ctx, fn)
+	return info, nil
+}
+
+// CreateInteractiveFunc starts an in-process session that accepts input through
+// Manager.Write and captures output in the same buffer used by PTY sessions.
+func (m *Manager) CreateInteractiveFunc(parentCtx context.Context, name, command string, timeout time.Duration, stripANSI bool, fn func(ctx context.Context, r io.Reader, w io.Writer) error) (Info, error) {
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	if name == "" {
+		name = "interactive"
+	}
+	if command == "" {
+		command = name
+	}
+
+	id, err := genID()
+	if err != nil {
+		return Info{}, err
+	}
+
+	buf, err := m.newBuffer("", stripANSI)
+	if err != nil {
+		return Info{}, err
+	}
+
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, timeout)
+	pr, pw := io.Pipe()
+
+	info := Info{
+		ID:        id,
+		Kind:      "task",
+		Name:      name,
+		Command:   command,
+		StartedAt: time.Now(),
+		State:     StateRunning,
+	}
+	s := &session{
+		Info:   info,
+		output: buf,
+		input:  pw,
+		done:   make(chan struct{}),
+		cancel: cancel,
+		closeInput: func(err error) {
+			_ = pr.CloseWithError(err)
+			_ = pw.CloseWithError(err)
+		},
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+	m.watchOutput(s)
+	m.emit(Event{Action: EventSessionCreated, Info: info})
+
+	go m.superviseInteractiveFunc(s, ctx, pr, fn)
 	return info, nil
 }
 
@@ -258,20 +364,59 @@ func (m *Manager) superviseFunc(s *session, ctx context.Context, fn func(context
 		fnErr = fn(ctx, s.output)
 	}()
 
+	m.finishSession(s, fnErr, false)
+}
+
+func (m *Manager) superviseInteractiveFunc(s *session, ctx context.Context, r io.Reader, fn func(context.Context, io.Reader, io.Writer) error) {
+	defer s.cancel()
+
+	if closer, ok := r.(interface{ CloseWithError(error) error }); ok {
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = closer.CloseWithError(ctx.Err())
+			case <-done:
+			}
+		}()
+		defer close(done)
+	}
+
+	var fnErr error
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				fnErr = fmt.Errorf("panic: %v\n%s", recovered, debug.Stack())
+			}
+		}()
+		fnErr = fn(ctx, r, s.output)
+	}()
+
+	if s.closeInput != nil {
+		s.closeInput(io.EOF)
+	}
+
+	m.finishSession(s, fnErr, true)
+}
+
+func (m *Manager) finishSession(s *session, fnErr error, eofIsSuccess bool) {
 	state, exitCode := StateCompleted, 0
 	killCause := ""
 
 	if fnErr != nil {
-		if errors.Is(fnErr, context.DeadlineExceeded) {
+		switch {
+		case errors.Is(fnErr, context.DeadlineExceeded):
 			state = StateKilled
 			killCause = "timeout"
-		} else if errors.Is(fnErr, context.Canceled) {
+		case errors.Is(fnErr, context.Canceled):
 			state = StateKilled
 			killCause = m.getKillCause(s)
 			if killCause == "" {
 				killCause = "canceled"
 			}
-		} else {
+		case eofIsSuccess && errors.Is(fnErr, io.EOF):
+			// clean exit
+		default:
 			state = StateFailed
 			exitCode = 1
 			s.output.AppendError(fnErr.Error())
@@ -288,6 +433,7 @@ func (m *Manager) superviseFunc(s *session, ctx context.Context, fn func(context
 
 	s.output.Close()
 	close(s.done)
+	m.emit(Event{Action: EventSessionClosed, Info: infoCopy})
 
 	m.mu.Lock()
 	onDone := m.onDone
@@ -300,13 +446,23 @@ func (m *Manager) superviseFunc(s *session, ctx context.Context, fn func(context
 
 // CreateCmd starts a command with explicit binary and args in a PTY session.
 func (m *Manager) CreateCmd(workDir, binary string, args []string, name string, timeout time.Duration, env []string, outputFile string) (Info, error) {
+	return m.createCmd(workDir, binary, args, name, timeout, env, outputFile, true)
+}
+
+// CreateCmdRaw starts a command with explicit binary and args in a PTY session
+// and preserves terminal control bytes in captured output.
+func (m *Manager) CreateCmdRaw(workDir, binary string, args []string, name string, timeout time.Duration, env []string, outputFile string) (Info, error) {
+	return m.createCmd(workDir, binary, args, name, timeout, env, outputFile, false)
+}
+
+func (m *Manager) createCmd(workDir, binary string, args []string, name string, timeout time.Duration, env []string, outputFile string, stripANSI bool) (Info, error) {
 	c := exec.Command(binary, args...)
 	c.Dir = workDir
 	if len(env) > 0 {
 		c.Env = mergeEnv(os.Environ(), env)
 	}
 	display := binary + " " + strings.Join(args, " ")
-	return m.start(c, display, name, timeout, outputFile)
+	return m.start(c, display, name, timeout, outputFile, stripANSI)
 }
 
 // mergeEnv merges override env vars into base, replacing any existing keys.
@@ -327,7 +483,7 @@ func mergeEnv(base, override []string) []string {
 	return append(result, override...)
 }
 
-func (m *Manager) start(c *exec.Cmd, cmdDisplay, name string, timeout time.Duration, outputFile string) (Info, error) {
+func (m *Manager) start(c *exec.Cmd, cmdDisplay, name string, timeout time.Duration, outputFile string, stripANSI bool) (Info, error) {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -340,7 +496,7 @@ func (m *Manager) start(c *exec.Cmd, cmdDisplay, name string, timeout time.Durat
 		return Info{}, err
 	}
 
-	buf, err := m.newBuffer(outputFile)
+	buf, err := m.newBuffer(outputFile, stripANSI)
 	if err != nil {
 		return Info{}, err
 	}
@@ -351,21 +507,24 @@ func (m *Manager) start(c *exec.Cmd, cmdDisplay, name string, timeout time.Durat
 		return Info{}, fmt.Errorf("start pty: %w", err)
 	}
 
-	pd := pumpOutput(p, buf)
-
 	info := Info{
 		ID:        id,
+		Kind:      "task",
 		Name:      name,
 		Command:   cmdDisplay,
-		PID:       c.Process.Pid,
+		PID:       p.PID(),
 		StartedAt: time.Now(),
 		State:     StateRunning,
 	}
-	s := &session{Info: info, cmd: c, output: buf, pty: p, pumpDone: pd, done: make(chan struct{})}
+	s := &session{Info: info, cmd: c, output: buf, pty: p, done: make(chan struct{})}
 
 	m.mu.Lock()
 	m.sessions[id] = s
 	m.mu.Unlock()
+	m.watchOutput(s)
+	m.emit(Event{Action: EventSessionCreated, Info: info})
+
+	s.pumpDone = pumpOutput(p, buf)
 
 	go m.supervise(s, timeout)
 	return info, nil
@@ -373,7 +532,7 @@ func (m *Manager) start(c *exec.Cmd, cmdDisplay, name string, timeout time.Durat
 
 func (m *Manager) supervise(s *session, timeout time.Duration) {
 	waitDone := make(chan error, 1)
-	go func() { waitDone <- s.cmd.Wait() }()
+	go func() { waitDone <- s.pty.Wait() }()
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -399,7 +558,7 @@ func (m *Manager) supervise(s *session, timeout time.Duration) {
 
 	state, exitCode := StateCompleted, 0
 	if waitErr != nil {
-		var exitErr *exec.ExitError
+		var exitErr interface{ ExitCode() int }
 		switch {
 		case errors.As(waitErr, &exitErr):
 			exitCode = exitErr.ExitCode()
@@ -433,6 +592,7 @@ func (m *Manager) supervise(s *session, timeout time.Duration) {
 
 	s.output.Close()
 	close(s.done)
+	m.emit(Event{Action: EventSessionClosed, Info: infoCopy})
 
 	m.mu.Lock()
 	fn := m.onDone
@@ -444,10 +604,10 @@ func (m *Manager) supervise(s *session, timeout time.Duration) {
 }
 
 func (m *Manager) forceKill(s *session) {
-	if s.cmd == nil || s.cmd.Process == nil {
+	if s.pty == nil {
 		return
 	}
-	_ = signalProcessGroup(s.cmd.Process.Pid, false)
+	_ = s.pty.Signal(false)
 	timer := time.NewTimer(killGrace)
 	defer timer.Stop()
 	select {
@@ -455,13 +615,14 @@ func (m *Manager) forceKill(s *session) {
 		return
 	case <-timer.C:
 	}
-	_ = signalProcessGroup(s.cmd.Process.Pid, true)
+	_ = s.pty.Signal(true)
 }
 
 func (m *Manager) Kill(id string) error {
 	m.mu.Lock()
 	s := m.resolve(id)
 	ok := s != nil
+	var infoCopy Info
 	if ok {
 		select {
 		case <-s.done:
@@ -469,11 +630,19 @@ func (m *Manager) Kill(id string) error {
 			if s.KillCause == "" {
 				s.KillCause = "killed by user"
 			}
+			infoCopy = s.Info
 		}
+	}
+	var closeInput func(error)
+	if ok {
+		closeInput = s.closeInput
 	}
 	m.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("no such session: %s", id)
+	}
+	if infoCopy.ID != "" {
+		m.emit(Event{Action: EventSessionUpdated, Info: infoCopy})
 	}
 	select {
 	case <-s.done:
@@ -482,6 +651,9 @@ func (m *Manager) Kill(id string) error {
 	}
 	if s.cancel != nil {
 		s.cancel()
+		if closeInput != nil {
+			closeInput(context.Canceled)
+		}
 		return nil
 	}
 	go m.forceKill(s)
@@ -504,8 +676,11 @@ func (m *Manager) Shutdown() {
 		m.setKillCause(s, "shutdown")
 		if s.cancel != nil {
 			s.cancel()
-		} else if s.cmd != nil && s.cmd.Process != nil {
-			_ = signalProcessGroup(s.cmd.Process.Pid, false)
+			if s.closeInput != nil {
+				s.closeInput(context.Canceled)
+			}
+		} else if s.pty != nil {
+			_ = s.pty.Signal(false)
 		}
 	}
 	deadline := time.After(killGrace)
@@ -513,8 +688,8 @@ func (m *Manager) Shutdown() {
 		select {
 		case <-s.done:
 		case <-deadline:
-			if s.cmd != nil && s.cmd.Process != nil {
-				_ = signalProcessGroup(s.cmd.Process.Pid, true)
+			if s.pty != nil {
+				_ = s.pty.Signal(true)
 			}
 		}
 	}
@@ -548,6 +723,22 @@ func (m *Manager) Get(id string) (Info, bool) {
 		return Info{}, false
 	}
 	return s.Info, true
+}
+
+func (m *Manager) SetKind(id, kind string) {
+	if kind == "" {
+		return
+	}
+	var infoCopy Info
+	m.mu.Lock()
+	if s := m.resolve(id); s != nil {
+		s.Kind = kind
+		infoCopy = s.Info
+	}
+	m.mu.Unlock()
+	if infoCopy.ID != "" {
+		m.emit(Event{Action: EventSessionUpdated, Info: infoCopy})
+	}
 }
 
 // resolve finds a session by ID first, then by name.
@@ -610,6 +801,28 @@ func (m *Manager) PeekBytes(id string, n int) (string, error) {
 	return s.output.TailBytes(n), nil
 }
 
+// SnapshotBytes returns the last n bytes and the current output offset.
+func (m *Manager) SnapshotBytes(id string, n int) ([]byte, int64, error) {
+	m.mu.Lock()
+	s := m.resolve(id)
+	m.mu.Unlock()
+	if s == nil {
+		return nil, 0, fmt.Errorf("no such session: %s", id)
+	}
+	data, offset := s.output.TailRawBytesWithOffset(n)
+	return data, offset, nil
+}
+
+func (m *Manager) OutputLen(id string) (int64, error) {
+	m.mu.Lock()
+	s := m.resolve(id)
+	m.mu.Unlock()
+	if s == nil {
+		return 0, fmt.Errorf("no such session: %s", id)
+	}
+	return s.output.Len(), nil
+}
+
 func (m *Manager) PeekOrEmpty(id string, n int) string {
 	s, _ := m.Peek(id, n)
 	return s
@@ -647,54 +860,79 @@ func (m *Manager) PeekNew(id string, maxBytes int64) (string, bool, error) {
 // ReadFrom reads output since the given offset without modifying session state.
 // The caller tracks the returned offset for subsequent calls.
 func (m *Manager) ReadFrom(id string, offset int64, maxBytes int64) (string, int64, error) {
-	m.mu.Lock()
-	s := m.resolve(id)
-	m.mu.Unlock()
-	if s == nil {
-		return "", 0, fmt.Errorf("no such session: %s", id)
-	}
-	if maxBytes <= 0 {
-		maxBytes = defaultPeekNewMax
-	}
-	data, newOff, _, err := s.output.ReadSinceLimit(offset, maxBytes)
+	data, newOff, err := m.ReadBytesFrom(id, offset, maxBytes)
 	if err != nil {
 		return "", offset, err
 	}
 	return string(data), newOff, nil
 }
 
-// Monitor starts a goroutine that periodically reads incremental output
-// and calls push with new content. Stops automatically when the session ends.
-func (m *Manager) Monitor(id string, interval time.Duration, push func(output string)) {
+// ReadBytesFrom reads output bytes since the given offset without modifying
+// session state. The caller tracks the returned offset for subsequent calls.
+func (m *Manager) ReadBytesFrom(id string, offset int64, maxBytes int64) ([]byte, int64, error) {
 	m.mu.Lock()
 	s := m.resolve(id)
 	m.mu.Unlock()
 	if s == nil {
-		return
+		return nil, 0, fmt.Errorf("no such session: %s", id)
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultPeekNewMax
+	}
+	data, newOff, _, err := s.output.ReadSinceLimit(offset, maxBytes)
+	if err != nil {
+		return nil, offset, err
+	}
+	return data, newOff, nil
+}
+
+// Monitor starts a goroutine that periodically reads incremental output
+// and calls push with new content. Stops automatically when the session ends.
+func (m *Manager) Monitor(id string, interval time.Duration, push func(output string)) {
+	_ = m.MonitorFrom(context.Background(), id, 0, interval, func(output []byte) {
+		push(string(output))
+	})
+}
+
+// MonitorFrom starts a cancelable incremental output monitor at offset.
+func (m *Manager) MonitorFrom(ctx context.Context, id string, offset int64, interval time.Duration, push func(output []byte)) error {
+	m.mu.Lock()
+	s := m.resolve(id)
+	m.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("no such session: %s", id)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if interval <= 0 {
+		interval = time.Second
 	}
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		var offset int64
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case <-s.done:
-				if text, _, _ := m.ReadFrom(id, offset, 0); text != "" {
-					push(text)
+				if data, _, _ := m.ReadBytesFrom(id, offset, 0); len(data) > 0 {
+					push(data)
 				}
 				return
 			case <-ticker.C:
-				text, newOff, err := m.ReadFrom(id, offset, 0)
+				data, newOff, err := m.ReadBytesFrom(id, offset, 0)
 				if err != nil {
 					return
 				}
 				offset = newOff
-				if text != "" {
-					push(text)
+				if len(data) > 0 {
+					push(data)
 				}
 			}
 		}
 	}()
+	return nil
 }
 
 func (m *Manager) Write(id string, data []byte) error {
@@ -710,9 +948,43 @@ func (m *Manager) Write(id string, data []byte) error {
 	default:
 	}
 	if s.pty == nil {
-		return fmt.Errorf("session %s does not accept input", id)
+		if s.input == nil {
+			return fmt.Errorf("session %s does not accept input", id)
+		}
+		_, err := s.input.Write(data)
+		return err
 	}
 	_, err := s.pty.Write(data)
+	return err
+}
+
+func (m *Manager) Resize(id string, cols, rows int) error {
+	if cols <= 0 || rows <= 0 {
+		return nil
+	}
+	m.mu.Lock()
+	s := m.resolve(id)
+	m.mu.Unlock()
+	if s == nil {
+		return fmt.Errorf("no such session: %s", id)
+	}
+	infoCopy := s.Info
+	select {
+	case <-s.done:
+		return nil
+	default:
+	}
+	if s.pty == nil {
+		if s.input != nil {
+			m.emit(Event{Action: EventSessionUpdated, Info: infoCopy})
+			return nil
+		}
+		return fmt.Errorf("session %s does not have a pty", id)
+	}
+	err := s.pty.Resize(cols, rows)
+	if err == nil {
+		m.emit(Event{Action: EventSessionUpdated, Info: infoCopy})
+	}
 	return err
 }
 
@@ -756,6 +1028,40 @@ func (m *Manager) getKillCause(s *session) string {
 	return s.KillCause
 }
 
+func (m *Manager) watchOutput(s *session) {
+	if s == nil || s.output == nil {
+		return
+	}
+	id := s.ID
+	s.output.onWrite = func(p []byte) {
+		if len(p) == 0 {
+			return
+		}
+		m.mu.Lock()
+		current := m.resolve(id)
+		var info Info
+		if current != nil {
+			info = current.Info
+		}
+		m.mu.Unlock()
+		if info.ID != "" {
+			m.emit(Event{Action: EventSessionOutput, Info: info, OutputBytes: len(p)})
+		}
+	}
+}
+
+func (m *Manager) emit(ev Event) {
+	if ev.Action == "" || ev.Info.ID == "" {
+		return
+	}
+	m.mu.Lock()
+	events := m.events
+	m.mu.Unlock()
+	if events != nil {
+		events.Emit(ev)
+	}
+}
+
 func (m *Manager) bufferCap() int {
 	if m.bufCap > 0 {
 		return m.bufCap
@@ -763,12 +1069,12 @@ func (m *Manager) bufferCap() int {
 	return DefaultBufferCap
 }
 
-func (m *Manager) newBuffer(outputFile string) (*OutputBuffer, error) {
+func (m *Manager) newBuffer(outputFile string, stripANSI bool) (*OutputBuffer, error) {
 	cap := m.bufferCap()
 	buf := &OutputBuffer{
 		buf:       make([]byte, 0, min(cap, 64*1024)),
 		cap:       cap,
-		stripANSI: true,
+		stripANSI: stripANSI,
 	}
 	if outputFile != "" {
 		f, err := os.OpenFile(outputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)

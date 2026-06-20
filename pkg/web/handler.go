@@ -59,6 +59,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if segments[0] == "api" && len(segments) == 5 && segments[1] == "agents" && segments[3] == "terminal" && segments[4] == "ws" {
+		if h.agents != nil {
+			h.agents.HandleTerminalWS(segments[2], w, r)
+		} else {
+			writeError(w, http.StatusServiceUnavailable, "agent pool not configured")
+		}
+		return
+	}
+
 	if segments[0] == "api" && len(segments) == 3 && segments[1] == "agent" && segments[2] == "ws" {
 		if h.agents != nil {
 			h.agents.HandleWS(w, r)
@@ -143,7 +152,6 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, h.agents.List())
 }
-
 
 func (h *Handler) serveConfig(w http.ResponseWriter, r *http.Request, segments []string) {
 	if len(segments) != 1 || segments[0] != "llm" {

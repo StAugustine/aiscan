@@ -2,6 +2,7 @@ package tmux
 
 import (
 	"context"
+	"io"
 	"runtime"
 	"strings"
 	"sync"
@@ -58,6 +59,64 @@ func TestCreateAndCompletion(t *testing.T) {
 	formatted := FormatCompletion(completed, mgr.PeekOrEmpty(info.ID, 20))
 	if !strings.Contains(formatted, "done") {
 		t.Fatalf("completion missing stdout: %v", formatted)
+	}
+}
+
+func TestSubscribeReceivesLifecycleEvents(t *testing.T) {
+	mgr := NewManager()
+	events := make(chan Event, 8)
+	unsub := mgr.Subscribe(func(ev Event) {
+		events <- ev
+	})
+	defer unsub()
+
+	release := make(chan struct{})
+	info, err := mgr.CreateFunc(context.Background(), "event-test", 5*time.Second, func(ctx context.Context, w io.Writer) error {
+		_, _ = w.Write([]byte("event-output\n"))
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err != nil {
+		t.Fatalf("CreateFunc: %v", err)
+	}
+
+	seen := make(map[EventAction]bool)
+	waitForEventActions(t, events, info.ID, seen, EventSessionCreated, EventSessionOutput)
+
+	close(release)
+	waitForEventActions(t, events, info.ID, seen, EventSessionClosed)
+}
+
+func waitForEventActions(t *testing.T, events <-chan Event, sessionID string, seen map[EventAction]bool, actions ...EventAction) {
+	t.Helper()
+	want := make(map[EventAction]bool, len(actions))
+	for _, action := range actions {
+		want[action] = true
+	}
+	deadline := time.After(3 * time.Second)
+	for {
+		done := true
+		for action := range want {
+			if !seen[action] {
+				done = false
+				break
+			}
+		}
+		if done {
+			return
+		}
+		select {
+		case ev := <-events:
+			if ev.Info.ID == sessionID {
+				seen[ev.Action] = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for events %v; seen=%v", actions, seen)
+		}
 	}
 }
 

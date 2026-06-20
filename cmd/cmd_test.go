@@ -413,6 +413,26 @@ func TestParseCLIAgentIOAFlag(t *testing.T) {
 	}
 }
 
+func TestParseCLIAgentWebURL(t *testing.T) {
+	parsed, err := parseCLI([]string{
+		"agent",
+		"--web-url", "http://127.0.0.1:8080",
+		"--ioa-url", "http://token@127.0.0.1:8080/ioa",
+		"--space", "case-1",
+		"--ioa-node-name", "worker-1",
+	})
+	if err != nil {
+		t.Fatalf("parseCLI() error = %v", err)
+	}
+	if parsed.Mode != cfg.RunModeAgent {
+		t.Fatalf("mode = %s, want %s", parsed.Mode, cfg.RunModeAgent)
+	}
+	opt := parsed.Option
+	if opt.WebURL != "http://127.0.0.1:8080" || opt.IOAURL != "http://token@127.0.0.1:8080/ioa" || opt.Space != "case-1" || opt.IOANodeName != "worker-1" {
+		t.Fatalf("option = %#v", opt)
+	}
+}
+
 func TestAgentConsoleArgsForLine(t *testing.T) {
 	tests := []struct {
 		name     string
