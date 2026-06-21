@@ -72,7 +72,7 @@ var FormatCompletion = pty.FormatCompletion
 // interface (which adds Usage()) satisfies this via Go structural subtyping.
 type Command interface {
 	Name() string
-	Execute(ctx context.Context, args []string, w io.Writer) error
+	Execute(ctx context.Context, args []string) error
 }
 
 // ---------------------------------------------------------------------------
@@ -96,9 +96,11 @@ type RunOpts struct {
 type Manager struct {
 	*pty.Manager
 
-	events   *eventbus.Bus[Event]
-	commands func(name string) (Command, bool)
-	workDir  string
+	events     *eventbus.Bus[Event]
+	commands   func(name string) (Command, bool)
+	workDir    string
+	beforeExec func(w io.Writer)
+	afterExec  func()
 }
 
 // NewManager creates a Manager backed by a fresh pty.Manager.
@@ -129,6 +131,14 @@ func (m *Manager) Subscribe(fn func(Event)) func() {
 // CommandRegistry in the calling package.
 func (m *Manager) SetCommands(fn func(name string) (Command, bool)) {
 	m.commands = fn
+}
+
+// SetExecHooks sets callbacks invoked before/after each in-process command
+// execution. beforeExec receives the session's io.Writer so the caller can
+// redirect a global output sink; afterExec resets it.
+func (m *Manager) SetExecHooks(before func(w io.Writer), after func()) {
+	m.beforeExec = before
+	m.afterExec = after
 }
 
 // SetWorkDir sets the default working directory for shell sessions created
@@ -188,7 +198,13 @@ func (m *Manager) RunCommand(cmdLine string, opts RunOpts) (Info, error) {
 			}
 			args := tokens[1:]
 			return m.Manager.CreateFunc(opts.Ctx, name, timeout, func(ctx context.Context, w io.Writer) error {
-				return cmd.Execute(ctx, args, w)
+				if m.beforeExec != nil {
+					m.beforeExec(w)
+				}
+				if m.afterExec != nil {
+					defer m.afterExec()
+				}
+				return cmd.Execute(ctx, args)
 			})
 		}
 	}

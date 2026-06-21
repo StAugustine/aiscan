@@ -735,7 +735,13 @@ func (o *AgentOutput) toolEnd(event agent.Event) {
 }
 
 func (o *AgentOutput) renderToolResult(toolName, toolSummary, result, elapsed, highlightPath string) {
-	preview := buildToolResultPreview(toolName, result, o.debug)
+	var preview toolResultPreview
+	if o.verbosity >= 2 {
+		lines := normalizeToolResultLines(result)
+		preview = toolResultPreview{lines: lines}
+	} else {
+		preview = buildToolResultPreview(toolName, result, o.debug)
+	}
 	if len(preview.lines) == 0 {
 		o.toolHeader("✓", output.ANSIGreen, toolName, compactAgentLine(toolSummary, 80), elapsed)
 		return
