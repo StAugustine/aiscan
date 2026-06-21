@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/chainreactors/aiscan/pkg/commands"
 	crtm "github.com/chainreactors/crtm/pkg"
 	"github.com/chainreactors/crtm/pkg/registry"
 )
@@ -61,9 +61,9 @@ Usage:
 Installed tools become immediately available via bash.`
 }
 
-func (c *ArsenalCommand) Execute(_ context.Context, args []string, w io.Writer) error {
+func (c *ArsenalCommand) Execute(_ context.Context, args []string) error {
 	if len(args) == 0 {
-		io.WriteString(w, c.Usage()+"\n")
+		fmt.Fprint(commands.Output, c.Usage()+"\n")
 		return nil
 	}
 
@@ -98,7 +98,7 @@ func (c *ArsenalCommand) Execute(_ context.Context, args []string, w io.Writer) 
 		return err
 	}
 	if result != "" {
-		io.WriteString(w, result+"\n")
+		fmt.Fprint(commands.Output, result+"\n")
 	}
 	return nil
 }

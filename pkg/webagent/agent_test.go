@@ -3,6 +3,7 @@ package webagent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,11 +27,11 @@ type webConnectionTestCommand struct {
 func (c webConnectionTestCommand) Name() string  { return "echo" }
 func (c webConnectionTestCommand) Usage() string { return "echo" }
 
-func (c webConnectionTestCommand) Execute(_ context.Context, args []string, w io.Writer) error {
+func (c webConnectionTestCommand) Execute(_ context.Context, args []string) error {
 	if c.bus != nil {
 		c.bus.Emit(agent.Event{Type: agent.EventTurnStart, Turn: 1})
 	}
-	_, _ = w.Write([]byte("progress: " + strings.Join(args, " ") + "\n"))
+	fmt.Fprintf(commands.Output, "progress: %s\n", strings.Join(args, " "))
 	return nil
 }
 
@@ -324,6 +325,9 @@ func TestRunConnectionPushesPTYSessionsOnManagerEvents(t *testing.T) {
 	readSessionUpdate(t, sessionUpdates, func(payload webproto.PTYPayload) bool {
 		return payloadHasSessionState(payload, info.ID, "running")
 	})
+	readSessionMessage(t, sessionUpdates, func(msg webproto.Message) bool {
+		return payloadHasSessionActivity(msg.Payload, info.ID)
+	})
 
 	close(release)
 	readSessionUpdate(t, sessionUpdates, func(payload webproto.PTYPayload) bool {
@@ -332,6 +336,22 @@ func TestRunConnectionPushesPTYSessionsOnManagerEvents(t *testing.T) {
 
 	cancel()
 	<-done
+}
+
+func readSessionMessage(t *testing.T, updates <-chan webproto.Message, match func(webproto.Message) bool) webproto.Message {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case msg := <-updates:
+			if match(msg) {
+				return msg
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for pty.sessions message")
+			return webproto.Message{}
+		}
+	}
 }
 
 func readSessionUpdate(t *testing.T, updates <-chan webproto.Message, match func(webproto.PTYPayload) bool) webproto.Message {
@@ -357,6 +377,25 @@ func readSessionUpdate(t *testing.T, updates <-chan webproto.Message, match func
 func payloadHasSessionState(payload webproto.PTYPayload, sessionID, state string) bool {
 	for _, session := range payload.Sessions {
 		if session.ID == sessionID && string(session.State) == state {
+			return true
+		}
+	}
+	return false
+}
+
+func payloadHasSessionActivity(raw json.RawMessage, sessionID string) bool {
+	var payload struct {
+		Sessions []struct {
+			ID          string `json:"id"`
+			ActivitySeq int64  `json:"activity_seq"`
+			OutputBytes int64  `json:"output_bytes"`
+		} `json:"sessions"`
+	}
+	if json.Unmarshal(raw, &payload) != nil {
+		return false
+	}
+	for _, session := range payload.Sessions {
+		if session.ID == sessionID && session.ActivitySeq >= 2 && session.OutputBytes > 0 {
 			return true
 		}
 	}

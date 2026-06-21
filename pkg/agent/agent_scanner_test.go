@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -85,8 +85,8 @@ type stubPseudoCommand struct {
 
 func (c *stubPseudoCommand) Name() string  { return c.name }
 func (c *stubPseudoCommand) Usage() string { return c.name }
-func (c *stubPseudoCommand) Execute(_ context.Context, _ []string, w io.Writer) error {
-	_, _ = io.WriteString(w, c.output)
+func (c *stubPseudoCommand) Execute(_ context.Context, _ []string) error {
+	fmt.Fprint(commands.Output, c.output)
 	return nil
 }
 
