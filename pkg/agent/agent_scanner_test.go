@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"runtime"
 	"strings"
 	"testing"
@@ -29,6 +30,10 @@ func TestAgentAutomaticWorkflowUsesScan(t *testing.T) {
 	bash.Manager().SetCommands(func(name string) (tmuxpkg.Command, bool) {
 		return registry.Get(name)
 	})
+	bash.Manager().SetExecHooks(
+		func(w io.Writer) { commands.Output.Reset(w) },
+		func() { commands.Output.Reset(nil) },
+	)
 	bash.Manager().SetWorkDir(dir)
 	registry.RegisterTool(bash)
 

@@ -17,6 +17,8 @@ func TestRemoteREPLOpenerUsesRuntimeManagerWithoutProvider(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	t.Setenv("AISCAN_REPL", "fast")
+
 	option := &cfg.Option{}
 	rt, err := NewAgentRuntime(ctx, option, telemetry.NopLogger(), &RuntimeConfig{
 		ProviderOptional: true,
@@ -49,7 +51,7 @@ func TestRemoteREPLOpenerUsesRuntimeManagerWithoutProvider(t *testing.T) {
 		return frame.Type == pty.FrameOpened
 	})
 
-	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("/status\r")}, func(frame pty.Frame) {
+	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("/status\n")}, func(frame pty.Frame) {
 		messages <- frame
 	})
 	waitForFrame(t, messages, 3*time.Second, func(frame pty.Frame) bool {
@@ -59,7 +61,7 @@ func TestRemoteREPLOpenerUsesRuntimeManagerWithoutProvider(t *testing.T) {
 		return frame.Type == pty.FrameOutput && strings.Contains(string(frame.Data), "not configured")
 	})
 
-	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("!tmux new-session -d -s webtask echo tmux_remote_ok\r")}, func(frame pty.Frame) {
+	router.Handle(ctx, pty.Frame{Type: pty.FrameInput, StreamID: "term-repl", Data: []byte("!tmux new-session -d -s webtask echo tmux_remote_ok\n")}, func(frame pty.Frame) {
 		messages <- frame
 	})
 	waitForCondition(t, 3*time.Second, func() bool {
