@@ -506,12 +506,6 @@ func (o *AgentOutput) canAnimate() bool {
 	return o != nil && o.mode == ModeInteractive && o.tty && o.verbosity >= 0
 }
 
-// canHyperlink gates OSC 8 clickable paths. Same boundary as the spinner: only
-// for a local human. Forwarded/piped output degrades to plain text.
-func (o *AgentOutput) canHyperlink() bool {
-	return o != nil && o.mode == ModeInteractive && o.tty
-}
-
 // ---------------------------------------------------------------------------
 // Internal run state
 // ---------------------------------------------------------------------------
@@ -1095,25 +1089,6 @@ func (o *AgentOutput) evalError(event agent.Event) {
 // Hyperlink helper
 // ---------------------------------------------------------------------------
 
-// hyperlinkSummary wraps a path-bearing tool's summary in an OSC 8 file:// link
-// so a local user can click straight to the file. No-op outside interactive TTY
-// sessions (tests and forwarded PTYs get the plain summary).
-func (o *AgentOutput) hyperlinkSummary(name, arguments, summary string) string {
-	if !o.canHyperlink() || summary == "" {
-		return summary
-	}
-	var path string
-	if args := decodeToolArguments(arguments); args != nil {
-		switch name {
-		case "read", "write", "glob":
-			path = stringArg(args, "path")
-		}
-	}
-	if path == "" {
-		return summary
-	}
-	return pathHyperlink(path, summary)
-}
 
 // ---------------------------------------------------------------------------
 // User intent rendering

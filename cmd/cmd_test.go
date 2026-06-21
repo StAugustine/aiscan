@@ -3,8 +3,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"io"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -636,34 +634,3 @@ func withDefaults(t *testing.T, fn func()) {
 	fn()
 }
 
-func captureStdoutForTest(t *testing.T, fn func() error) (string, error) {
-	t.Helper()
-	oldStdout := os.Stdout
-	reader, writer, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create stdout pipe: %v", err)
-	}
-	os.Stdout = writer
-	defer func() { os.Stdout = oldStdout }()
-
-	readCh := make(chan []byte, 1)
-	readErrCh := make(chan error, 1)
-	go func() {
-		data, readErr := io.ReadAll(reader)
-		readCh <- data
-		readErrCh <- readErr
-	}()
-
-	runErr := fn()
-	closeErr := writer.Close()
-	data := <-readCh
-	readErr := <-readErrCh
-	_ = reader.Close()
-	if readErr != nil {
-		t.Fatalf("read captured stdout: %v", readErr)
-	}
-	if runErr == nil {
-		runErr = closeErr
-	}
-	return string(data), runErr
-}
