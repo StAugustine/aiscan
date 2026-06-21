@@ -147,16 +147,6 @@ func (m *Manager) SetWorkDir(dir string) {
 	m.workDir = dir
 }
 
-// CommandNames returns the names of all registered in-process commands,
-// or nil if no command resolver is set.
-func (m *Manager) CommandNames() []string {
-	if m.commands == nil {
-		return nil
-	}
-	// The commands function is a point lookup, not an iterator.
-	// Callers that need a full list should use the registry directly.
-	return nil
-}
 
 // RunCommand creates a session for the given command line. If the first
 // token matches a registered in-process Command, the command runs in a

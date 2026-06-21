@@ -1,7 +1,6 @@
 package web
 
 import (
-	"embed"
 	"encoding/json"
 	"io/fs"
 	"net/http"
@@ -10,13 +9,11 @@ import (
 	"testing"
 	"time"
 
+	webstatic "github.com/chainreactors/aiscan/web"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/gorilla/websocket"
 )
-
-//go:embed e2e_static
-var e2eStaticFS embed.FS
 
 func setupE2EServer(t *testing.T) (*httptest.Server, *AgentPool) {
 	t.Helper()
@@ -42,7 +39,7 @@ func setupE2EServer(t *testing.T) (*httptest.Server, *AgentPool) {
 		json.NewEncoder(w).Encode(map[string]any{"agents": len(pool.List()), "llm_available": false})
 	})
 
-	staticSub, err := fs.Sub(e2eStaticFS, "e2e_static")
+	staticSub, err := fs.Sub(webstatic.FS, "static")
 	if err != nil {
 		t.Fatal(err)
 	}

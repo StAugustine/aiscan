@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chainreactors/aiscan/core/output"
@@ -64,18 +65,21 @@ func (a *remoteAgent) info() AgentInfo {
 
 // AgentPool manages connected remote aiscan agents via WebSocket.
 type AgentPool struct {
-	mu      sync.RWMutex
-	agents  map[string]*remoteAgent
-	hub     *Hub
-	ptyMu   sync.RWMutex
-	ptySubs map[string]chan WSMessage
+	mu             sync.RWMutex
+	agents         map[string]*remoteAgent
+	hub            *Hub
+	ptyMu          sync.RWMutex
+	ptySubs        map[string]chan WSMessage
+	ptyDrops       atomic.Int64
+	allowedOrigins []string
 }
 
-func NewAgentPool(hub *Hub) *AgentPool {
+func NewAgentPool(hub *Hub, allowedOrigins ...string) *AgentPool {
 	return &AgentPool{
-		agents:  make(map[string]*remoteAgent),
-		hub:     hub,
-		ptySubs: make(map[string]chan WSMessage),
+		agents:         make(map[string]*remoteAgent),
+		hub:            hub,
+		ptySubs:        make(map[string]chan WSMessage),
+		allowedOrigins: allowedOrigins,
 	}
 }
 
@@ -197,7 +201,7 @@ func (p *AgentPool) HandleTerminalWS(agentID string, w http.ResponseWriter, r *h
 		return
 	}
 
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	conn, err := p.upgrader().Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
@@ -263,7 +267,7 @@ func isTerminalMessage(msgType string) bool {
 }
 
 func (p *AgentPool) subscribePTY(terminalID string) (<-chan WSMessage, func()) {
-	ch := make(chan WSMessage, 64)
+	ch := make(chan WSMessage, 256)
 	p.ptyMu.Lock()
 	p.ptySubs[terminalID] = ch
 	p.ptyMu.Unlock()
@@ -287,6 +291,7 @@ func (p *AgentPool) forwardPTYMessage(msg WSMessage) bool {
 		select {
 		case ch <- msg:
 		default:
+			p.ptyDrops.Add(1)
 			select {
 			case <-ch:
 			default:
@@ -294,6 +299,7 @@ func (p *AgentPool) forwardPTYMessage(msg WSMessage) bool {
 			select {
 			case ch <- msg:
 			default:
+				p.ptyDrops.Add(1)
 			}
 		}
 	}
@@ -303,14 +309,28 @@ func (p *AgentPool) forwardPTYMessage(msg WSMessage) bool {
 
 // --- WebSocket handler ---
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+func (p *AgentPool) upgrader() *websocket.Upgrader {
+	if len(p.allowedOrigins) == 0 {
+		return &websocket.Upgrader{}
+	}
+	origins := p.allowedOrigins
+	return &websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			for _, o := range origins {
+				if o == "*" || o == origin {
+					return true
+				}
+			}
+			return false
+		},
+	}
 }
 
 // HandleWS upgrades to WebSocket and manages the agent lifecycle.
 // This single endpoint replaces register + stream + output + complete.
 func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	conn, err := p.upgrader().Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}

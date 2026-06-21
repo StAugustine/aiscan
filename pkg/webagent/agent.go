@@ -21,9 +21,9 @@ import (
 	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
 	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/utils/pty"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/webproto"
+	"github.com/chainreactors/utils/pty"
 	"github.com/gorilla/websocket"
 )
 
@@ -83,6 +83,7 @@ func RunConnectionRuntime(ctx context.Context, serverURL, name string, rt *runne
 }
 
 func runConnection(ctx context.Context, serverURL, name string, reg *commands.CommandRegistry, bus *eventbus.Bus[agent.Event], rt *runner.AgentRuntime) error {
+	attempt := 0
 	for {
 		if ctx.Err() != nil {
 			return nil
@@ -92,11 +93,15 @@ func runConnection(ctx context.Context, serverURL, name string, reg *commands.Co
 			return nil
 		}
 		if err != nil {
+			delay := agent.RetryDelay(attempt)
+			attempt++
 			select {
 			case <-ctx.Done():
 				return nil
-			case <-time.After(3 * time.Second):
+			case <-time.After(delay):
 			}
+		} else {
+			attempt = 0
 		}
 	}
 }
@@ -160,24 +165,8 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 		}
 	}()
 
-	var activeMu sync.Mutex
-	activeTasks := make(map[string]struct{})
-	activateTask := func(taskID string) {
-		if taskID == "" {
-			return
-		}
-		activeMu.Lock()
-		activeTasks[taskID] = struct{}{}
-		activeMu.Unlock()
-	}
-	deactivateTask := func(taskID string) {
-		if taskID == "" {
-			return
-		}
-		activeMu.Lock()
-		delete(activeTasks, taskID)
-		activeMu.Unlock()
-	}
+	var taskMu sync.Mutex
+	tasks := make(map[string]context.CancelFunc)
 	if bus != nil {
 		unsub := bus.Subscribe(func(e agent.Event) {
 			if next, ok := stats.Observe(e); ok {
@@ -189,12 +178,12 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 			if data == "" {
 				data = string(payload)
 			}
-			activeMu.Lock()
-			taskIDs := make([]string, 0, len(activeTasks))
-			for taskID := range activeTasks {
+			taskMu.Lock()
+			taskIDs := make([]string, 0, len(tasks))
+			for taskID := range tasks {
 				taskIDs = append(taskIDs, taskID)
 			}
-			activeMu.Unlock()
+			taskMu.Unlock()
 			for _, taskID := range taskIDs {
 				send(webproto.Message{
 					Type:    "agent." + string(e.Type),
@@ -206,9 +195,6 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 		})
 		defer unsub()
 	}
-
-	var taskMu sync.Mutex
-	taskCancels := make(map[string]context.CancelFunc)
 
 	ptyRouter := newPTYRouter(reg, rt)
 	defer ptyRouter.Close()
@@ -242,15 +228,13 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 		case "exec":
 			taskCtx, cancel := context.WithCancel(ctx)
 			taskMu.Lock()
-			taskCancels[msg.TaskID] = cancel
+			tasks[msg.TaskID] = cancel
 			taskMu.Unlock()
 			go func(m webproto.Message, tCtx context.Context, tCancel context.CancelFunc) {
 				defer tCancel()
-				activateTask(m.TaskID)
 				defer func() {
-					deactivateTask(m.TaskID)
 					taskMu.Lock()
-					delete(taskCancels, m.TaskID)
+					delete(tasks, m.TaskID)
 					taskMu.Unlock()
 				}()
 				execCommand(tCtx, m.TaskID, m.Data, reg, send)
@@ -258,7 +242,7 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 
 		case "cancel":
 			taskMu.Lock()
-			if cancel, ok := taskCancels[msg.TaskID]; ok {
+			if cancel, ok := tasks[msg.TaskID]; ok {
 				cancel()
 			}
 			taskMu.Unlock()
@@ -300,22 +284,37 @@ func subscribePTYSessions(ctx context.Context, mgr *tmux.Manager, router *pty.Ro
 	if mgr == nil || router == nil || send == nil {
 		return func() {}
 	}
-	notify := make(chan struct{}, 1)
+	activity := newPTYActivityTracker()
+	notify := make(chan tmux.EventAction, 1)
 	unsub := mgr.Subscribe(func(ev tmux.Event) {
+		activity.Observe(ev)
 		switch ev.Action {
-		case tmux.EventSessionCreated, tmux.EventSessionUpdated, tmux.EventSessionClosed:
+		case tmux.EventSessionCreated, tmux.EventSessionUpdated, tmux.EventSessionOutput, tmux.EventSessionClosed:
 			select {
-			case notify <- struct{}{}:
+			case notify <- ev.Action:
 			default:
 			}
 		}
 	})
 	stop := make(chan struct{})
 	go func() {
+		ticker := time.NewTicker(350 * time.Millisecond)
+		defer ticker.Stop()
+		dirty := false
 		for {
 			select {
-			case <-notify:
-				broadcastPTYSessions(mgr, router, send)
+			case action := <-notify:
+				if action == tmux.EventSessionOutput {
+					dirty = true
+					continue
+				}
+				dirty = false
+				broadcastPTYSessions(mgr, router, activity, send)
+			case <-ticker.C:
+				if dirty {
+					dirty = false
+					broadcastPTYSessions(mgr, router, activity, send)
+				}
 			case <-ctx.Done():
 				return
 			case <-stop:
@@ -332,19 +331,93 @@ func subscribePTYSessions(ctx context.Context, mgr *tmux.Manager, router *pty.Ro
 	}
 }
 
-func broadcastPTYSessions(mgr *tmux.Manager, router *pty.Router, send func(webproto.Message)) {
+func broadcastPTYSessions(mgr *tmux.Manager, router *pty.Router, activity *ptyActivityTracker, send func(webproto.Message)) {
 	streamIDs := router.StreamIDs()
 	if len(streamIDs) == 0 {
 		return
 	}
-	sessions := mgr.List()
+	sessions := ptySessionViews(mgr.List(), activity)
 	for _, streamID := range streamIDs {
-		send(webproto.FrameToMessage(pty.Frame{
-			Type:     pty.FrameSessions,
-			StreamID: streamID,
-			Sessions: sessions,
-		}))
+		payload, _ := json.Marshal(map[string]any{"sessions": sessions})
+		send(webproto.Message{Type: "pty.sessions", StreamID: streamID, Payload: payload})
 	}
+}
+
+type ptyActivity struct {
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+	ActivitySeq    int64     `json:"activity_seq,omitempty"`
+	OutputBytes    int64     `json:"output_bytes,omitempty"`
+}
+
+type ptyActivityTracker struct {
+	mu       sync.Mutex
+	sessions map[string]ptyActivity
+}
+
+type ptySessionView struct {
+	tmux.Info
+	LastActivityAt time.Time `json:"last_activity_at,omitempty"`
+	ActivitySeq    int64     `json:"activity_seq,omitempty"`
+	OutputBytes    int64     `json:"output_bytes,omitempty"`
+}
+
+func newPTYActivityTracker() *ptyActivityTracker {
+	return &ptyActivityTracker{sessions: make(map[string]ptyActivity)}
+}
+
+func (t *ptyActivityTracker) Observe(ev tmux.Event) {
+	if t == nil || ev.Info.ID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	activity := t.sessions[ev.Info.ID]
+	now := time.Now()
+	if activity.LastActivityAt.IsZero() {
+		activity.LastActivityAt = ev.Info.StartedAt
+		if activity.LastActivityAt.IsZero() {
+			activity.LastActivityAt = now
+		}
+	}
+	switch ev.Action {
+	case tmux.EventSessionOutput:
+		activity.LastActivityAt = now
+		activity.ActivitySeq++
+		activity.OutputBytes += int64(ev.OutputBytes)
+	case tmux.EventSessionCreated, tmux.EventSessionUpdated, tmux.EventSessionClosed:
+		activity.LastActivityAt = now
+		activity.ActivitySeq++
+	}
+	t.sessions[ev.Info.ID] = activity
+}
+
+func (t *ptyActivityTracker) Snapshot(id string) ptyActivity {
+	if t == nil || id == "" {
+		return ptyActivity{}
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.sessions[id]
+}
+
+func ptySessionViews(sessions []tmux.Info, activity *ptyActivityTracker) []ptySessionView {
+	views := make([]ptySessionView, 0, len(sessions))
+	for _, session := range sessions {
+		snapshot := activity.Snapshot(session.ID)
+		if snapshot.LastActivityAt.IsZero() {
+			snapshot.LastActivityAt = session.EndedAt
+		}
+		if snapshot.LastActivityAt.IsZero() {
+			snapshot.LastActivityAt = session.StartedAt
+		}
+		views = append(views, ptySessionView{
+			Info:           session,
+			LastActivityAt: snapshot.LastActivityAt,
+			ActivitySeq:    snapshot.ActivitySeq,
+			OutputBytes:    snapshot.OutputBytes,
+		})
+	}
+	return views
 }
 
 func execCommand(ctx context.Context, taskID, cmdLine string, reg *commands.CommandRegistry, send func(webproto.Message)) {
@@ -365,6 +438,7 @@ func execCommand(ctx context.Context, taskID, cmdLine string, reg *commands.Comm
 			ExecuteStructured(ctx context.Context, args []string, stream io.Writer) (string, *output.Result, error)
 		}); ok {
 			out, result, err := sc.ExecuteStructured(ctx, tokens[1:], writer)
+			writer.flush()
 			if err != nil {
 				send(webproto.Message{Type: "error", TaskID: taskID, Data: err.Error()})
 				return
@@ -379,6 +453,7 @@ func execCommand(ctx context.Context, taskID, cmdLine string, reg *commands.Comm
 	}
 
 	out, err := reg.ExecuteArgsStreaming(ctx, tokens, writer)
+	writer.flush()
 	if err != nil {
 		send(webproto.Message{Type: "error", TaskID: taskID, Data: err.Error()})
 		return
@@ -518,6 +593,8 @@ func agentEventSummary(e agent.Event) string {
 	}
 }
 
+const maxStreamBuf = 64 << 10
+
 type streamWriter struct {
 	taskID string
 	sendFn func(webproto.Message)
@@ -529,6 +606,9 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 	for {
 		idx := bytes.IndexByte(w.buf, '\n')
 		if idx < 0 {
+			if len(w.buf) >= maxStreamBuf {
+				w.flush()
+			}
 			break
 		}
 		line := string(w.buf[:idx])
@@ -539,6 +619,17 @@ func (w *streamWriter) Write(p []byte) (int, error) {
 		w.sendFn(webproto.Message{Type: "output", TaskID: w.taskID, Data: line})
 	}
 	return len(p), nil
+}
+
+func (w *streamWriter) flush() {
+	if len(w.buf) == 0 {
+		return
+	}
+	data := string(w.buf)
+	w.buf = w.buf[:0]
+	if strings.TrimSpace(data) != "" {
+		w.sendFn(webproto.Message{Type: "output", TaskID: w.taskID, Data: data})
+	}
 }
 
 func webAgentTask(option *cfg.Option) (string, error) {

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -50,24 +51,26 @@ type remoteTerminalWriter struct {
 	mu   sync.Mutex
 	w    io.Writer
 	last byte
+	buf  bytes.Buffer
 }
 
 func (w *remoteTerminalWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := make([]byte, 0, len(p)+8)
+	w.buf.Reset()
+	w.buf.Grow(len(p) + len(p)/4)
 	last := w.last
 	for _, b := range p {
 		if b == '\n' && last != '\r' {
-			out = append(out, '\r')
+			w.buf.WriteByte('\r')
 		}
-		out = append(out, b)
+		w.buf.WriteByte(b)
 		last = b
 	}
-	if len(out) > 0 {
-		w.last = out[len(out)-1]
+	if w.buf.Len() > 0 {
+		w.last = last
 	}
-	_, err := w.w.Write(out)
+	_, err := w.w.Write(w.buf.Bytes())
 	return len(p), err
 }
 

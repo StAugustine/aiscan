@@ -199,42 +199,29 @@ func messageTypeFromFrame(frameType pty.FrameType) string {
 	return "pty." + string(frameType)
 }
 
+var frameTypes = map[string]pty.FrameType{
+	string(pty.FrameOpen):     pty.FrameOpen,
+	string(pty.FrameOpened):   pty.FrameOpened,
+	string(pty.FrameAttach):   pty.FrameAttach,
+	string(pty.FrameAttached): pty.FrameAttached,
+	string(pty.FrameInput):    pty.FrameInput,
+	string(pty.FrameOutput):   pty.FrameOutput,
+	string(pty.FrameResize):   pty.FrameResize,
+	string(pty.FrameDetach):   pty.FrameDetach,
+	string(pty.FrameDetached): pty.FrameDetached,
+	string(pty.FrameKill):     pty.FrameKill,
+	string(pty.FrameList):     pty.FrameList,
+	string(pty.FrameSessions): pty.FrameSessions,
+	string(pty.FrameClosed):   pty.FrameClosed,
+	string(pty.FrameError):    pty.FrameError,
+}
+
 func frameTypeFromMessage(msgType string) (pty.FrameType, bool) {
 	if !strings.HasPrefix(msgType, "pty.") {
 		return "", false
 	}
-	switch strings.TrimPrefix(msgType, "pty.") {
-	case string(pty.FrameOpen):
-		return pty.FrameOpen, true
-	case string(pty.FrameOpened):
-		return pty.FrameOpened, true
-	case string(pty.FrameAttach):
-		return pty.FrameAttach, true
-	case string(pty.FrameAttached):
-		return pty.FrameAttached, true
-	case string(pty.FrameInput):
-		return pty.FrameInput, true
-	case string(pty.FrameOutput):
-		return pty.FrameOutput, true
-	case string(pty.FrameResize):
-		return pty.FrameResize, true
-	case string(pty.FrameDetach):
-		return pty.FrameDetach, true
-	case string(pty.FrameDetached):
-		return pty.FrameDetached, true
-	case string(pty.FrameKill):
-		return pty.FrameKill, true
-	case string(pty.FrameList):
-		return pty.FrameList, true
-	case string(pty.FrameSessions):
-		return pty.FrameSessions, true
-	case string(pty.FrameClosed):
-		return pty.FrameClosed, true
-	case string(pty.FrameError):
-		return pty.FrameError, true
-	default:
-		return "", false
-	}
+	ft, ok := frameTypes[strings.TrimPrefix(msgType, "pty.")]
+	return ft, ok
 }
 
 func decodeData(text, encoded string) ([]byte, error) {
