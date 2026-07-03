@@ -216,7 +216,7 @@ func (c *Command) Execute(ctx context.Context, args []string) error {
 	// --- Scan ---
 	sevFilter := buildSeverityFilter(flags.Severity, flags.ExcludeSeverity)
 	var seen sync.Map
-	var findingCount int64
+	var findingCount, extractCount int64
 
 	var fileOut *os.File
 	if flags.OutputFile != "" {
@@ -237,6 +237,9 @@ func (c *Command) Execute(ctx context.Context, args []string) error {
 			return
 		}
 		atomic.AddInt64(&findingCount, 1)
+		if uf.Class == "extract" {
+			atomic.AddInt64(&extractCount, 1)
+		}
 		writeFinding(commands.Output, uf, flags.JSON, inputs[0])
 		if fileOut != nil {
 			writeFinding(fileOut, uf, flags.JSON, inputs[0])
@@ -264,8 +267,10 @@ func (c *Command) Execute(ctx context.Context, args []string) error {
 		count := atomic.LoadInt64(&findingCount)
 		fileCount := atomic.LoadInt64(&scanner.Stats.Files)
 		ruleCount := scanner.Stats.Rules
+		ec := atomic.LoadInt64(&extractCount)
 		if count > 0 {
-			fmt.Fprintf(commands.Output, "\n[proton] %d findings | %d rules | %d files\n", count, ruleCount, fileCount)
+			fmt.Fprintf(commands.Output, "\n[proton] %d findings (extract: %d, match: %d) | %d rules | %d files\n",
+				count, ec, count-ec, ruleCount, fileCount)
 		} else {
 			fmt.Fprintf(commands.Output, "[proton] no findings | %d rules | %d files\n", ruleCount, fileCount)
 		}
@@ -366,16 +371,16 @@ func writeFinding(w interface{ Write([]byte) (int, error) }, f file.Finding, jso
 	if r, err := filepath.Rel(baseDir, f.FilePath); err == nil {
 		relPath = r
 	}
-	fmt.Fprintf(w, "[%s] [%s] [%s] %s\n", f.TemplateName, f.Severity, f.TemplateID, relPath)
+	fmt.Fprintf(w, "[%s] [%s] [%s] [%s] %s\n", f.TemplateName, f.Severity, f.Class, f.TemplateID, relPath)
 	for name, events := range f.Matches {
 		for _, ev := range events {
 			val := truncate(ev.Value, 200)
-			fmt.Fprintf(w, "   [%s] [L%d] %s\n", name, ev.Line, val)
+			fmt.Fprintf(w, "   [match:%s] [L%d] %s\n", name, ev.Line, val)
 		}
 	}
 	for _, ev := range f.Extracts {
 		val := truncate(ev.Value, 200)
-		fmt.Fprintf(w, "   [L%d] %s\n", ev.Line, val)
+		fmt.Fprintf(w, "   [extract] [L%d] %s\n", ev.Line, val)
 	}
 }
 
@@ -394,8 +399,6 @@ func scanSingleFile(scanner *file.Scanner, path string, callback func(file.Findi
 		contents := scanner.ReadFile(path, group)
 		for _, c := range contents {
 			findings := scanner.ScanData(c.Data, c.Label, group)
-			atomic.AddInt64(&scanner.Stats.Files, 1)
-			atomic.AddInt64(&scanner.Stats.Bytes, int64(len(c.Data)))
 			for _, f := range findings {
 				atomic.AddInt64(&scanner.Stats.Findings, 1)
 				callback(f)
@@ -428,8 +431,6 @@ func walkAndScan(ctx context.Context, scanner *file.Scanner, target string, call
 				contents := scanner.ReadFile(j.path, j.group)
 				for _, c := range contents {
 					findings := scanner.ScanData(c.Data, c.Label, j.group)
-					atomic.AddInt64(&scanner.Stats.Files, 1)
-					atomic.AddInt64(&scanner.Stats.Bytes, int64(len(c.Data)))
 					if len(findings) > 0 {
 						atomic.AddInt64(&scanner.Stats.Findings, int64(len(findings)))
 						mu.Lock()
@@ -457,6 +458,9 @@ func walkAndScan(ctx context.Context, scanner *file.Scanner, target string, call
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			return nil
+		}
+		if file.ShouldSkipFile(d.Name()) {
 			return nil
 		}
 		ext := filepath.Ext(path)
