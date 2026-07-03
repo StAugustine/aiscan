@@ -11,7 +11,7 @@ require (
 	github.com/chainreactors/ioa v0.1.2-0.20260621175506-35d6a4a11645
 	github.com/chainreactors/logs v0.0.0-20260624034259-9aaea4aa52cc
 	github.com/chainreactors/neutron v0.1.1-0.20260629055246-979be130dcaa
-	github.com/chainreactors/proton v0.3.1
+	github.com/chainreactors/proton v0.3.3-0.20260703103128-81e96bf3579d
 	github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593
 	github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3
 	github.com/chainreactors/sdk v0.3.4-0.20260701052449-3d899ae2ef28
@@ -20,7 +20,7 @@ require (
 	github.com/chainreactors/tui/readline v0.0.0-20260626181537-7c0eb4b933cd
 	github.com/chainreactors/utils v0.0.0-20260630095004-c4fb7a13ed39
 	github.com/chainreactors/utils/mitmproxy v0.0.0-20260630095004-c4fb7a13ed39
-	github.com/chainreactors/utils/parsers v0.0.0-20260630095004-c4fb7a13ed39
+	github.com/chainreactors/utils/parsers v0.0.0-20260703102247-161b4377c8c7
 	github.com/chainreactors/utils/pty v0.0.0-20260630095004-c4fb7a13ed39
 	github.com/chainreactors/zombie v1.3.0
 	github.com/charmbracelet/bubbles v1.0.0
@@ -309,9 +309,4 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	mvdan.cc/sh/v3 v3.13.1 // indirect
-)
-
-replace (
-	github.com/chainreactors/proton => /mnt/chainreactors/proton
-	github.com/chainreactors/utils/parsers => /mnt/chainreactors/utils/parsers
 )
