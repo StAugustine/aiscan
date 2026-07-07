@@ -8,7 +8,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
-	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/utils/pty"
 )
 
@@ -21,18 +20,27 @@ type Message struct {
 	Payload  json.RawMessage `json:"payload,omitempty"`
 }
 
+// SlashSpec is the surface-neutral description of one user-facing "/verb" command.
+type SlashSpec struct {
+	Name        string   `json:"name"`
+	Aliases     []string `json:"aliases,omitempty"`
+	Usage       string   `json:"usage,omitempty"`
+	Description string   `json:"description,omitempty"`
+	WebMenu     bool     `json:"web_menu,omitempty"`
+}
+
 type RegisterPayload struct {
 	Name string `json:"name"`
 	// Commands is the LLM tool/pseudo-command registry (pkg/commands) the agent
 	// exposes to the model — distinct from SlashCommands.
 	Commands []string `json:"commands,omitempty"`
-	// SlashCommands is the agent's user-facing "/verb" catalog (pkg/slashcmd):
-	// the agent-scope, menu-visible commands it can run, plus one per loaded
-	// skill. The hub merges these with its own hub-scope commands to drive the
-	// web "/" menu and /help, so the surfaces never drift.
-	SlashCommands []slashcmd.Spec `json:"slash_commands,omitempty"`
-	Identity      AgentIdentity   `json:"identity,omitempty"`
-	Stats         AgentStats      `json:"stats,omitempty"`
+	// SlashCommands is the agent's user-facing "/verb" catalog: the agent-scope,
+	// menu-visible commands it can run, plus one per loaded skill. The hub merges
+	// these with its own hub-scope commands to drive the web "/" menu and /help,
+	// so the surfaces never drift.
+	SlashCommands []SlashSpec    `json:"slash_commands,omitempty"`
+	Identity      AgentIdentity `json:"identity,omitempty"`
+	Stats         AgentStats    `json:"stats,omitempty"`
 }
 
 type AgentIdentity struct {
@@ -179,10 +187,10 @@ func FrameToMessage(frame pty.Frame) Message {
 			Singleton: frame.Singleton,
 		}
 		encodePayloadData(&payload, frame.Data)
-		msg.Payload = mustMarshal(payload)
+		msg.Payload = MustJSON(payload)
 	case pty.FrameOutput:
 		if frame.SessionID != "" {
-			msg.Payload = mustMarshal(map[string]any{"session_id": frame.SessionID})
+			msg.Payload = MustJSON(map[string]any{"session_id": frame.SessionID})
 		}
 		encodeMessageData(&msg, frame.Data)
 	case pty.FrameError:
@@ -192,7 +200,7 @@ func FrameToMessage(frame pty.Frame) Message {
 			msg.Data = string(frame.Data)
 		}
 	case pty.FrameOpened:
-		msg.Payload = mustMarshal(map[string]any{
+		msg.Payload = MustJSON(map[string]any{
 			"session_id": frame.SessionID,
 			"kind":       frame.Kind,
 			"name":       frame.Name,
@@ -200,16 +208,16 @@ func FrameToMessage(frame pty.Frame) Message {
 			"session":    frame.Session,
 		})
 	case pty.FrameAttached:
-		msg.Payload = mustMarshal(map[string]any{
+		msg.Payload = MustJSON(map[string]any{
 			"session_id": frame.SessionID,
 			"session":    frame.Session,
 		})
 	case pty.FrameDetached:
-		msg.Payload = mustMarshal(map[string]any{"session_id": frame.SessionID})
+		msg.Payload = MustJSON(map[string]any{"session_id": frame.SessionID})
 	case pty.FrameSessions:
-		msg.Payload = mustMarshal(map[string]any{"sessions": frame.Sessions})
+		msg.Payload = MustJSON(map[string]any{"sessions": frame.Sessions})
 	case pty.FrameClosed:
-		msg.Payload = mustMarshal(map[string]any{
+		msg.Payload = MustJSON(map[string]any{
 			"session_id": frame.SessionID,
 			"state":      frame.State,
 			"exit_code":  frame.ExitCode,
@@ -297,7 +305,7 @@ func encodePayloadData(payload *PTYPayload, data []byte) {
 	payload.DataB64 = base64.StdEncoding.EncodeToString(data)
 }
 
-func mustMarshal(v any) json.RawMessage {
+func MustJSON(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
 }

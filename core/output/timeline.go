@@ -432,10 +432,19 @@ func summarizeToolArgs(name, arguments string) string {
 }
 
 func stringVal(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok {
+	switch v := m[key].(type) {
+	case string:
 		return v
+	case float64:
+		if v == float64(int(v)) {
+			return fmt.Sprintf("%d", int(v))
+		}
+		return fmt.Sprintf("%g", v)
+	case bool:
+		return fmt.Sprintf("%v", v)
+	default:
+		return ""
 	}
-	return ""
 }
 
 func compactResult(result string, maxLen int) string {

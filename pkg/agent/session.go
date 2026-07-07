@@ -87,12 +87,7 @@ func sanitizeMessagesForSave(messages []ChatMessage) []ChatMessage {
 				ToolCallID: m.ToolCallID,
 			}
 		} else {
-			out[i] = ChatMessage{
-				Role:       m.Role,
-				Content:    m.Content,
-				ToolCalls:  m.ToolCalls,
-				ToolCallID: m.ToolCallID,
-			}
+			out[i] = m
 		}
 	}
 	return out

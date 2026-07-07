@@ -90,7 +90,7 @@ func (c Color) Dim(s string) string {
 	if !c.Enabled {
 		return s
 	}
-	return "\033[90m" + s + ANSIReset
+	return ANSIDim + s + ANSIReset
 }
 
 func (c Color) Status(s string) string {

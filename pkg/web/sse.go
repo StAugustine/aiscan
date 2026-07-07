@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
+
+	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
 // HubEvent is the unit broadcast through the SSE hub. Type is the SSE
@@ -124,20 +127,8 @@ func isTerminalEvent(eventType string, terminalEvents []string) bool {
 	if len(terminalEvents) == 0 {
 		return eventType == "complete" || eventType == "error"
 	}
-	for _, t := range terminalEvents {
-		if eventType == t {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(terminalEvents, eventType)
 }
 
-// mustJSON marshals v to json.RawMessage. Panics on error (should never
-// happen with map/struct inputs).
-func mustJSON(v any) json.RawMessage {
-	data, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return data
-}
+// mustJSON is a package-local alias for webproto.MustJSON.
+var mustJSON = webproto.MustJSON

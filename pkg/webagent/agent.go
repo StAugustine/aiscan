@@ -24,7 +24,6 @@ import (
 	"github.com/chainreactors/aiscan/pkg/agent/evaluator"
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
 	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/tui"
 	"github.com/chainreactors/aiscan/pkg/webproto"
@@ -809,7 +808,7 @@ func handleFileUpload(msg webproto.Message, send func(webproto.Message), cr *cha
 		send(webproto.Message{
 			Type:    "complete",
 			TaskID:  msg.TaskID,
-			Payload: mustJSON(webproto.FileUploadResult{Filename: payload.Filename, Error: "decode failed: " + err.Error()}),
+			Payload: webproto.MustJSON(webproto.FileUploadResult{Filename: payload.Filename, Error: "decode failed: " + err.Error()}),
 		})
 		return
 	}
@@ -822,7 +821,7 @@ func handleFileUpload(msg webproto.Message, send func(webproto.Message), cr *cha
 		send(webproto.Message{
 			Type:    "complete",
 			TaskID:  msg.TaskID,
-			Payload: mustJSON(webproto.FileUploadResult{Filename: payload.Filename, Error: "write failed: " + err.Error()}),
+			Payload: webproto.MustJSON(webproto.FileUploadResult{Filename: payload.Filename, Error: "write failed: " + err.Error()}),
 		})
 		return
 	}
@@ -838,17 +837,12 @@ func handleFileUpload(msg webproto.Message, send func(webproto.Message), cr *cha
 		Type:   "complete",
 		TaskID: msg.TaskID,
 		Data:   dest,
-		Payload: mustJSON(webproto.FileUploadResult{
+		Payload: webproto.MustJSON(webproto.FileUploadResult{
 			Filename: payload.Filename,
 			Path:     dest,
 			Size:     int64(len(data)),
 		}),
 	})
-}
-
-func mustJSON(v any) json.RawMessage {
-	data, _ := json.Marshal(v)
-	return data
 }
 
 func isREPLCommand(prompt string) bool {
@@ -993,8 +987,10 @@ func agentRegisterPayload(name string, reg *commands.CommandRegistry, rt *runner
 // hub on register: the static agent-scope menu commands plus one per loaded (and
 // non-internal) skill. The hub merges it with its hub-scope commands to build
 // the web "/" menu and /help, so the menu reflects what this agent can run.
-func agentSlashCatalog(rt *runner.AgentRuntime) []slashcmd.Spec {
-	specs := slashcmd.AgentWebMenu()
+func agentSlashCatalog(rt *runner.AgentRuntime) []webproto.SlashSpec {
+	// Build a zero-value console to extract command metadata without a live session.
+	r := &tui.AgentConsole{}
+	specs := tui.WebMenuSpecs(r.StaticCommands())
 	if rt == nil || rt.App == nil || rt.App.Skills == nil {
 		return specs
 	}
@@ -1002,7 +998,11 @@ func agentSlashCatalog(rt *runner.AgentRuntime) []slashcmd.Spec {
 		if strings.TrimSpace(sk.Name) == "" || sk.Internal {
 			continue
 		}
-		specs = append(specs, slashcmd.SkillSpec(sk.Name, sk.Description))
+		specs = append(specs, webproto.SlashSpec{
+			Name:        "/" + strings.TrimPrefix(strings.TrimSpace(sk.Name), "/"),
+			Description: sk.Description,
+			WebMenu:     true,
+		})
 	}
 	return specs
 }

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 	"github.com/gorilla/websocket"
 )
@@ -25,7 +24,7 @@ type AgentInfo struct {
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`
 	Commands      []string               `json:"commands,omitempty"`
-	SlashCommands []slashcmd.Spec        `json:"slash_commands,omitempty"`
+	SlashCommands []webproto.SlashSpec        `json:"slash_commands,omitempty"`
 	Busy          bool                   `json:"busy"`
 	ConnectAt     time.Time              `json:"connected_at"`
 	Identity      webproto.AgentIdentity `json:"identity,omitempty"`
@@ -43,7 +42,7 @@ type remoteAgent struct {
 	id            string
 	name          string
 	commands      []string
-	slashCommands []slashcmd.Spec
+	slashCommands []webproto.SlashSpec
 	conn          *websocket.Conn
 	sendCh        chan WSMessage
 	connectAt     time.Time
@@ -74,7 +73,7 @@ func (a *remoteAgent) info() AgentInfo {
 // slashSpecs returns the agent's reported "/verb" catalog (its agent-scope
 // menu commands plus one per loaded skill). Immutable after register, so it
 // needs no lock. The hub merges it with its hub-scope commands in SessionMenu.
-func (a *remoteAgent) slashSpecs() []slashcmd.Spec {
+func (a *remoteAgent) slashSpecs() []webproto.SlashSpec {
 	if a == nil {
 		return nil
 	}
@@ -104,6 +103,7 @@ type AgentPool struct {
 	ptySubs        map[string]chan WSMessage
 	ptyDrops       atomic.Int64
 	allowedOrigins []string
+	upgrader       websocket.Upgrader
 }
 
 func NewAgentPool(hub *Hub, allowedOrigins ...string) *AgentPool {
@@ -111,6 +111,7 @@ func NewAgentPool(hub *Hub, allowedOrigins ...string) *AgentPool {
 		agents:         make(map[string]*remoteAgent),
 		hub:            hub,
 		ptySubs:        make(map[string]chan WSMessage),
+		upgrader:       buildUpgrader(allowedOrigins),
 		allowedOrigins: allowedOrigins,
 	}
 }
@@ -237,7 +238,7 @@ func (p *AgentPool) PickChat() *remoteAgent {
 
 // DispatchCommand sends a command to an agent and returns a channel for the result.
 func (p *AgentPool) DispatchCommand(agentID, taskID, command string) (<-chan taskResult, error) {
-	return p.dispatch(agentID, taskID, "exec", command)
+	return p.dispatchPayload(agentID, taskID, "exec", command, nil)
 }
 
 // DispatchChat sends a natural-language prompt to an LLM-capable agent.
@@ -252,10 +253,6 @@ func (p *AgentPool) DispatchChat(agentID, taskID, prompt string) (<-chan taskRes
 func (p *AgentPool) DispatchChatSession(agentID, taskID, sessionID, prompt string, opts webproto.ChatPayload) (<-chan taskResult, error) {
 	opts.SessionID = sessionID
 	return p.dispatchPayload(agentID, taskID, "chat", prompt, mustJSON(opts))
-}
-
-func (p *AgentPool) dispatch(agentID, taskID, typ, data string) (<-chan taskResult, error) {
-	return p.dispatchPayload(agentID, taskID, typ, data, nil)
 }
 
 func (p *AgentPool) dispatchPayload(agentID, taskID, typ, data string, payload json.RawMessage) (<-chan taskResult, error) {
@@ -357,7 +354,7 @@ func (p *AgentPool) HandleTerminalWS(agentID string, w http.ResponseWriter, r *h
 		return
 	}
 
-	conn, err := p.upgrader().Upgrade(w, r, nil)
+	conn, err := p.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
@@ -465,12 +462,11 @@ func (p *AgentPool) forwardPTYMessage(msg WSMessage) bool {
 
 // --- WebSocket handler ---
 
-func (p *AgentPool) upgrader() *websocket.Upgrader {
-	if len(p.allowedOrigins) == 0 {
-		return &websocket.Upgrader{}
+func buildUpgrader(origins []string) websocket.Upgrader {
+	if len(origins) == 0 {
+		return websocket.Upgrader{}
 	}
-	origins := p.allowedOrigins
-	return &websocket.Upgrader{
+	return websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			for _, o := range origins {
@@ -486,7 +482,7 @@ func (p *AgentPool) upgrader() *websocket.Upgrader {
 // HandleWS upgrades to WebSocket and manages the agent lifecycle.
 // This single endpoint replaces register + stream + output + complete.
 func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
-	conn, err := p.upgrader().Upgrade(w, r, nil)
+	conn, err := p.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
@@ -600,7 +596,7 @@ func (p *AgentPool) handleAgentMessage(a *remoteAgent, msg WSMessage) {
 
 	case "output":
 		if p.hub != nil && msg.TaskID != "" {
-			data := stripANSI(msg.Data)
+			data := output.StripANSI(msg.Data)
 			if data == "" {
 				return
 			}

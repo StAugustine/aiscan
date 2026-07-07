@@ -387,8 +387,9 @@ func (c *Command) formatNodeList(nodes []clash.ProxyNode, activeName string) str
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
+	runes := []rune(s)
+	if len(runes) > max {
+		return string(runes[:max]) + "..."
 	}
-	return s[:max-3] + "..."
+	return s
 }

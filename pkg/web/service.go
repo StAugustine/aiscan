@@ -3,7 +3,9 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,9 +17,12 @@ import (
 
 	"github.com/chainreactors/aiscan/core/output"
 	"github.com/chainreactors/aiscan/core/runner"
-	"github.com/chainreactors/aiscan/pkg/slashcmd"
+	"github.com/chainreactors/aiscan/pkg/tui"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
+
+// hubCommands are the 3 commands that run on the web hub, not the agent.
+var hubCommands = map[string]bool{"scan": true, "agents": true, "help": true}
 
 type ConfigStore interface {
 	GetDistributeConfig(ctx context.Context) (path string, loaded bool, cfg webproto.DistributeConfig, err error)
@@ -317,21 +322,7 @@ func (s *Service) runScanViaAgent(ctx context.Context, job *ScanJob) {
 		_ = json.Unmarshal(res.Result, result)
 	}
 
-	report := buildMarkdownReport(job.Target, job.Mode, result)
-	job.Status = StatusCompleted
-	job.Report = report
-	job.Result = result
-	job.UpdatedAt = time.Now()
-	_ = s.store.Update(ctx, job)
-
-	s.persistResultRecords(job.ID, agent.id, result)
-
-	s.hub.Broadcast(job.ID, HubEvent{
-		Type:     "complete",
-		Data:     mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
-		Reliable: true,
-	})
-	s.broadcastScanComplete(job.ID, result)
+	s.completeJob(ctx, job, agent.id, result)
 }
 
 func (s *Service) runScanLocally(ctx context.Context, job *ScanJob) {
@@ -353,21 +344,7 @@ func (s *Service) runScanLocally(ctx context.Context, job *ScanJob) {
 		job = streamWriter.job
 	}
 
-	report := buildMarkdownReport(job.Target, job.Mode, result)
-	job.Status = StatusCompleted
-	job.Report = report
-	job.Result = result
-	job.UpdatedAt = time.Now()
-	_ = s.store.Update(ctx, job)
-
-	s.persistResultRecords(job.ID, "", result)
-
-	s.hub.Broadcast(job.ID, HubEvent{
-		Type:     "complete",
-		Data:     mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
-		Reliable: true,
-	})
-	s.broadcastScanComplete(job.ID, result)
+	s.completeJob(ctx, job, "", result)
 }
 
 func (s *Service) persistResultRecords(scanID, agentID string, result *output.Result) {
@@ -375,6 +352,21 @@ func (s *Service) persistResultRecords(scanID, agentID string, result *output.Re
 	if len(recs) > 0 {
 		_ = s.store.InsertRecords(context.Background(), recs)
 	}
+}
+
+func (s *Service) completeJob(ctx context.Context, job *ScanJob, agentID string, result *output.Result) {
+	job.Status = StatusCompleted
+	job.Report = buildMarkdownReport(job.Target, job.Mode, result)
+	job.Result = result
+	job.UpdatedAt = time.Now()
+	_ = s.store.Update(ctx, job)
+	s.persistResultRecords(job.ID, agentID, result)
+	s.hub.Broadcast(job.ID, HubEvent{
+		Type:     "complete",
+		Data:     mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
+		Reliable: true,
+	})
+	s.broadcastScanComplete(job.ID, result)
 }
 
 func (s *Service) failJob(job *ScanJob, errMsg string) {
@@ -476,7 +468,7 @@ func (w *sseStreamWriter) Write(p []byte) (int, error) {
 		line := string(w.buf[:idx])
 		w.buf = w.buf[idx+1:]
 
-		line = stripANSI(line)
+		line = output.StripANSI(line)
 		if line == "" {
 			continue
 		}
@@ -712,17 +704,16 @@ func markdownHeading(value string) string {
 }
 
 func generateID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
-func stripANSI(s string) string {
-	return output.StripANSI(s)
-}
 
-func lastOutputLine(output string) string {
-	lines := strings.Split(output, "\n")
+func lastOutputLine(s string) string {
+	lines := strings.Split(s, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(stripANSI(lines[i]))
+		line := strings.TrimSpace(output.StripANSI(lines[i]))
 		if line != "" {
 			return line
 		}
@@ -1046,10 +1037,10 @@ func (s *Service) HandleUserMessage(ctx context.Context, sessionID, content stri
 func (s *Service) dispatchUserMessage(sessionID string, msg *ChatMessage, opts webproto.ChatPayload) {
 	content := strings.TrimSpace(msg.Content)
 
-	// A typed "/verb" is routed by its slashcmd catalog Scope. Hub-scope commands
-	// (scan pipeline, agent roster, merged help) run here. Agent-scope commands
-	// (/status, /provider, /<skill>, ...) and unknown verbs fall through to the
-	// agent, where the AgentConsole bridge runs the real REPL — so the full REPL
+	// A typed "/verb" is routed by scope. Hub-scope commands (scan pipeline,
+	// agent roster, merged help) run here. Agent-scope commands (/status,
+	// /provider, /<skill>, ...) and unknown verbs fall through to the agent,
+	// where the AgentConsole bridge runs the real REPL — so the full REPL
 	// command set and `!bash` work from the browser without a parallel switch.
 	if verb, args, ok := parseSlashCommand(content); ok {
 		// /clear is a true "clear conversation" on the web: it must wipe the
@@ -1059,8 +1050,8 @@ func (s *Service) dispatchUserMessage(sessionID string, msg *ChatMessage, opts w
 			s.handleClearCommand(sessionID, opts)
 			return
 		}
-		if spec, known := slashcmd.Lookup(verb); known && spec.Scope == slashcmd.ScopeHub {
-			s.runHubCommand(sessionID, strings.TrimPrefix(spec.Name, "/"), args)
+		if hubCommands[verb] {
+			s.runHubCommand(sessionID, verb, args)
 			return
 		}
 	}
@@ -1143,12 +1134,19 @@ func (s *Service) handleHelpCommand(sessionID string) {
 // included). It falls back to the static agent-scope menu when no agent is
 // bound, so the menu is populated even before an agent connects. This is the
 // single source both the "/" menu (GET .../commands) and /help render from.
-func (s *Service) SessionMenu(sessionID string) []slashcmd.Spec {
+func (s *Service) SessionMenu(sessionID string) []webproto.SlashSpec {
+	hubSpecs := []webproto.SlashSpec{
+		{Name: "/help", Description: "查看命令面板", WebMenu: true},
+		{Name: "/scan", Description: "在本会话运行扫描", Usage: "/scan <target> [--mode full] [--verify] [--sniper] [--deep]", WebMenu: true},
+		{Name: "/agents", Description: "列出已连接的 agent", WebMenu: true},
+	}
 	agentSpecs := s.sessionAgent(sessionID).slashSpecs()
 	if len(agentSpecs) == 0 {
-		agentSpecs = slashcmd.AgentWebMenu()
+		// Fall back to the static agent-scope menu when no agent is bound.
+		r := &tui.AgentConsole{}
+		agentSpecs = tui.WebMenuSpecs(r.StaticCommands())
 	}
-	return append(slashcmd.HubWebMenu(), agentSpecs...)
+	return append(hubSpecs, agentSpecs...)
 }
 
 func (s *Service) handleScanCommand(sessionID, args string) {

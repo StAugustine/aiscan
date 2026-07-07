@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
@@ -40,18 +39,6 @@ func TestParseSlashCommand(t *testing.T) {
 					tc.in, cmd, arg, ok, tc.wantCmd, tc.wantArg, tc.wantOK)
 			}
 		})
-	}
-}
-
-// TestHubScopeCommandsCovered guards that every hub-scope command in the catalog
-// is handled by runHubCommand's switch. Adding a hub command to slashcmd without
-// wiring it here would silently route it to the agent instead.
-func TestHubScopeCommandsCovered(t *testing.T) {
-	handled := map[string]bool{"/scan": true, "/agents": true, "/help": true}
-	for _, s := range slashcmd.HubWebMenu() {
-		if !handled[s.Name] {
-			t.Errorf("hub command %q is in the catalog but not handled by runHubCommand", s.Name)
-		}
 	}
 }
 
@@ -118,7 +105,7 @@ func TestClearCommandWipesTranscript(t *testing.T) {
 }
 
 // TestSessionCommandsRoute drives the real HTTP endpoint the frontend "/" menu
-// fetches, proving the route is wired and returns a JSON slashcmd catalog.
+// fetches, proving the route is wired and returns a JSON slash-command catalog.
 func TestSessionCommandsRoute(t *testing.T) {
 	svc := newMenuTestService(t)
 	srv := httptest.NewServer(NewHandler(svc, nil, nil, nil, nil))
@@ -133,7 +120,7 @@ func TestSessionCommandsRoute(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var specs []slashcmd.Spec
+	var specs []webproto.SlashSpec
 	if err := json.NewDecoder(resp.Body).Decode(&specs); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
