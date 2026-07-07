@@ -3,12 +3,12 @@ package scan
 import (
 	"strings"
 
-	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/core/eventbus"
 	"github.com/chainreactors/aiscan/core/output"
+	"github.com/chainreactors/aiscan/pkg/agent"
 	"github.com/chainreactors/aiscan/pkg/tools/scan/pipeline"
-	"github.com/chainreactors/utils/parsers"
 	sdktypes "github.com/chainreactors/sdk/pkg/types"
+	"github.com/chainreactors/utils/parsers"
 )
 
 type scanJSONLWriter struct {
@@ -108,21 +108,6 @@ func capabilityRecordType(source string) output.RecordType {
 	default:
 		return output.RecordType(source)
 	}
-}
-
-func ObservationToRecord(obs pipeline.Observation) *output.Record {
-	if obs.Action != pipeline.ActionAccept {
-		return nil
-	}
-	e, ok := obs.Event.(event)
-	if !ok {
-		return nil
-	}
-	records := observationToRecords(e)
-	if len(records) == 0 {
-		return nil
-	}
-	return &records[0]
 }
 
 type ServiceResult = parsers.GOGOResult
