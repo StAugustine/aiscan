@@ -887,13 +887,37 @@ func runChatREPLLine(ctx context.Context, line string, rt *runner.AgentRuntime, 
 		}
 		return "", err
 	}
-	if out == "" {
-		return errOut, nil
+	combined := out
+	switch {
+	case out == "":
+		combined = errOut
+	case errOut != "":
+		combined = trimChatOutput(out + "\n" + errOut)
 	}
-	if errOut == "" {
-		return out, nil
+	return fenceTerminalOutput(combined), nil
+}
+
+// fenceTerminalOutput wraps multi-line REPL/`!` command output in a Markdown
+// code fence. runChatREPLLine runs the same TUI console the interactive REPL
+// uses, whose panels (/status, /provider, /nodes …) are drawn with box-drawing
+// characters and column padding that only line up in a fixed-width,
+// newline-preserving context. The web chat renders replies as Markdown prose,
+// which collapses single newlines to spaces and uses a proportional font — so an
+// unfenced panel flattens into one mangled line. A fence makes the frontend
+// render it verbatim in a monospace <pre>. Single-line output (short status
+// confirmations like "Provider ready: …") is left as prose.
+func fenceTerminalOutput(s string) string {
+	if !strings.Contains(s, "\n") {
+		return s
 	}
-	return trimChatOutput(out + "\n" + errOut), nil
+	// Opening fence must be longer than any backtick run inside the payload
+	// (a `!cat` of a Markdown file could contain ```); grow it until it can't
+	// collide. Panel output never contains backticks, so this is just insurance.
+	fence := "```"
+	for strings.Contains(s, fence) {
+		fence += "`"
+	}
+	return fence + "\n" + s + "\n" + fence
 }
 
 func trimChatOutput(value string) string {

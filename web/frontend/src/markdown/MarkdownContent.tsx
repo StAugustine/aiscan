@@ -210,7 +210,12 @@ export function MarkdownContent({
       ),
       code: ({ className: codeClassName, children }) => {
         const langMatch = codeClassName?.match(/language-(\w+)/)
-        const isBlock = Boolean(codeClassName)
+        // A fenced block with no info string gets no className from react-markdown,
+        // so key "block vs inline" off the className OR a contained newline: a
+        // multi-line run is always a block (e.g. an agent's ``` … ``` panel dump,
+        // or a REPL /status box). Without this it falls to inline-code styling and
+        // renders as a pill nested in the <pre> instead of a clean monospace block.
+        const isBlock = Boolean(codeClassName) || String(children).includes('\n')
 
         if (isBlock && SyntaxHighlighter && langMatch) {
           const lang = langMatch[1]
