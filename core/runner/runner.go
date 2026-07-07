@@ -280,6 +280,31 @@ func (rt *AgentRuntime) Close() {
 	}
 }
 
+// ReloadProvider rebuilds the LLM provider from option and hot-swaps it into the
+// running runtime: rt.App (used by the REPL and scan paths) and rt.Config (the
+// template every new chat agent is cloned from). It returns the live provider
+// and resolved model so callers can propagate the swap to already-running
+// agents. On a build failure the runtime is left untouched and the error is
+// returned, so a bad config push never knocks out a working provider.
+func (rt *AgentRuntime) ReloadProvider(option *cfg.Option) (agent.Provider, string, error) {
+	if rt == nil || rt.App == nil {
+		return nil, "", fmt.Errorf("agent runtime is not configured")
+	}
+	logger := rt.Config.Logger
+	if logger == nil {
+		logger = telemetry.NopLogger()
+	}
+	provider, resolved, err := initProvider(cfg.ProviderConfig(option), logger)
+	if err != nil {
+		return nil, "", err
+	}
+	rt.App.Provider = provider
+	rt.App.ProviderConfig = *resolved
+	rt.Config.Provider = provider
+	rt.Config.Model = resolved.Model
+	return provider, resolved.Model, nil
+}
+
 // ---------------------------------------------------------------------------
 // Mode dispatch
 // ---------------------------------------------------------------------------
@@ -321,7 +346,7 @@ func runOneShotMode(ctx context.Context, option *cfg.Option, logger telemetry.Lo
 
 	a := agent.NewAgent(rt.Config.
 		WithSystemPrompt(rt.SystemPrompt).
-		WithStream(tui.AgentStreamingEnabled(option)))
+		WithStream(true))
 	if len(rt.ResumeMessages) > 0 {
 		a.LoadMessages(rt.ResumeMessages)
 	}
@@ -359,7 +384,7 @@ func runInteractiveMode(ctx context.Context, option *cfg.Option, logger telemetr
 
 	session := agent.NewAgent(rt.Config.
 		WithSystemPrompt(rt.SystemPrompt).
-		WithStream(tui.AgentStreamingEnabled(option)))
+		WithStream(true))
 	if len(rt.ResumeMessages) > 0 {
 		session.LoadMessages(rt.ResumeMessages)
 	}

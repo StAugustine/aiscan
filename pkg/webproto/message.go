@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/chainreactors/aiscan/pkg/agent/tmux"
+	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/utils/pty"
 )
 
@@ -21,10 +22,17 @@ type Message struct {
 }
 
 type RegisterPayload struct {
-	Name     string        `json:"name"`
-	Commands []string      `json:"commands,omitempty"`
-	Identity AgentIdentity `json:"identity,omitempty"`
-	Stats    AgentStats    `json:"stats,omitempty"`
+	Name string `json:"name"`
+	// Commands is the LLM tool/pseudo-command registry (pkg/commands) the agent
+	// exposes to the model — distinct from SlashCommands.
+	Commands []string `json:"commands,omitempty"`
+	// SlashCommands is the agent's user-facing "/verb" catalog (pkg/slashcmd):
+	// the agent-scope, menu-visible commands it can run, plus one per loaded
+	// skill. The hub merges these with its own hub-scope commands to drive the
+	// web "/" menu and /help, so the surfaces never drift.
+	SlashCommands []slashcmd.Spec `json:"slash_commands,omitempty"`
+	Identity      AgentIdentity   `json:"identity,omitempty"`
+	Stats         AgentStats      `json:"stats,omitempty"`
 }
 
 type AgentIdentity struct {
@@ -56,6 +64,18 @@ type AgentStats struct {
 	Assets           int    `json:"assets,omitempty"`
 	Loots            int    `json:"loots,omitempty"`
 	LastEvent        string `json:"last_event,omitempty"`
+}
+
+// ChatPayload is the WS payload for a "chat" message: it scopes the remote
+// agent conversation to a web session and carries optional Goal-mode run
+// controls. Empty EvalCriteria means a plain turn; a non-empty one makes the
+// agent run the evaluator loop against the criteria for up to EvalMaxRounds.
+type ChatPayload struct {
+	SessionID       string `json:"session_id,omitempty"`
+	Persist         bool   `json:"persist,omitempty"`
+	EvalCriteria    string `json:"eval_criteria,omitempty"`
+	EvalMaxRounds   int    `json:"eval_max_rounds,omitempty"`
+	PersistMaxTurns int    `json:"persist_max_turns,omitempty"`
 }
 
 type FileUploadPayload struct {

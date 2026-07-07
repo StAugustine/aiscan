@@ -6,14 +6,15 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/chainreactors/aiscan/pkg/probe"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
 type Handler struct {
-	mux *http.ServeMux
+	handler http.Handler
 }
 
-func NewHandler(service *Service, agents *AgentPool, ioaHandler http.Handler, static http.Handler) *Handler {
+func NewHandler(service *Service, agents *AgentPool, local *LocalAgents, adminToken string, ioaHandler http.Handler, static http.Handler) *Handler {
 	mux := http.NewServeMux()
 
 	h := &handlerImpl{service: service, agents: agents}
@@ -28,6 +29,9 @@ func NewHandler(service *Service, agents *AgentPool, ioaHandler http.Handler, st
 	mux.HandleFunc("GET /api/config", h.getConfig)
 	mux.HandleFunc("PUT /api/config", h.saveConfig)
 	mux.HandleFunc("GET /api/config/distribute", h.getDistributeConfig)
+	mux.HandleFunc("POST /api/config/llm/test", h.testLLM)
+	mux.HandleFunc("POST /api/config/llm/models", h.listLLMModels)
+	mux.HandleFunc("POST /api/config/{section}/test", h.testConn)
 	mux.HandleFunc("GET /api/agents", h.listAgents)
 
 	// Chat session routes
@@ -39,6 +43,7 @@ func NewHandler(service *Service, agents *AgentPool, ioaHandler http.Handler, st
 	mux.HandleFunc("POST /api/chat/sessions/{id}/cancel", h.cancelSession)
 	mux.HandleFunc("POST /api/chat/sessions/{id}/upload", h.uploadFile)
 	mux.HandleFunc("GET /api/chat/sessions/{id}/messages", h.listMessages)
+	mux.HandleFunc("GET /api/chat/sessions/{id}/commands", h.sessionCommands)
 	mux.HandleFunc("GET /api/chat/sessions/{id}/events", h.sessionEvents)
 
 	if agents != nil {
@@ -56,22 +61,26 @@ func NewHandler(service *Service, agents *AgentPool, ioaHandler http.Handler, st
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	registerLocalAgentRoutes(mux, local)
+
 	if static != nil {
 		mux.Handle("/", static)
 	}
 
-	return &Handler{mux: mux}
+	// Gate the process-spawning local-agent endpoints behind the admin token
+	// (no-op if empty).
+	return &Handler{handler: adminAuthMiddleware(adminToken, mux)}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	h.mux.ServeHTTP(w, r)
+	h.handler.ServeHTTP(w, r)
 }
 
 type handlerImpl struct {
@@ -125,6 +134,45 @@ func (h *handlerImpl) getDistributeConfig(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+func (h *handlerImpl) testLLM(w http.ResponseWriter, r *http.Request) {
+	var req probe.LLMTestRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	result, err := h.service.TestLLM(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *handlerImpl) listLLMModels(w http.ResponseWriter, r *http.Request) {
+	var req probe.LLMModelsRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	result, err := h.service.ListLLMModels(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (h *handlerImpl) testConn(w http.ResponseWriter, r *http.Request) {
+	var cfg webproto.DistributeConfig
+	if !decodeOptionalBody(w, r, &cfg) {
+		return
+	}
+	result, err := h.service.TestConn(r.Context(), r.PathValue("section"), cfg)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *handlerImpl) createScan(w http.ResponseWriter, r *http.Request) {
@@ -253,12 +301,26 @@ func (h *handlerImpl) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	msg, err := h.service.HandleUserMessage(r.Context(), r.PathValue("id"), req.Content)
+	opts := webproto.ChatPayload{
+		Persist:         req.Persist,
+		EvalCriteria:    strings.TrimSpace(req.EvalCriteria),
+		EvalMaxRounds:   req.EvalMaxRounds,
+		PersistMaxTurns: req.PersistMaxTurns,
+	}
+	msg, err := h.service.HandleUserMessage(r.Context(), r.PathValue("id"), req.Content, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, msg)
+}
+
+// sessionCommands returns the web "/" command menu for a session: hub-scope
+// commands merged with the bound agent's reported agent-scope commands (skills
+// included). The frontend renders its slash-command popup from this, so the menu
+// always reflects what actually works instead of a hand-maintained list.
+func (h *handlerImpl) sessionCommands(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.service.SessionMenu(r.PathValue("id")))
 }
 
 func (h *handlerImpl) cancelSession(w http.ResponseWriter, r *http.Request) {
@@ -339,4 +401,24 @@ func writeError(w http.ResponseWriter, status int, message string) {
 func decodeJSON(body io.ReadCloser, v interface{}) error {
 	defer body.Close()
 	return json.NewDecoder(body).Decode(v)
+}
+
+// decodeBody decodes the JSON request body into v, writing a 400 on failure.
+// Returns false when the caller should return early.
+func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := decodeJSON(r.Body, v); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
+
+// decodeOptionalBody decodes the request body only when one is present. An absent
+// body is fine (returns true); a present-but-invalid body writes a 400 and
+// returns false so the caller returns early.
+func decodeOptionalBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if r.ContentLength == 0 {
+		return true
+	}
+	return decodeBody(w, r, v)
 }

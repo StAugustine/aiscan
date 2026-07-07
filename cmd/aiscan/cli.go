@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +31,8 @@ type webCommand struct {
 	MaxScans    int    `long:"max-scans" default:"3" description:"Maximum concurrent scans"`
 	ScanTimeout int    `long:"scan-timeout" default:"600" description:"Maximum scan runtime in seconds"`
 	IOAToken    string `long:"ioa-token" description:"IOA access key (auto-generated if empty)"`
+	AdminToken  string `long:"admin-token" env:"AISCAN_ADMIN_TOKEN" description:"Admin token gating local-agent launch endpoints (empty = open)"`
+	AgentBinary string `long:"agent-binary" env:"AISCAN_AGENT_BINARY" description:"Path to the aiscan binary used to launch local agents (default: this executable)"`
 }
 
 type cliOptions struct {
@@ -543,7 +546,7 @@ func applyScannerCommandArgs(scannerName string, args []string, option *cfg.Opti
 		key, value, hasValue := strings.Cut(arg, "=")
 		matched := false
 		for _, f := range scannerKnownFlags {
-			if !containsString(f.names, key) {
+			if !slices.Contains(f.names, key) {
 				continue
 			}
 			if scannerName == "scan" && key == "--ai" {
@@ -581,15 +584,6 @@ func flagValue(arg string, hasValue bool, value string, args []string, i *int) (
 	}
 	*i++
 	return args[*i], nil
-}
-
-func containsString(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func truthyFlagValue(value string) bool {

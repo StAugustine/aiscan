@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -80,7 +81,26 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 	ioaSvc := ioaserver.NewService(ioaserver.NewMemoryStore(), accessKey)
 	ioaHandler := ioaserver.AuthMiddleware(ioaSvc)(ioaserver.NewHandler(ioaSvc))
 
-	handler := web.NewHandler(service, pool, ioaHandler, newSPAFileServer(staticSub))
+	// Local agents: the hub can spawn `aiscan agent` children on its own host
+	// (one-click launch/stop from the UI). Each child dials the hub's loopback
+	// web + IOA endpoints — the IOA access key is embedded into the IOA URL — and
+	// registers in the pool like any node. The hub holds the only handle to them,
+	// so they are all killed on shutdown.
+	localAgents := web.NewLocalAgents(hubLocalURL(opts.Addr), accessKey, opts.AgentBinary, pool)
+	go func() {
+		<-ctx.Done()
+		localAgents.StopAll()
+	}()
+
+	// The local-agent launcher spawns processes on the hub host. When reachable
+	// off-loopback without an admin token it is wide open; warn loudly rather than
+	// silently. (Kept back-compat/open so an existing loopback hub works out of
+	// the box — set --admin-token to gate it.)
+	if opts.AdminToken == "" && !isLoopbackListen(opts.Addr) {
+		logger.Warnf("SECURITY: local-agent launch API is UNAUTHENTICATED on non-loopback %s — set --admin-token or AISCAN_ADMIN_TOKEN to gate /api/deploy/local", opts.Addr)
+	}
+
+	handler := web.NewHandler(service, pool, localAgents, opts.AdminToken, ioaHandler, newSPAFileServer(staticSub))
 
 	srv := &http.Server{
 		Addr:    opts.Addr,
@@ -244,3 +264,40 @@ func findWebConfigFile(explicit string) string {
 	return ""
 }
 
+// ---------------------------------------------------------------------------
+// Listen-address helpers
+// ---------------------------------------------------------------------------
+
+// isLoopbackListen reports whether addr binds only to loopback, so an open
+// (token-less) control plane is not actually reachable from the network. A
+// wildcard/empty host, a non-loopback IP, or an unparseable address is treated
+// as exposed (returns false) so the security warning errs toward firing.
+func isLoopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return false
+	}
+	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		return ip.IsLoopback()
+	}
+	return host == "localhost"
+}
+
+// hubLocalURL derives the loopback URL a local agent child should dial from the
+// server listen address. A wildcard/empty host becomes 127.0.0.1; an
+// unparseable address yields "".
+func hubLocalURL(addr string) string {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil || port == "" {
+		return ""
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}

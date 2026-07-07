@@ -173,19 +173,34 @@ type ChatMessage struct {
 }
 
 const (
-	ChatEventMessage      = "message"
-	ChatEventMessageStart = "message_start"
-	ChatEventMessageDelta = "message_delta"
-	ChatEventMessageEnd   = "message_end"
-	ChatEventToolCall     = "tool_call"
-	ChatEventToolResult   = "tool_result"
-	ChatEventThinking     = "thinking"
-	ChatEventScanStarted  = "scan_started"
-	ChatEventScanProgress = "scan_progress"
-	ChatEventScanComplete = "scan_complete"
-	ChatEventScanError    = "scan_error"
-	ChatEventAgentJoined  = "agent_joined"
-	ChatEventError        = "error"
+	ChatEventMessage        = "message"
+	ChatEventMessageStart   = "message_start"
+	ChatEventMessageDelta   = "message_delta"
+	ChatEventMessageEnd     = "message_end"
+	ChatEventToolCall       = "tool_call"
+	ChatEventToolResult     = "tool_result"
+	ChatEventThinking       = "thinking"
+	ChatEventScanStarted    = "scan_started"
+	ChatEventScanProgress   = "scan_progress"
+	ChatEventScanComplete   = "scan_complete"
+	ChatEventScanError      = "scan_error"
+	ChatEventAgentJoined    = "agent_joined"
+	ChatEventSessionCleared = "session_cleared"
+	ChatEventEval           = "eval"
+	ChatEventError          = "error"
+)
+
+// System message codes. A backend-generated system message carries a stable
+// Code (+ optional Params) so the client can localize it via i18n; Content
+// holds an English fallback for non-i18n consumers, logs and tests. Keys are
+// mirrored under `sys.*` in web/frontend/src/i18n/locales/*/chat.ts.
+const (
+	SysNoRunningTask     = "no_running_task"
+	SysPaused            = "paused"
+	SysFileUploaded      = "file_uploaded" // params: filename, path
+	SysNoAgentsConnected = "no_agents_connected"
+	SysAgentsList        = "agents_list" // params: count, agents[]
+	SysAgentNotConnected = "agent_not_connected"
 )
 
 type ChatEvent struct {
@@ -205,11 +220,24 @@ type ChatEvent struct {
 	Result     *output.Result `json:"result,omitempty"`
 	Data       string         `json:"data,omitempty"`
 	Error      string         `json:"error,omitempty"`
-	Transient  bool           `json:"-"`
+	Code       string         `json:"code,omitempty"`
+	Params     map[string]any `json:"params,omitempty"`
+	// Goal-mode evaluator verdict, carried on ChatEventEval. EvalRound is
+	// 0-indexed (the client renders round+1).
+	EvalRound  int    `json:"eval_round,omitempty"`
+	EvalPass   bool   `json:"eval_pass,omitempty"`
+	EvalReason string `json:"eval_reason,omitempty"`
+	Transient  bool   `json:"-"`
 }
 
 type SendMessageRequest struct {
 	Content string `json:"content"`
+	// Goal-mode run controls (optional). The frontend sends these when the user
+	// enables the Goal panel; a plain chat send leaves them zero.
+	Persist         bool   `json:"persist,omitempty"`
+	EvalCriteria    string `json:"eval_criteria,omitempty"`
+	EvalMaxRounds   int    `json:"eval_max_rounds,omitempty"`
+	PersistMaxTurns int    `json:"persist_max_turns,omitempty"`
 }
 
 type CreateSessionRequest struct {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/chainreactors/aiscan/core/output"
 	"github.com/chainreactors/aiscan/core/runner"
+	"github.com/chainreactors/aiscan/pkg/slashcmd"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
@@ -24,7 +25,7 @@ type ConfigStore interface {
 }
 
 type ServiceConfig struct {
-	Store         Store
+	Store         *SQLiteStore
 	App           *runner.App
 	ConfigStore   ConfigStore
 	AppFactory    func(ctx context.Context) (*runner.App, error)
@@ -34,7 +35,7 @@ type ServiceConfig struct {
 }
 
 type Service struct {
-	store   Store
+	store   *SQLiteStore
 	appMu   sync.RWMutex
 	app     *runner.App
 	config  ConfigStore
@@ -151,6 +152,11 @@ func (s *Service) SaveConfig(ctx context.Context, cfg webproto.DistributeConfig)
 			return cs, fmt.Errorf("reload aiscan runtime: %w", err)
 		}
 		s.swapApp(app)
+	}
+	// Tell connected agents to hot-swap their own provider too — the hub reload
+	// above only refreshes the hub's in-process runtime, not the agent subprocesses.
+	if s.agents != nil {
+		s.agents.BroadcastConfigReload()
 	}
 	return s.GetConfigStatus(ctx)
 }
@@ -321,8 +327,9 @@ func (s *Service) runScanViaAgent(ctx context.Context, job *ScanJob) {
 	s.persistResultRecords(job.ID, agent.id, result)
 
 	s.hub.Broadcast(job.ID, HubEvent{
-		Type: "complete",
-		Data: mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
+		Type:     "complete",
+		Data:     mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
+		Reliable: true,
 	})
 	s.broadcastScanComplete(job.ID, result)
 }
@@ -356,8 +363,9 @@ func (s *Service) runScanLocally(ctx context.Context, job *ScanJob) {
 	s.persistResultRecords(job.ID, "", result)
 
 	s.hub.Broadcast(job.ID, HubEvent{
-		Type: "complete",
-		Data: mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
+		Type:     "complete",
+		Data:     mustJSON(map[string]any{"scan_id": job.ID, "status": "completed", "result": result}),
+		Reliable: true,
 	})
 	s.broadcastScanComplete(job.ID, result)
 }
@@ -375,8 +383,9 @@ func (s *Service) failJob(job *ScanJob, errMsg string) {
 	job.UpdatedAt = time.Now()
 	_ = s.store.Update(context.Background(), job)
 	s.hub.Broadcast(job.ID, HubEvent{
-		Type: "error",
-		Data: mustJSON(map[string]string{"scan_id": job.ID, "error": errMsg}),
+		Type:     "error",
+		Data:     mustJSON(map[string]string{"scan_id": job.ID, "error": errMsg}),
+		Reliable: true,
 	})
 }
 
@@ -444,7 +453,7 @@ func (s *Service) executeScan(ctx context.Context, args []string, stream io.Writ
 type sseStreamWriter struct {
 	hub    *Hub
 	scanID string
-	store  Store
+	store  *SQLiteStore
 	job    *ScanJob
 	ctx    context.Context
 	buf    []byte
@@ -775,7 +784,7 @@ func (s *Service) CancelSession(ctx context.Context, sessionID string) error {
 	s.mu.Unlock()
 
 	if len(tasks) == 0 {
-		s.broadcastSystemMessage(sessionID, "No running task.")
+		s.broadcastSystemMessage(sessionID, SysNoRunningTask, "No running task.", nil)
 		return nil
 	}
 	if s.agents != nil {
@@ -785,7 +794,7 @@ func (s *Service) CancelSession(ctx context.Context, sessionID string) error {
 			}
 		}
 	}
-	s.broadcastSystemMessage(sessionID, "Paused.")
+	s.broadcastSystemMessage(sessionID, SysPaused, "Paused.", nil)
 	return nil
 }
 
@@ -845,7 +854,9 @@ func (s *Service) HandleFileUpload(ctx context.Context, sessionID, filename stri
 		if result.Error != "" {
 			return nil, fmt.Errorf("agent upload error: %s", result.Error)
 		}
-		s.broadcastSystemMessage(sessionID, fmt.Sprintf("File uploaded: %s → %s", filename, result.Path))
+		s.broadcastSystemMessage(sessionID, SysFileUploaded,
+			fmt.Sprintf("File uploaded: %s → %s", filename, result.Path),
+			map[string]any{"filename": filename, "path": result.Path})
 		return &result, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -899,7 +910,26 @@ func (s *Service) BroadcastChatEvent(sessionID string, event ChatEvent) {
 	s.hub.Broadcast(sessionTopic(sessionID), HubEvent{
 		Type: event.Type,
 		Data: mustJSON(event),
+		// Terminal events must never be dropped (see isTerminalChatEvent). Eval
+		// verdicts are rare, non-terminal, but each one is a discrete round marker
+		// the client can't reconstruct if lost under backpressure — send reliably.
+		Reliable: isTerminalChatEvent(event.Type) || event.Type == ChatEventEval,
 	})
+}
+
+// isTerminalChatEvent reports whether an event ends a run (or its scan) on the
+// client — the signals that release the composer and stop the streaming
+// indicators. These are broadcast reliably so the SSE hub never drops them under
+// backpressure: a lost token delta is invisible (a later delta and the final
+// message resend the full text), but a lost terminal event leaves the UI stuck
+// "streaming" forever — a busy composer and a blinking cursor that never clears.
+func isTerminalChatEvent(t string) bool {
+	switch t {
+	case ChatEventMessage, ChatEventMessageEnd, ChatEventError,
+		ChatEventScanComplete, ChatEventScanError:
+		return true
+	}
+	return false
 }
 
 func (s *Service) persistRuntimeChatEvent(sessionID string, event ChatEvent) {
@@ -923,6 +953,24 @@ func (s *Service) persistRuntimeChatEvent(sessionID string, event ChatEvent) {
 	}
 
 	switch event.Type {
+	case ChatEventMessageEnd:
+		// The finalized assistant text for one turn — the commentary the model
+		// emits before (or between) its tool calls. Only the run's LAST turn used
+		// to survive a reload, persisted as the aggregate reply by
+		// completeAssistantRun; every earlier turn's text streamed live but was
+		// dropped from the store, so it vanished from any timeline rebuilt from it:
+		// a page reload, an SSE reconnect, or a session switch that revalidates
+		// against the store. Persist each turn's text as an assistant message keyed
+		// by its turn so buildTimelineFromMessages reconstructs it. The final turn
+		// shares a turn key with the aggregate reply, so on rebuild the two merge
+		// into one bubble instead of doubling. (message_start / message_delta stay
+		// unpersisted — they are streaming partials of this same finalized text.)
+		msg.Role = "assistant"
+		msg.Content = strings.TrimSpace(event.Content)
+		if msg.Content == "" {
+			return
+		}
+
 	case ChatEventThinking:
 		msg.Role = "system"
 		msg.Content = strings.TrimSpace(event.Content)
@@ -946,6 +994,16 @@ func (s *Service) persistRuntimeChatEvent(sessionID string, event ChatEvent) {
 		msg.Content = event.Content
 		metadata["tool_call_id"] = event.ToolCallID
 
+	case ChatEventEval:
+		// Persist the round verdict so the eval badge survives a reload / session
+		// switch — buildTimelineFromMessages reconstructs it from content (reason)
+		// plus this metadata (round/pass).
+		msg.Role = "system"
+		msg.Content = event.EvalReason
+		metadata["eval_round"] = event.EvalRound
+		metadata["eval_pass"] = event.EvalPass
+		metadata["eval_reason"] = event.EvalReason
+
 	default:
 		return
 	}
@@ -956,7 +1014,7 @@ func (s *Service) persistRuntimeChatEvent(sessionID string, event ChatEvent) {
 	_ = s.store.AddMessage(context.Background(), msg)
 }
 
-func (s *Service) HandleUserMessage(ctx context.Context, sessionID, content string) (*ChatMessage, error) {
+func (s *Service) HandleUserMessage(ctx context.Context, sessionID, content string, opts webproto.ChatPayload) (*ChatMessage, error) {
 	now := time.Now()
 	msg := &ChatMessage{
 		ID:        generateID(),
@@ -983,14 +1041,117 @@ func (s *Service) HandleUserMessage(ctx context.Context, sessionID, content stri
 		_ = s.store.UpdateSession(ctx, session)
 	}
 
-	go s.dispatchUserMessage(sessionID, msg)
+	go s.dispatchUserMessage(sessionID, msg, opts)
 
 	return msg, nil
 }
 
-func (s *Service) dispatchUserMessage(sessionID string, msg *ChatMessage) {
+func (s *Service) dispatchUserMessage(sessionID string, msg *ChatMessage, opts webproto.ChatPayload) {
 	content := strings.TrimSpace(msg.Content)
-	s.handleChatMessage(sessionID, content)
+
+	// A typed "/verb" is routed by its slashcmd catalog Scope. Hub-scope commands
+	// (scan pipeline, agent roster, merged help) run here. Agent-scope commands
+	// (/status, /provider, /<skill>, ...) and unknown verbs fall through to the
+	// agent, where the AgentConsole bridge runs the real REPL — so the full REPL
+	// command set and `!bash` work from the browser without a parallel switch.
+	if verb, args, ok := parseSlashCommand(content); ok {
+		// /clear is a true "clear conversation" on the web: it must wipe the
+		// visible+persisted transcript, not just reset the agent's model context.
+		// Owned end-to-end by the hub so it does both (see handleClearCommand).
+		if verb == "clear" {
+			s.handleClearCommand(sessionID, opts)
+			return
+		}
+		if spec, known := slashcmd.Lookup(verb); known && spec.Scope == slashcmd.ScopeHub {
+			s.runHubCommand(sessionID, strings.TrimPrefix(spec.Name, "/"), args)
+			return
+		}
+	}
+
+	s.handleChatMessage(sessionID, content, opts)
+}
+
+// handleClearCommand implements web /clear as "clear conversation": it deletes the
+// session's persisted messages (incl. the "/clear" message itself) and signals the
+// open UI to empty its timeline, then forwards /clear to the bound agent so its
+// in-memory model context resets too. The agent's "Context cleared." reply lands in
+// the now-empty transcript as the sole confirmation line; with no agent bound, the
+// emptied view is itself the confirmation.
+func (s *Service) handleClearCommand(sessionID string, opts webproto.ChatPayload) {
+	_ = s.store.ClearMessages(context.Background(), sessionID)
+	// Transient: a live-only signal to connected clients — the cleared state is
+	// already durable in the store, so a reconnecting client re-derives it on load.
+	s.BroadcastChatEvent(sessionID, ChatEvent{Type: ChatEventSessionCleared, Transient: true})
+	if s.sessionAgent(sessionID) != nil {
+		s.handleChatMessage(sessionID, "/clear", opts)
+	}
+}
+
+// runHubCommand executes a hub-scope slash command — one that needs hub state
+// (the scan pipeline, the connected-agent roster, or the merged help catalog).
+// name is the canonical catalog name without its leading slash. Agent-scope
+// commands never reach here; they fall through to the agent bridge.
+func (s *Service) runHubCommand(sessionID, name, args string) {
+	switch name {
+	case "scan":
+		s.handleScanCommand(sessionID, args)
+	case "agents":
+		s.handleAgentsCommand(sessionID)
+	case "help":
+		s.handleHelpCommand(sessionID)
+	}
+}
+
+// parseSlashCommand splits a leading "/verb args..." into its lowercased verb
+// and the trimmed remainder. ok is false when content does not begin with a
+// non-empty "/verb".
+func parseSlashCommand(content string) (cmd, args string, ok bool) {
+	if !strings.HasPrefix(content, "/") {
+		return "", "", false
+	}
+	rest := strings.TrimSpace(content[1:])
+	if rest == "" {
+		return "", "", false
+	}
+	if i := strings.IndexAny(rest, " \t\r\n"); i >= 0 {
+		return strings.ToLower(rest[:i]), strings.TrimSpace(rest[i:]), true
+	}
+	return strings.ToLower(rest), "", true
+}
+
+// handleHelpCommand renders the merged "/" command catalog (hub-scope plus the
+// bound agent's reported agent-scope commands) as a system message. Broadcast
+// with an empty code so the frontend shows this dynamic, already-localized text
+// verbatim instead of translating it.
+func (s *Service) handleHelpCommand(sessionID string) {
+	var b strings.Builder
+	b.WriteString("**Commands**\n")
+	for _, c := range s.SessionMenu(sessionID) {
+		syntax := c.Usage
+		if syntax == "" {
+			syntax = c.Name
+		}
+		if c.Description != "" {
+			fmt.Fprintf(&b, "- `%s` — %s\n", syntax, c.Description)
+		} else {
+			fmt.Fprintf(&b, "- `%s`\n", syntax)
+		}
+	}
+	b.WriteString("\n`!<command>` 直接在 agent 上执行 shell/伪命令;其他文本作为对话发送给 agent。")
+	s.broadcastSystemMessage(sessionID, "", b.String(), nil)
+}
+
+// SessionMenu is the web "/" command catalog for a session: the hub-scope
+// commands plus the bound agent's reported agent-scope commands (its skills
+// included). It falls back to the static agent-scope menu when no agent is
+// bound, so the menu is populated even before an agent connects. This is the
+// single source both the "/" menu (GET .../commands) and /help render from.
+func (s *Service) SessionMenu(sessionID string) []slashcmd.Spec {
+	agentSpecs := s.sessionAgent(sessionID).slashSpecs()
+	if len(agentSpecs) == 0 {
+		agentSpecs = slashcmd.AgentWebMenu()
+	}
+	return append(slashcmd.HubWebMenu(), agentSpecs...)
 }
 
 func (s *Service) handleScanCommand(sessionID, args string) {
@@ -1049,10 +1210,11 @@ func (s *Service) handleScanCommand(sessionID, args string) {
 
 func (s *Service) handleAgentsCommand(sessionID string) {
 	if s.agents == nil || s.agents.Count() == 0 {
-		s.broadcastSystemMessage(sessionID, "No agents connected.")
+		s.broadcastSystemMessage(sessionID, SysNoAgentsConnected, "No agents connected.", nil)
 		return
 	}
 	agents := s.agents.List()
+	list := make([]map[string]any, 0, len(agents))
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("%d agent(s) connected:\n", len(agents)))
 	for _, a := range agents {
@@ -1061,12 +1223,17 @@ func (s *Service) handleAgentsCommand(sessionID string) {
 			status = "busy"
 		}
 		sb.WriteString(fmt.Sprintf("- **%s** (%s) — %s", a.Name, a.ID[:8], status))
+		entry := map[string]any{"name": a.Name, "id": a.ID[:8], "busy": a.Busy}
 		if a.Identity.Model != "" {
 			sb.WriteString(fmt.Sprintf(" — %s/%s", a.Identity.Provider, a.Identity.Model))
+			entry["provider"] = a.Identity.Provider
+			entry["model"] = a.Identity.Model
 		}
 		sb.WriteString("\n")
+		list = append(list, entry)
 	}
-	s.broadcastSystemMessage(sessionID, sb.String())
+	s.broadcastSystemMessage(sessionID, SysAgentsList, sb.String(),
+		map[string]any{"count": len(agents), "agents": list})
 }
 
 func (s *Service) sessionAgent(sessionID string) *remoteAgent {
@@ -1131,16 +1298,15 @@ func (s *Service) handleShellCommand(sessionID, command string) {
 		if res.Err != "" {
 			content = "Error: " + res.Err
 		}
-		if strings.TrimSpace(content) != "" {
-			s.persistAssistantMessage(sessionID, agent.id, agent.name, content, res.Turn)
-		}
+		s.completeAssistantRun(sessionID, agent.id, agent.name, content, res.Turn)
 	}()
 }
 
-func (s *Service) handleChatMessage(sessionID, content string) {
+func (s *Service) handleChatMessage(sessionID, content string, opts webproto.ChatPayload) {
 	agent := s.sessionAgent(sessionID)
 	if agent == nil {
-		s.broadcastSystemMessage(sessionID, "Agent is not connected. Reconnect the agent to continue chatting.")
+		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
+			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
 		return
 	}
 
@@ -1153,7 +1319,7 @@ func (s *Service) handleChatMessage(sessionID, content string) {
 		AgentName: agent.name,
 	})
 
-	resultCh, err := s.agents.DispatchChatSession(agent.id, taskID, sessionID, content)
+	resultCh, err := s.agents.DispatchChatSession(agent.id, taskID, sessionID, content, opts)
 	if err != nil {
 		s.finishSessionTask(taskID)
 		s.BroadcastChatEvent(sessionID, ChatEvent{
@@ -1167,6 +1333,13 @@ func (s *Service) handleChatMessage(sessionID, content string) {
 		res, ok := <-resultCh
 		canceled := s.finishSessionTask(taskID)
 		if !ok {
+			// Agent dropped mid-run: signal completion so the composer releases
+			// instead of hanging on the streaming indicator (mirrors the command
+			// path above).
+			s.BroadcastChatEvent(sessionID, ChatEvent{
+				Type:  ChatEventError,
+				Error: "agent disconnected",
+			})
 			return
 		}
 		if canceled {
@@ -1176,19 +1349,27 @@ func (s *Service) handleChatMessage(sessionID, content string) {
 		if res.Err != "" {
 			reply = "Error: " + res.Err
 		}
-		if strings.TrimSpace(reply) != "" {
-			s.persistAssistantMessage(sessionID, agent.id, agent.name, reply, res.Turn)
-		}
+		s.completeAssistantRun(sessionID, agent.id, agent.name, reply, res.Turn)
 	}()
 }
 
-func (s *Service) broadcastSystemMessage(sessionID, content string) {
+// broadcastSystemMessage persists + broadcasts a system message. code names a
+// translatable template rendered client-side via i18n (see the Sys* codes);
+// fallback is the English text kept in Content for non-i18n consumers, logs and
+// tests. params feeds i18n interpolation and is stored next to code so the
+// message stays localizable after a reload.
+func (s *Service) broadcastSystemMessage(sessionID, code, fallback string, params map[string]any) {
 	now := time.Now()
+	var meta json.RawMessage
+	if code != "" {
+		meta, _ = json.Marshal(map[string]any{"code": code, "params": params})
+	}
 	msg := &ChatMessage{
 		ID:        generateID(),
 		SessionID: sessionID,
 		Role:      "system",
-		Content:   content,
+		Content:   fallback,
+		Metadata:  meta,
 		CreatedAt: now,
 	}
 	_ = s.store.AddMessage(context.Background(), msg)
@@ -1196,7 +1377,9 @@ func (s *Service) broadcastSystemMessage(sessionID, content string) {
 		Type:      ChatEventMessage,
 		MessageID: msg.ID,
 		Role:      "system",
-		Content:   content,
+		Content:   fallback,
+		Code:      code,
+		Params:    params,
 	})
 }
 
@@ -1217,31 +1400,40 @@ func (s *Service) broadcastScanComplete(scanID string, result *output.Result) {
 	})
 }
 
-func (s *Service) persistAssistantMessage(sessionID, agentID, agentName, content string, turn int) {
+// completeAssistantRun is a run's terminal signal to the client. It always
+// broadcasts the aggregate assistant message so the UI finalizes the turn and
+// releases the composer — even when the run produced no final text (a tool-only
+// turn, or an eval run that hit its round cap). Skipping the broadcast on empty
+// content was what stranded the streaming indicator — the blinking cursor or the
+// "working" dots — forever. The reply is persisted only when it carries text, so
+// an empty completion never leaves a blank row in the transcript.
+func (s *Service) completeAssistantRun(sessionID, agentID, agentName, content string, turn int) {
 	content = strings.TrimRight(content, " \t\r\n")
-	now := time.Now()
-	msg := &ChatMessage{
-		ID:        generateID(),
-		SessionID: sessionID,
-		Role:      "assistant",
-		AgentID:   agentID,
-		AgentName: agentName,
-		Content:   content,
-		CreatedAt: now,
-	}
-	if turn > 0 {
-		if data, err := json.Marshal(map[string]any{"turn": turn}); err == nil {
-			msg.Metadata = data
-		}
-	}
-	_ = s.store.AddMessage(context.Background(), msg)
-	s.BroadcastChatEvent(sessionID, ChatEvent{
+	event := ChatEvent{
 		Type:      ChatEventMessage,
-		MessageID: msg.ID,
 		Role:      "assistant",
 		AgentID:   agentID,
 		AgentName: agentName,
 		Turn:      turn,
 		Content:   content,
-	})
+	}
+	if content != "" {
+		msg := &ChatMessage{
+			ID:        generateID(),
+			SessionID: sessionID,
+			Role:      "assistant",
+			AgentID:   agentID,
+			AgentName: agentName,
+			Content:   content,
+			CreatedAt: time.Now(),
+		}
+		if turn > 0 {
+			if data, err := json.Marshal(map[string]any{"turn": turn}); err == nil {
+				msg.Metadata = data
+			}
+		}
+		_ = s.store.AddMessage(context.Background(), msg)
+		event.MessageID = msg.ID
+	}
+	s.BroadcastChatEvent(sessionID, event)
 }

@@ -103,6 +103,19 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Re-home existing chat sessions onto the agent's stable identity. The hub
+	// historically keyed connected agents by a per-connection random id and froze
+	// that id into the session, so any agent reconnect stranded the session as
+	// "not connected". The pool now keys by the stable node name (== agent_name);
+	// align legacy rows onto it. Idempotent — new sessions store agent_id ==
+	// agent_name — so this is a no-op once converged.
+	if _, err := db.Exec(
+		`UPDATE chat_sessions SET agent_id = agent_name
+		   WHERE agent_name != '' AND agent_id != agent_name`,
+	); err != nil {
+		return err
+	}
+
 	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS records (
 			id         TEXT PRIMARY KEY,
@@ -129,10 +142,6 @@ func migrate(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_sessions_updated ON chat_sessions(updated_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_sessions_agent ON chat_sessions(agent_id);
 		CREATE INDEX IF NOT EXISTS idx_messages_session ON chat_messages(session_id, created_at);
-		CREATE INDEX IF NOT EXISTS idx_records_scan ON records(scan_id, type, created_at);
-		CREATE INDEX IF NOT EXISTS idx_records_session ON records(session_id, type);
-		CREATE INDEX IF NOT EXISTS idx_records_type ON records(type, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_records_priority ON records(priority, type);
 	`)
 	return err
 }
@@ -396,6 +405,14 @@ func (s *SQLiteStore) AddMessage(ctx context.Context, msg *ChatMessage) error {
 	return err
 }
 
+// ClearMessages deletes every message in a session without removing the session
+// itself — the store half of web /clear ("clear conversation"). Messages are leaf
+// rows (nothing references them), so a single delete suffices.
+func (s *SQLiteStore) ClearMessages(ctx context.Context, sessionID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM chat_messages WHERE session_id = ?`, sessionID)
+	return err
+}
+
 func (s *SQLiteStore) ListMessages(ctx context.Context, sessionID string, limit int) ([]*ChatMessage, error) {
 	if limit <= 0 {
 		limit = 500
@@ -454,16 +471,7 @@ func (s *SQLiteStore) SessionScanIDs(ctx context.Context, sessionID string) ([]s
 // --- Records ---
 
 func (s *SQLiteStore) InsertRecord(ctx context.Context, rec *output.Record) error {
-	tagsJSON, _ := json.Marshal(rec.Tags)
-	_, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO records (id, type, scan_id, session_id, agent_id, source, target, turn, priority, summary, loot, tags, data, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, string(rec.Type), rec.ScanID, rec.SessionID, rec.AgentID,
-		rec.Source, rec.Target, rec.Turn, rec.Priority, rec.Summary,
-		boolToInt(rec.Loot), string(tagsJSON), string(rec.Data),
-		rec.Timestamp.Format(time.RFC3339Nano),
-	)
-	return err
+	return s.InsertRecords(ctx, []*output.Record{rec})
 }
 
 func (s *SQLiteStore) InsertRecords(ctx context.Context, recs []*output.Record) error {
@@ -496,4 +504,3 @@ func (s *SQLiteStore) InsertRecords(ctx context.Context, recs []*output.Record) 
 	}
 	return tx.Commit()
 }
-
