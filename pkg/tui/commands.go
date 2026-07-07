@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 
 	cfg "github.com/chainreactors/aiscan/core/config"
@@ -151,7 +152,7 @@ func CollectStatus(s *Session, mode, historyPath string) StatusInfo {
 	}
 	info.IOA = "disabled"
 	if s.Option != nil && strings.TrimSpace(s.Option.IOAURL) != "" {
-		info.IOA = strings.TrimSpace(s.Option.IOAURL)
+		info.IOA = redactIOAURL(strings.TrimSpace(s.Option.IOAURL))
 		if s.Option.Space != "" {
 			info.IOA += " · space " + s.Option.Space
 		}
@@ -172,4 +173,17 @@ func CollectStatus(s *Session, mode, historyPath string) StatusInfo {
 		}
 	}
 	return info
+}
+
+// redactIOAURL strips the access token that the IOA URL carries as userinfo
+// (http://<token>@host/ioa) so /status never prints the secret to the terminal
+// or into a shared screenshot. On a parse failure or a token-less URL it returns
+// the input unchanged.
+func redactIOAURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }

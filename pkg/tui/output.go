@@ -115,8 +115,6 @@ func newAgentOutput(option *cfg.Option, stdout, stderr io.Writer, stdoutTTY, std
 	return o
 }
 
-func AgentStreamingEnabled(_ *cfg.Option) bool { return true }
-
 // Stderr returns the stream writer's stderr for direct output.
 func (o *AgentOutput) Stderr() io.Writer { return o.stream.stderr }
 
@@ -246,8 +244,6 @@ func (o *AgentOutput) Queued(text string) {
 		fmt.Fprintf(w, "%s %s\n", o.bold("queued:"), text)
 	}
 }
-
-func (o *AgentOutput) QueuedFollowUp(text string) { o.Queued("follow-up: " + text) }
 
 func (o *AgentOutput) Stopping() {
 	if o == nil || o.verbosity < 0 {

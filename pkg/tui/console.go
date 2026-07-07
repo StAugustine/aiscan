@@ -561,7 +561,7 @@ func (r *AgentConsole) ioaCommands() []Command {
 				if err != nil {
 					return err
 				}
-				return RunIOASpaces(ctx, client, r.option, r.stdout, r.stderr)
+				return r.renderIOASpaces(ctx, client)
 			},
 		},
 		{
@@ -572,7 +572,7 @@ func (r *AgentConsole) ioaCommands() []Command {
 				if err != nil {
 					return err
 				}
-				return RunIOAMessages(ctx, client, r.option, cfg.IOAClientArgs{Space: args[0]}, r.stdout, r.stderr)
+				return r.renderIOAMessages(ctx, client, args[0])
 			},
 		},
 		{
@@ -598,11 +598,11 @@ func (r *AgentConsole) ioaCommands() []Command {
 				if err != nil {
 					return err
 				}
-				var a cfg.IOAClientArgs
+				space := ""
 				if len(args) > 0 {
-					a.Space = args[0]
+					space = args[0]
 				}
-				return RunIOANodes(ctx, client, r.option, a, r.stdout, r.stderr)
+				return r.renderIOANodes(ctx, client, space)
 			},
 		},
 	}

@@ -3,8 +3,6 @@ package commands
 import (
 	"sync"
 
-	"github.com/chainreactors/aiscan/core/eventbus"
-	"github.com/chainreactors/aiscan/core/output"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 )
 
@@ -28,7 +26,6 @@ type Deps struct {
 	NodeName     string
 	NodeMeta     map[string]any
 	TavilyKeys   string // comma-separated Tavily API keys (build-time fallback)
-	DataBus      *eventbus.Bus[output.ToolDataEvent]
 }
 
 func (d *Deps) GetLogger() telemetry.Logger {

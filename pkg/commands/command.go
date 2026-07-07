@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	"github.com/chainreactors/aiscan/pkg/agent/provider"
-
 )
 
 type ToolDefinition = provider.ToolDefinition
@@ -41,12 +40,12 @@ type WorkDirAware interface {
 }
 
 type CommandRegistry struct {
-	mu        sync.RWMutex
-	items     map[string]Command
-	order     []string
-	groups    map[string][]string
-	workDir   string
-	output    io.Writer
+	mu      sync.RWMutex
+	items   map[string]Command
+	order   []string
+	groups  map[string][]string
+	workDir string
+	output  io.Writer
 
 	tools     map[string]AgentTool
 	toolOrder []string
@@ -60,21 +59,10 @@ func (r *CommandRegistry) SetOutput(w io.Writer) {
 
 func NewRegistry() *CommandRegistry {
 	return &CommandRegistry{
-		items: make(map[string]Command),
+		items:  make(map[string]Command),
 		groups: make(map[string][]string),
 		tools:  make(map[string]AgentTool),
 	}
-}
-
-func (r *CommandRegistry) CloneTools() *CommandRegistry {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	clone := NewRegistry()
-	for _, name := range r.toolOrder {
-		clone.tools[name] = r.tools[name]
-		clone.toolOrder = append(clone.toolOrder, name)
-	}
-	return clone
 }
 
 func (r *CommandRegistry) RegisterTool(t AgentTool) {
