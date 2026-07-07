@@ -486,7 +486,7 @@ func (s *SQLiteStore) InsertRecords(ctx context.Context, recs []*output.Record) 
 		`INSERT OR IGNORE INTO records (id, type, scan_id, session_id, agent_id, source, target, turn, priority, summary, loot, tags, data, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return err
 	}
 	defer stmt.Close()
@@ -498,7 +498,7 @@ func (s *SQLiteStore) InsertRecords(ctx context.Context, recs []*output.Record) 
 			boolToInt(rec.Loot), string(tagsJSON), string(rec.Data),
 			rec.Timestamp.Format(time.RFC3339Nano),
 		); err != nil {
-			tx.Rollback()
+			_ = tx.Rollback()
 			return err
 		}
 	}

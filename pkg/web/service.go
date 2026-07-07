@@ -838,18 +838,15 @@ func (s *Service) HandleFileUpload(ctx context.Context, sessionID, filename stri
 			return nil, fmt.Errorf("agent disconnected during upload")
 		}
 		var result webproto.FileUploadResult
-		if len(res.Result) > 0 {
-			if err := json.Unmarshal(res.Result, &result); err != nil {
-				return &webproto.FileUploadResult{
-					Filename: filename,
-					Path:     res.Output,
-					Size:     int64(len(data)),
-				}, nil
+		// The agent normally returns a JSON-encoded FileUploadResult. If it sent
+		// nothing structured (or non-JSON output), synthesize one from the raw
+		// output path — the upload still succeeded, just without an envelope.
+		if len(res.Result) == 0 || json.Unmarshal(res.Result, &result) != nil {
+			result = webproto.FileUploadResult{
+				Filename: filename,
+				Path:     res.Output,
+				Size:     int64(len(data)),
 			}
-		} else {
-			result.Filename = filename
-			result.Path = res.Output
-			result.Size = int64(len(data))
 		}
 		if result.Error != "" {
 			return nil, fmt.Errorf("agent upload error: %s", result.Error)
@@ -1245,61 +1242,6 @@ func (s *Service) sessionAgent(sessionID string) *remoteAgent {
 		return nil
 	}
 	return s.agents.get(session.AgentID)
-}
-
-func (s *Service) handleShellCommand(sessionID, command string) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return
-	}
-
-	agent := s.sessionAgent(sessionID)
-	if agent == nil {
-		s.BroadcastChatEvent(sessionID, ChatEvent{
-			Type:  ChatEventError,
-			Error: "agent is not connected",
-		})
-		return
-	}
-
-	taskID := generateID()
-	s.registerSessionTask(taskID, sessionID, agent.id)
-
-	s.BroadcastChatEvent(sessionID, ChatEvent{
-		Type:      ChatEventAgentJoined,
-		AgentID:   agent.id,
-		AgentName: agent.name,
-	})
-
-	resultCh, err := s.agents.DispatchCommand(agent.id, taskID, command)
-	if err != nil {
-		s.finishSessionTask(taskID)
-		s.BroadcastChatEvent(sessionID, ChatEvent{
-			Type:  ChatEventError,
-			Error: err.Error(),
-		})
-		return
-	}
-
-	go func() {
-		res, ok := <-resultCh
-		canceled := s.finishSessionTask(taskID)
-		if !ok {
-			s.BroadcastChatEvent(sessionID, ChatEvent{
-				Type:  ChatEventError,
-				Error: "agent disconnected",
-			})
-			return
-		}
-		if canceled {
-			return
-		}
-		content := res.Output
-		if res.Err != "" {
-			content = "Error: " + res.Err
-		}
-		s.completeAssistantRun(sessionID, agent.id, agent.name, content, res.Turn)
-	}()
 }
 
 func (s *Service) handleChatMessage(sessionID, content string, opts webproto.ChatPayload) {

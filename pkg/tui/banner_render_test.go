@@ -130,7 +130,7 @@ func TestShortID(t *testing.T) {
 	}
 }
 
-// TestStatusSampleRender prints a realistic /status box (colour off) so the fix
+// TestStatusSampleRender prints a realistic /status box (color off) so the fix
 // is visible in `go test -v` output.
 func TestStatusSampleRender(t *testing.T) {
 	rows := []helpRow{

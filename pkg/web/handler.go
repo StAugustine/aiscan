@@ -334,7 +334,11 @@ func (h *handlerImpl) cancelSession(w http.ResponseWriter, r *http.Request) {
 const maxUploadSize = 50 << 20 // 50 MB
 
 func (h *handlerImpl) uploadFile(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(maxUploadSize); err != nil {
+	// Bound the total request body before parsing so an oversized multipart
+	// upload can't exhaust memory/disk (gosec G120). Allow modest headroom over
+	// maxUploadSize for the multipart envelope (boundaries and part headers).
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+(1<<20))
+	if err := r.ParseMultipartForm(maxUploadSize); err != nil { //nolint:gosec // G120: body bounded by http.MaxBytesReader above
 		writeError(w, http.StatusBadRequest, "file too large or invalid multipart form")
 		return
 	}
