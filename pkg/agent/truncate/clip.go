@@ -37,3 +37,33 @@ func ClipRunes(s string, maxRunes int) string {
 	}
 	return s[:bytePos] + "…"
 }
+
+// ClipLines keeps at most maxLines lines, each truncated to maxWidth runes.
+// Returns the selected lines and the count of hidden lines.
+func ClipLines(text string, maxLines, maxWidth int) ([]string, int) {
+	all := strings.Split(text, "\n")
+	total := len(all)
+	if maxLines <= 0 {
+		return nil, total
+	}
+	if maxWidth < 0 {
+		maxWidth = 0
+	}
+	if total > maxLines {
+		all = all[:maxLines]
+	}
+	out := make([]string, len(all))
+	for i, line := range all {
+		if utf8.RuneCountInString(line) > maxWidth {
+			runes := []rune(line)
+			out[i] = string(runes[:maxWidth]) + "…"
+		} else {
+			out[i] = line
+		}
+	}
+	hidden := total - len(out)
+	if hidden < 0 {
+		hidden = 0
+	}
+	return out, hidden
+}

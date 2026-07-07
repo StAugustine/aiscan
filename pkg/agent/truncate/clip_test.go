@@ -73,3 +73,48 @@ func TestClipRunes_CJK(t *testing.T) {
 		t.Fatalf("expected … suffix, got %q", got)
 	}
 }
+
+func TestClipLines_Basic(t *testing.T) {
+	text := "line1\nline2\nline3\nline4\nline5"
+	lines, hidden := ClipLines(text, 3, 100)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+	if hidden != 2 {
+		t.Fatalf("expected 2 hidden, got %d", hidden)
+	}
+	if lines[0] != "line1" {
+		t.Fatalf("expected 'line1', got %q", lines[0])
+	}
+}
+
+func TestClipLines_WidthTruncation(t *testing.T) {
+	text := "short\n" + strings.Repeat("x", 200)
+	lines, _ := ClipLines(text, 10, 50)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines, got %d", len(lines))
+	}
+	if utf8.RuneCountInString(lines[1]) > 51 { // 50 + "…"
+		t.Fatalf("line too long: %d runes", utf8.RuneCountInString(lines[1]))
+	}
+}
+
+func TestClipLines_NoTruncation(t *testing.T) {
+	text := "a\nb"
+	lines, hidden := ClipLines(text, 10, 100)
+	if len(lines) != 2 || hidden != 0 {
+		t.Fatalf("expected 2 lines 0 hidden, got %d lines %d hidden", len(lines), hidden)
+	}
+}
+
+func TestClipLines_NonPositiveLimitsDoNotPanic(t *testing.T) {
+	lines, hidden := ClipLines("a\nb", 0, 100)
+	if len(lines) != 0 || hidden != 2 {
+		t.Fatalf("expected no lines and 2 hidden, got %d lines %d hidden", len(lines), hidden)
+	}
+
+	lines, hidden = ClipLines("abc", 1, -1)
+	if len(lines) != 1 || hidden != 0 || lines[0] != "…" {
+		t.Fatalf("unexpected negative width result: lines=%q hidden=%d", lines, hidden)
+	}
+}
