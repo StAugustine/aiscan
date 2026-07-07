@@ -196,6 +196,8 @@ github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3 h1
 github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3/go.mod h1:4BG8xIxTebn0VoOTEwQ2pmYIB3K2qwGINxnRHALBNZg=
 github.com/chainreactors/sdk v0.3.4-0.20260704194820-4141f24c2bcd h1:v4BbmITJ7RV3feKI5EV923CPkJ5ePTW0VfusjeKx+Yk=
 github.com/chainreactors/sdk v0.3.4-0.20260704194820-4141f24c2bcd/go.mod h1:Mg9czK8sDWOoaPnbEPGfXTK5L1NBdNsgFh4B4/geCaU=
+github.com/chainreactors/sdk v0.3.4-0.20260707120839-686d4bfa2b2b h1:QB5SlwqZM2pKZW8Ng4DDsp/WDbLD23CCiNSTjm0OvdY=
+github.com/chainreactors/sdk v0.3.4-0.20260707120839-686d4bfa2b2b/go.mod h1:Mg9czK8sDWOoaPnbEPGfXTK5L1NBdNsgFh4B4/geCaU=
 github.com/chainreactors/spray v1.3.3-0.20260704194611-7ce7b850d447 h1:4RawLZEJD1Ae/yjsqQMxiKXtECB2xjW1qC3txfmRAus=
 github.com/chainreactors/spray v1.3.3-0.20260704194611-7ce7b850d447/go.mod h1:QT+vmYNPBmiemn+MJ5oNDNFSM/w0LNxtM5VhpI7RNNA=
 github.com/chainreactors/tui/console v0.0.0-20260701051656-c5b85e7256a9 h1:uXMnvtLAZ14A69yQ5FFHV1/dJ/5NCkboZpbsODlh4eY=

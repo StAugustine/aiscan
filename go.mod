@@ -14,7 +14,7 @@ require (
 	github.com/chainreactors/proton v0.3.3-0.20260704194051-e7034d2bb8cb
 	github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593
 	github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3
-	github.com/chainreactors/sdk v0.3.4-0.20260704194820-4141f24c2bcd
+	github.com/chainreactors/sdk v0.3.4-0.20260707120839-686d4bfa2b2b
 	github.com/chainreactors/spray v1.3.3-0.20260704194611-7ce7b850d447
 	github.com/chainreactors/tui/console v0.0.0-20260701051656-c5b85e7256a9
 	github.com/chainreactors/tui/readline v0.0.0-20260626181537-7c0eb4b933cd
@@ -31,6 +31,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jessevdk/go-flags v1.6.1
+	github.com/mattn/go-runewidth v0.0.23
 	github.com/muesli/termenv v0.16.0
 	github.com/projectdiscovery/goflags v0.1.74
 	github.com/projectdiscovery/gologger v1.1.68
@@ -184,7 +185,6 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
-	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/metacubex/utls v1.7.3 // indirect
 	github.com/mfonda/simhash v0.0.0-20151007195837-79f94a1100d6 // indirect
 	github.com/mholt/archiver v3.1.1+incompatible // indirect

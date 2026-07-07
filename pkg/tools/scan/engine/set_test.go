@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/chainreactors/aiscan/pkg/telemetry"
+	gogopkg "github.com/chainreactors/gogo/v2/pkg"
 	"github.com/chainreactors/neutron/operators"
 	neutronhttp "github.com/chainreactors/neutron/protocols/http"
 	"github.com/chainreactors/neutron/templates"
@@ -592,5 +593,32 @@ func testNeutronTemplate(id string) *templates.Template {
 				},
 			},
 		},
+	}
+}
+
+// Regression: aiscan drives gogo through the SDK, whose applyInjectedNeutron
+// populates gogo's pkg.TemplateMap but must also populate pkg.ChainExec.
+// engine.NeutronScan calls pkg.ChainExec.Execute on every open host when
+// Exploit != "none" (aiscan's default is "auto"); a nil ChainExec turns that
+// into a nil-receiver panic caught only by the ants pool ("worker exits from
+// panic"), silently dropping the host's result.
+func TestGogoEngineInjectsChainExecutor(t *testing.T) {
+	gogopkg.ChainExec = nil
+
+	neu, err := neutron.NewEngineWithTemplates(
+		(neutron.Templates{}).Merge([]*templates.Template{testNeutronTemplate("chainexec-regression")}),
+	)
+	if err != nil {
+		t.Fatalf("build neutron engine: %v", err)
+	}
+
+	eng, err := gogo.NewEngine(gogo.NewConfig().WithNeutronEngine(neu))
+	if err != nil {
+		t.Fatalf("build gogo engine: %v", err)
+	}
+	defer eng.Close()
+
+	if gogopkg.ChainExec == nil {
+		t.Fatal("pkg.ChainExec is nil after gogo engine init with injected neutron templates; exploit(-e) scan would nil-panic in engine.NeutronScan")
 	}
 }
