@@ -116,8 +116,9 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
       setForm(statusToForm(next))
       setSaved(true)
       onSaved()
-    } catch (err: any) {
-      setError(err.message || t('failedSave'))
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message || t('failedSave'))
     } finally {
       setSaving(false)
     }
@@ -217,8 +218,9 @@ function LLMTab({ form, setForm, cs }: TabProps) {
       } else {
         setModelsError(res.error || t('modelsFailed'))
       }
-    } catch (err: any) {
-      setModelsError(err.message || t('modelsFailed'))
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setModelsError(message || t('modelsFailed'))
     } finally {
       setFetchingModels(false)
     }
@@ -236,8 +238,9 @@ function LLMTab({ form, setForm, cs }: TabProps) {
         proxy: form.llm.proxy,
       })
       setResult(res)
-    } catch (err: any) {
-      setResult({ ok: false, provider: form.llm.provider, model: form.llm.model, latency_ms: 0, error: err.message || t('testFailed') })
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setResult({ ok: false, provider: form.llm.provider, model: form.llm.model, latency_ms: 0, error: message || t('testFailed') })
     } finally {
       setTesting(false)
     }
@@ -429,8 +432,9 @@ function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' 
     try {
       const res = await testConn(section, form)
       setChecks(res.checks)
-    } catch (err: any) {
-      setChecks([{ name: section, ok: false, latency_ms: 0, error: err.message || t('testFailed') }])
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      setChecks([{ name: section, ok: false, latency_ms: 0, error: message || t('testFailed') }])
     } finally {
       setTesting(false)
     }

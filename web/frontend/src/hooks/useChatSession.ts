@@ -44,6 +44,23 @@ function safeUUID(): string {
   return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
+// Build a ChatMessage from a ChatEvent, sharing the common field mapping
+// (agent_id, agent_name, session_id, timestamps, i18n metadata) across all
+// event→message construction sites.  `contentOverride` lets callers supply a
+// value that differs from `ev.content` (e.g. an accumulated streaming buffer).
+function eventToMessage(ev: ChatEvent, fallbackId: string, contentOverride?: string): ChatMessage {
+  return {
+    id: ev.message_id || fallbackId,
+    session_id: ev.session_id,
+    role: ev.role || 'assistant',
+    content: contentOverride ?? ev.content ?? '',
+    agent_id: ev.agent_id,
+    agent_name: ev.agent_name,
+    created_at: new Date().toISOString(),
+    metadata: ev.code ? { code: ev.code, params: ev.params } : undefined,
+  }
+}
+
 export type TimelineItemKind = 'message' | 'assistant_response' | 'tool_call' | 'scan_started' | 'scan_progress' | 'scan_complete' | 'thinking' | 'agent_joined' | 'eval'
 
 export interface TimelineItem {
@@ -131,8 +148,6 @@ export function useChatSession() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
   const timelineRef = useRef<TimelineItem[]>([])
-  const [streamingText, setStreamingText] = useState<string | null>(null)
-  const [streamingAgent, setStreamingAgent] = useState<string | null>(null)
   const [scanResults, setScanResults] = useState<Map<string, ScanResult>>(() => new Map())
   const [detailScanID, setDetailScanID] = useState<string | null>(null)
   const [isThinking, setIsThinking] = useState(false)
@@ -226,8 +241,6 @@ export function useChatSession() {
   // Both a cold open and a cache restore want this cleared — only their handling
   // of the durable state (messages/timeline/scans) differs.
   function resetTransientState() {
-    setStreamingText(null)
-    setStreamingAgent(null)
     setIsThinking(false)
     setPendingResponse(false)
     setError('')
@@ -378,15 +391,7 @@ export function useChatSession() {
 
   function setAssistantResponseMessage(event: ChatEvent, content: string, streaming: boolean, timestamp: number) {
     const responseID = assistantResponseID(timestamp, event)
-    const msg: ChatMessage = {
-      id: event.message_id || `assistant-response-${responseID}`,
-      session_id: event.session_id,
-      role: 'assistant',
-      agent_id: event.agent_id,
-      agent_name: event.agent_name,
-      content,
-      created_at: new Date().toISOString(),
-    }
+    const msg = eventToMessage(event, `assistant-response-${responseID}`, content)
     upsertAssistantResponse((response) => ({
       ...response,
       agentName: event.agent_name || response.agentName,
@@ -435,8 +440,6 @@ export function useChatSession() {
   function finalizeRun() {
     setIsThinking(false)
     setPendingResponse(false)
-    setStreamingText(null)
-    setStreamingAgent(null)
     setTimelineItems((prev) => {
       let changed = false
       const next = prev.map((item) => {
@@ -470,18 +473,7 @@ export function useChatSession() {
           break
         }
         if (!event.content) break
-        const msg: ChatMessage = {
-          id: event.message_id || safeUUID(),
-          session_id: event.session_id,
-          role: event.role || 'assistant',
-          agent_id: event.agent_id,
-          agent_name: event.agent_name,
-          content: event.content,
-          // Carry the i18n code/params so system messages render localized on
-          // both the live path and (via persisted metadata) after a reload.
-          metadata: event.code ? { code: event.code, params: event.params } : undefined,
-          created_at: new Date().toISOString(),
-        }
+        const msg = eventToMessage(event, safeUUID())
         appendMessage(msg, now)
         setIsThinking(false)
         setPendingResponse(false)
@@ -490,8 +482,6 @@ export function useChatSession() {
 
       case 'message_start':
         setAssistantResponseMessage(event, event.content || '', true, now)
-        setStreamingText(null)
-        setStreamingAgent(event.agent_name || null)
         setIsThinking(false)
         break
 
@@ -501,15 +491,7 @@ export function useChatSession() {
         } else if (event.delta) {
           upsertAssistantResponse((response) => {
             const prevContent = response.response?.content || ''
-            const msg: ChatMessage = response.response || {
-              id: `assistant-response-${response.id}`,
-              session_id: event.session_id,
-              role: 'assistant',
-              agent_id: event.agent_id,
-              agent_name: event.agent_name,
-              content: '',
-              created_at: new Date().toISOString(),
-            }
+            const msg: ChatMessage = response.response || eventToMessage(event, `assistant-response-${response.id}`, '')
             return {
               ...response,
               response: { ...msg, content: prevContent + event.delta },
@@ -521,8 +503,6 @@ export function useChatSession() {
 
       case 'message_end': {
         const finalContent = event.content || ''
-        setStreamingText(null)
-        setStreamingAgent(null)
         if (finalContent) {
           setAssistantResponseMessage(event, finalContent, false, now)
         } else {
@@ -543,7 +523,6 @@ export function useChatSession() {
         }
         upsertAssistantTool(event, tc, now)
         setIsThinking(false)
-        setStreamingText(null)
         break
       }
 
@@ -556,7 +535,6 @@ export function useChatSession() {
 
       case 'thinking':
         setIsThinking(true)
-        setStreamingAgent(event.agent_name || null)
         if (event.content || event.data || event.delta) {
           setAssistantThinking(event, event.content || event.data || event.delta || '', now)
         } else {
@@ -622,7 +600,6 @@ export function useChatSession() {
         break
 
       case 'agent_joined':
-        setStreamingAgent(event.agent_name || null)
         break
 
       case 'eval':
@@ -1189,12 +1166,10 @@ export function useChatSession() {
     sessions,
     activeSessionID,
     timeline,
-    streamingText,
-    streamingAgent,
     scanResults,
     detailScanID,
     isThinking,
-    busy: pendingResponse || isThinking || streamingText !== null || timeline.some((item) => (
+    busy: pendingResponse || isThinking || timeline.some((item) => (
       item.kind === 'assistant_response' && item.assistantResponse?.streaming
     )),
     error,

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type DragEvent, type ReactNode } from 'react'
 import { ArrowUp, AtSign, FileText, Paperclip, Slash, Square, Upload, X } from 'lucide-react'
 import { cn } from '@aspect/theme'
+import { formatBytes } from '../../../lib/format'
 
 export interface CommandHint {
   cmd: string
@@ -51,12 +52,6 @@ function isTextFile(file: File): boolean {
   if (file.type.startsWith('text/')) return true
   const textExts = ['.txt', '.md', '.json', '.yaml', '.yml', '.toml', '.csv', '.xml', '.html', '.css', '.js', '.ts', '.py', '.go', '.rs', '.sh', '.bat', '.conf', '.cfg', '.ini', '.log', '.sql', '.env']
   return textExts.some((ext) => file.name.toLowerCase().endsWith(ext))
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
 // The asset token being typed under the caret, if any. The '@' must sit at the
@@ -351,7 +346,7 @@ export default function ChatInput({
               >
                 <FileText className="h-3 w-3 shrink-0" />
                 <span className="max-w-[120px] truncate">{a.file.name}</span>
-                <span className="text-muted-foreground">{formatSize(a.file.size)}</span>
+                <span className="text-muted-foreground">{formatBytes(a.file.size)}</span>
                 <button
                   type="button"
                   onClick={() => toggleMode(i)}

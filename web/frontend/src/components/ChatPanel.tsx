@@ -35,7 +35,41 @@ import { fetchSessionCommands, uploadChatFile } from '../api'
 import type { ChatMessage, ScanResult, SlashCommandSpec } from '../api'
 import type { AssistantResponseState, TimelineItem } from '../hooks/useChatSession'
 import InstrumentIdle from './InstrumentIdle'
-import { toViewerExtensionItem } from '../lib/timeline-mapper'
+
+// Inlined from the former timeline-mapper.ts — converts the hook's local
+// TimelineItem variants into the viewer's ExtensionTimelineItem so the
+// registered timeline renderers (scan cards, agent-joined chip) can render them.
+function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
+  switch (item.kind) {
+    case 'scan_started':
+    case 'scan_progress':
+      return {
+        id: item.id,
+        kind: 'extension',
+        timestamp: item.timestamp,
+        extensionType: 'scan_started',
+        data: { scanID: item.scanID || '', lines: item.scanLines || [] },
+      }
+    case 'scan_complete':
+      return {
+        id: item.id,
+        kind: 'extension',
+        timestamp: item.timestamp,
+        extensionType: 'scan_complete',
+        data: { scanID: item.scanID || '', result: item.scanResult },
+      }
+    case 'agent_joined':
+      return {
+        id: item.id,
+        kind: 'extension',
+        timestamp: item.timestamp,
+        extensionType: 'agent_joined',
+        data: { agentName: item.agentName || '' },
+      }
+    default:
+      return null
+  }
+}
 
 const workspaceClass = 'mx-auto w-full max-w-[96rem] px-4 sm:px-5 lg:px-6'
 const contentOffsetClass = 'xl:ml-[6.75rem]'
@@ -43,8 +77,6 @@ const threadOffsetClass = 'xl:mr-[6.75rem]'
 
 interface Props {
   timeline: TimelineItem[]
-  streamingText: string | null
-  streamingAgent: string | null
   scanResults: Map<string, ScanResult>
   isThinking: boolean
   isBusy: boolean
@@ -64,8 +96,6 @@ interface Props {
 
 export default function ChatPanel({
   timeline,
-  streamingText,
-  streamingAgent,
   scanResults,
   isThinking,
   isBusy,
@@ -178,14 +208,14 @@ export default function ChatPanel({
 
   useEffect(() => {
     if (!stickRef.current) return
-    if (timeline.length === 0 && streamingText === null) return
+    if (timeline.length === 0) return
     const behavior: ScrollBehavior = jumpRef.current ? 'auto' : 'smooth'
     jumpRef.current = false
     bottomRef.current?.scrollIntoView({ behavior })
     // Depend on `timeline` (not `timeline.length`): streamed deltas update the
     // last item in place, producing a new array reference but the same length,
     // so keying on length would freeze autoscroll mid-reply.
-  }, [timeline, streamingText, isThinking])
+  }, [timeline, isThinking])
 
   // The composer footer shares the flex column with the message viewport, so
   // whenever it grows — Goal panel expands, the eval/message textareas auto-grow,
@@ -218,12 +248,11 @@ export default function ChatPanel({
   // so the "done" cue fires once when the whole turn actually settles, not on
   // every pause between tool calls.
   useEffect(() => {
-    const active = isBusy || isThinking || streamingText !== null
-    if (streamingText !== null) setLiveStatus(t('a11yResponding'))
-    else if (active) setLiveStatus(t('a11yThinking'))
+    const active = isBusy || isThinking
+    if (active) setLiveStatus(t('a11yThinking'))
     else if (wasActiveRef.current) setLiveStatus(t('a11yTurnDone'))
     wasActiveRef.current = active
-  }, [isBusy, isThinking, streamingText, t])
+  }, [isBusy, isThinking, t])
 
   async function handleSendWithAttachments(content: string, attachments?: ChatAttachment[]) {
     const opts = sendOpts()
@@ -247,7 +276,8 @@ export default function ChatPanel({
     const fullContent = contextParts.length > 0
       ? `${FILE_CONTEXT_PREAMBLE}\n${contextParts.join('\n')}\n\n${content}`
       : content
-    if (fullContent.trim()) onSend(fullContent, sendOpts())
+    if (fullContent.trim()) onSend(fullContent, opts)
+    if (hadGoal) resetGoal()
   }
 
   function handleScroll() {
@@ -291,7 +321,7 @@ export default function ChatPanel({
                 />
               </div>
             )}
-            {hasActiveSession && timeline.length === 0 && !isThinking && streamingText === null && (
+            {hasActiveSession && timeline.length === 0 && !isThinking && (
               <div className={inputFormClass}>
                 <EmptyState
                   eyebrow={t('readyEyebrow')}
@@ -313,25 +343,16 @@ export default function ChatPanel({
               />
             ))}
 
-            {streamingText !== null && (
-              <StreamingEntry
-                text={streamingText}
-                agentName={streamingAgent}
-                hasThreadNotes={hasThreadNotes}
-              />
-            )}
-
-            {isThinking && streamingText === null && !hasAssistantResponse && (
+            {isThinking && !hasAssistantResponse && (
               <TimelineRow
                 item={{
                   id: 'thinking-live',
                   kind: 'thinking',
                   timestamp: Date.now(),
-                  agentName: streamingAgent || undefined,
                 }}
                 hasThreadNotes={hasThreadNotes}
               >
-                <ChatThinking actorName={streamingAgent} />
+                <ChatThinking />
               </TimelineRow>
             )}
 
@@ -454,41 +475,6 @@ const TimelineEntry = memo(function TimelineEntry({
   )
 })
 
-function StreamingEntry({
-  text,
-  agentName,
-  hasThreadNotes,
-}: {
-  text: string
-  agentName: string | null
-  hasThreadNotes: boolean
-}) {
-  const now = new Date().toISOString()
-  const message: ChatMessage = {
-    id: 'streaming-assistant',
-    session_id: '',
-    role: 'assistant',
-    agent_name: agentName || undefined,
-    content: text,
-    created_at: now,
-  }
-
-  return (
-    <TimelineRow
-      item={{ id: 'streaming-assistant', kind: 'message', timestamp: Date.now(), message }}
-      hasThreadNotes={hasThreadNotes}
-    >
-      <ChatMessageBubble
-        role="assistant"
-        actorName={agentName || undefined}
-        streaming
-      >
-        {text ? <MarkdownContent content={trimDisplayContent(text)} compact /> : null}
-      </ChatMessageBubble>
-    </TimelineRow>
-  )
-}
-
 function TimelineRow({
   item,
   hasThreadNotes,
@@ -561,7 +547,7 @@ function timelineContent(
     case 'scan_started':
     case 'scan_progress':
     case 'scan_complete': {
-      const ext = toViewerExtensionItem(item) as ExtensionTimelineItem | null
+      const ext = toExtensionItem(item) as ExtensionTimelineItem | null
       if (!ext) return null
       const config = resolveTimelineRenderer(ext.extensionType)
       if (!config) return null
@@ -577,7 +563,7 @@ function timelineContent(
       )
 
     case 'agent_joined': {
-      const ext = toViewerExtensionItem(item) as ExtensionTimelineItem | null
+      const ext = toExtensionItem(item) as ExtensionTimelineItem | null
       if (!ext) return null
       const config = resolveTimelineRenderer(ext.extensionType)
       if (!config) return null
@@ -786,7 +772,7 @@ function describeTimelineItem(item: TimelineItem, t: (key: string) => string): T
     case 'scan_progress':
     case 'scan_complete':
     case 'agent_joined': {
-      const ext = toViewerExtensionItem(item) as ExtensionTimelineItem | null
+      const ext = toExtensionItem(item) as ExtensionTimelineItem | null
       if (!ext) return null
       const config = resolveTimelineRenderer(ext.extensionType)
       if (config?.mark) {

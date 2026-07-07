@@ -187,8 +187,6 @@ export default function App() {
             <>
               <ChatPanel
                 timeline={chat.timeline}
-                streamingText={chat.streamingText}
-                streamingAgent={chat.streamingAgent}
                 scanResults={chat.scanResults}
                 isThinking={chat.isThinking}
                 isBusy={chat.busy}
@@ -236,6 +234,7 @@ export default function App() {
 
       <AgentPanel
         open={agentPanelOpen}
+        agents={chat.agents}
         focusAgentID={agentPanelFocusID ?? undefined}
         onClose={() => setAgentPanelOpen(false)}
       />

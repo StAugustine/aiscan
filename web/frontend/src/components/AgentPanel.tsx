@@ -1,16 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
-import { Monitor, RefreshCw, Search } from 'lucide-react'
-import { listAgents } from '../api'
+import { Monitor, Search } from 'lucide-react'
 import type { AgentInfo } from '../api'
 // Lazy — same @xterm chunk App splits; a static import here would pull it back
 // into the first-paint bundle.
 const AgentTerminal = lazy(() => import('./terminal'))
 import {
   Badge,
-  Button,
-  Callout,
   EmptyState,
   Input,
   ListRow,
@@ -18,21 +15,21 @@ import {
   SheetContent,
   SheetDescription,
   SheetTitle,
-  Spinner,
   StatusDot,
 } from '@aspect/ui'
-import { usePolling } from '../hooks/usePolling'
 
 interface AgentPanelProps {
   open: boolean
+  /** The roster from useChatSession — avoids a redundant listAgents poll. */
+  agents: AgentInfo[]
   /** When opened from a deck node click, focus this agent's console. */
   focusAgentID?: string
   onClose: () => void
 }
 
-export default function AgentPanel({ open, focusAgentID, onClose }: AgentPanelProps) {
+export default function AgentPanel({ open, agents: rosterAgents, focusAgentID, onClose }: AgentPanelProps) {
   const { t } = useTranslation('agent')
-  const { agents, error, loading, refresh, selected, selectedID, setSelectedID } = useAgentDirectory(open, focusAgentID)
+  const { agents, selected, selectedID, setSelectedID } = useAgentDirectory(open, rosterAgents, focusAgentID)
   const showAgentList = agents.length > 1
 
   // Sheet is a controlled Radix dialog: it owns the overlay, right-slide
@@ -65,13 +62,7 @@ export default function AgentPanel({ open, focusAgentID, onClose }: AgentPanelPr
         </div>
 
         <div className="min-h-0 flex-1">
-          {loading ? (
-            <div className="flex h-32 items-center justify-center text-muted-foreground">
-              <Spinner className="h-5 w-5" />
-            </div>
-          ) : error ? (
-            <Callout tone="destructive" className="m-4">{error}</Callout>
-          ) : agents.length === 0 ? (
+          {agents.length === 0 ? (
             <div className="flex h-full items-center justify-center">
               <EmptyState icon={Monitor} title={t('noAgentsConnected')} />
             </div>
@@ -81,7 +72,6 @@ export default function AgentPanel({ open, focusAgentID, onClose }: AgentPanelPr
                 <AgentList
                   agents={agents}
                   selectedID={selectedID}
-                  onRefresh={() => refresh(true)}
                   onSelect={setSelectedID}
                 />
               )}
@@ -100,16 +90,20 @@ export default function AgentPanel({ open, focusAgentID, onClose }: AgentPanelPr
   )
 }
 
-function useAgentDirectory(open: boolean, focusAgentID?: string) {
-  const { t } = useTranslation('agent')
-  const [agents, setAgents] = useState<AgentInfo[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+// Derives selection state from the parent-provided roster (useChatSession
+// already polls listAgents every 5s). No internal fetch or polling — the agent
+// list is a prop, so the panel never double-polls.
+function useAgentDirectory(open: boolean, roster: AgentInfo[], focusAgentID?: string) {
   const [selectedID, setSelectedID] = useState('')
 
+  // Keep selection valid as the roster changes (agents disconnect / reconnect).
+  useEffect(() => {
+    setSelectedID((current) => roster.some((a) => a.id === current) ? current : roster[0]?.id || '')
+  }, [roster])
+
   // Focus a specific node when the panel is opened from a deck node click.
-  // Apply it exactly ONCE per open/focus request: `agents` is in the deps only
-  // so we can wait for the roster to load, but the 5s poll replaces `agents`
+  // Apply it exactly ONCE per open/focus request: `roster` is in the deps only
+  // so we can wait for the roster to load, but the 5s poll replaces `roster`
   // every tick — without this guard the effect would re-fire and yank the
   // selection back to the focused node, defeating any manual agent switch.
   const focusAppliedRef = useRef(false)
@@ -118,57 +112,23 @@ function useAgentDirectory(open: boolean, focusAgentID?: string) {
   }, [open, focusAgentID])
   useEffect(() => {
     if (focusAppliedRef.current) return
-    if (open && focusAgentID && agents.some((a) => a.id === focusAgentID)) {
+    if (open && focusAgentID && roster.some((a) => a.id === focusAgentID)) {
       setSelectedID(focusAgentID)
       focusAppliedRef.current = true
     }
-  }, [open, focusAgentID, agents])
+  }, [open, focusAgentID, roster])
 
-  const refresh = useCallback((silent = false) => {
-    if (!silent) {
-      setLoading(true)
-      setError('')
-    }
-    return listAgents()
-      .then((items) => {
-        setAgents(items)
-        // Clear on ANY success, including the silent 5s poll. Without this a
-        // single failed open-time fetch latches the error banner forever: later
-        // polls succeed and refresh `agents`, but `error` stayed set and the
-        // `error ?` branch keeps rendering the stale banner (hiding the list, so
-        // the user can't even hit refresh). Now the roster self-heals.
-        setError('')
-        setSelectedID((current) => items.some((agent) => agent.id === current) ? current : items[0]?.id || '')
-      })
-      .catch((err: Error) => {
-        if (!silent) setError(err.message || t('failedToLoadAgents'))
-      })
-      .finally(() => {
-        if (!silent) setLoading(false)
-      })
-  }, [t])
+  const selected = roster.find((agent) => agent.id === selectedID) || roster[0] || null
 
-  useEffect(() => {
-    if (!open) return
-    refresh()
-  }, [open, refresh])
-
-  // Silent roster poll while the console is open — paused when the tab is hidden.
-  usePolling(() => refresh(true), 5000, open)
-
-  const selected = agents.find((agent) => agent.id === selectedID) || agents[0] || null
-
-  return { agents, error, loading, refresh, selected, selectedID, setSelectedID }
+  return { agents: roster, selected, selectedID, setSelectedID }
 }
 
 function AgentList({
   agents,
-  onRefresh,
   onSelect,
   selectedID,
 }: {
   agents: AgentInfo[]
-  onRefresh: () => void
   onSelect: (id: string) => void
   selectedID: string
 }) {
@@ -198,16 +158,13 @@ function AgentList({
 
   return (
     <aside className="flex max-h-52 w-full shrink-0 flex-col border-b border-border lg:max-h-none lg:w-64 lg:border-b-0 lg:border-r">
-      <div className="flex h-10 items-center justify-between border-b border-border px-3">
+      <div className="flex h-10 items-center border-b border-border px-3">
         <span className="text-xs font-medium uppercase text-muted-foreground">
           {t('agents')}
           <span className="ml-1.5 font-mono text-[10px] normal-case text-muted-foreground/60">
             {busy}/{agents.length}
           </span>
         </span>
-        <Button variant="ghost" size="icon-xs" onClick={onRefresh} aria-label={t('refreshAgents')}>
-          <RefreshCw className="h-3.5 w-3.5" />
-        </Button>
       </div>
       {showFilter && (
         <div className="border-b border-border p-2">

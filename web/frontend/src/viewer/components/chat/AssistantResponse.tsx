@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { cn } from '@aspect/theme'
+import { formatTime } from '../../../lib/format'
 import { Collapsible } from '@aspect/ui'
 import { AgentVoiceCard } from './AgentVoiceCard'
 import { StreamingCursor } from './MessageBubble'
@@ -15,6 +16,7 @@ export interface AssistantResponseProps {
   defaultThinkingExpanded?: boolean
   className?: string
   labels?: {
+    assistant?: string
     thinking?: string
     tools?: string
     response?: string
@@ -32,7 +34,7 @@ export default function AssistantResponse({
   timestamp,
   tools,
 }: AssistantResponseProps) {
-  const time = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+  const time = timestamp ? formatTime(timestamp) : ''
   const hasThinking = hasContent(thinking)
   const hasTools = hasContent(tools)
   const hasResponse = hasContent(response)
@@ -44,7 +46,7 @@ export default function AssistantResponse({
       {/* Actor + time — below xl only. At xl the timeline rail carries identity,
           so this would just duplicate it. */}
       <div className="mb-1 flex items-center gap-2 text-[10px] text-muted-foreground xl:hidden">
-        <span className="font-medium">{actorName || 'Assistant'}</span>
+        <span className="font-medium">{actorName || (labels?.assistant || 'Assistant')}</span>
         {time && <span className="font-mono">{time}</span>}
       </div>
 

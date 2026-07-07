@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@aspect/theme'
+import { formatTime } from '../../../lib/format'
 import { AgentVoiceCard } from './AgentVoiceCard'
 
 export interface MessageBubbleProps {
@@ -10,6 +11,7 @@ export interface MessageBubbleProps {
   timestamp?: string
   streaming?: boolean
   defaultExpanded?: boolean
+  labels?: { user?: string; assistant?: string }
   className?: string
   children?: ReactNode
 }
@@ -21,11 +23,12 @@ export default function MessageBubble({
   timestamp,
   streaming,
   defaultExpanded = true,
+  labels,
   className,
   children,
 }: MessageBubbleProps) {
   const [expanded, setExpanded] = useState(defaultExpanded)
-  const time = timestamp ? new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+  const time = timestamp ? formatTime(timestamp) : ''
   const body = children ?? content
 
   if (role === 'system') {
@@ -42,7 +45,7 @@ export default function MessageBubble({
   }
 
   const isUser = role === 'user'
-  const label = isUser ? 'You' : actorName || 'Assistant'
+  const label = isUser ? (labels?.user || 'You') : actorName || (labels?.assistant || 'Assistant')
   const Chevron = expanded ? ChevronDown : ChevronRight
 
   return (
