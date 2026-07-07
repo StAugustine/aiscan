@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, FileText, Shield, TableProperties } from 'lucide-react'
-import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from '@/ui'
+import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from '@aspect/ui'
 import { fetchScanReport, type ScanResult } from '../api'
 import { buildFindings } from '../lib/scan-result'
 import { MarkdownContent } from '@/markdown'

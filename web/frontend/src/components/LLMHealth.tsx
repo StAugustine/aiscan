@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { StatusDot, type StatusKind } from '@/ui'
+import { StatusDot, type StatusKind } from '@aspect/ui'
 import { getConfigStatus, testLLM } from '../api'
 
 type Phase = 'checking' | 'ok' | 'error' | 'unconfigured'

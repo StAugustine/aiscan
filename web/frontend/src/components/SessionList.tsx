@@ -7,8 +7,8 @@ import {
   ChevronDown, ChevronRight, Monitor, Terminal,
   MonitorPlay, Loader2, AlertTriangle, Unplug,
 } from 'lucide-react'
-import { Button, Callout, Tooltip, TooltipTrigger, TooltipContent } from '@/ui'
-import { cn } from '@/lib/theme'
+import { Button, Callout, Tooltip, TooltipTrigger, TooltipContent } from '@aspect/ui'
+import { cn } from '@aspect/theme'
 import { launchLocalAgent, listLocalAgents, stopLocalAgent } from '../api'
 import type { AgentInfo, ChatSession, LocalAgentView } from '../api'
 import { agentActivity } from '../lib/agentActivity'

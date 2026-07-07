@@ -5,7 +5,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { Info, Plus, RefreshCw, Square } from 'lucide-react'
 import { agentTerminalWebSocketURL } from '../../api'
 import type { AgentInfo } from '../../api'
-import { Button, Tooltip, TooltipTrigger, TooltipContent } from '@/ui'
+import { Button, Tooltip, TooltipTrigger, TooltipContent } from '@aspect/ui'
 import {
   type PTYSession,
   type TerminalStatus,

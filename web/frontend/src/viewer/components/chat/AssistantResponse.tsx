@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
-import { cn } from '@/lib/theme'
-import { Collapsible } from '@/ui'
+import { cn } from '@aspect/theme'
+import { Collapsible } from '@aspect/ui'
 import { StreamingCursor } from './MessageBubble'
 import { ThinkingDots } from './ChatThinking'
 

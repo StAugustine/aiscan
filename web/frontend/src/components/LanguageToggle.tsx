@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/ui'
-import { cn } from '@/lib/theme'
+import { Button } from '@aspect/ui'
+import { cn } from '@aspect/theme'
 
 interface LanguageToggleProps {
   className?: string

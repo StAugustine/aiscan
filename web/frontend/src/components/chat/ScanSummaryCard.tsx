@@ -1,7 +1,7 @@
 import { ArrowRight, Shield, Server, Bug, FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ScanResult } from '../../api'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 interface Props {
   scanID: string

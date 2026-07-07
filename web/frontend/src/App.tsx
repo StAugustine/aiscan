@@ -12,15 +12,15 @@ import BrandLogo from './components/brand/BrandLogo'
 // Lazy: the agent terminal drags in @xterm (~its own chunk) but only renders
 // when a node's console is opened — keep it out of the first-paint bundle.
 const AgentTerminal = lazy(() => import('./components/terminal'))
-import { ThemeToggle, useConfirm } from '@/ui'
-import { ThemeProvider, useTheme } from '@/lib/theme'
+import { ThemeToggle, useConfirm } from '@aspect/ui'
+import { ThemeProvider, useTheme } from '@aspect/theme'
 import { getStatus } from './api'
 import type { ServerStatus } from './api'
 import { useChatSession, agentNodeKey } from './hooks/useChatSession'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
-import { TooltipProvider } from '@/ui'
-import { cn } from '@/lib/theme'
+import { TooltipProvider } from '@aspect/ui'
+import { cn } from '@aspect/theme'
 
 const sidebarStorageKey = 'aiscan-sidebar-open'
 

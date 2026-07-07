@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronDown, ChevronRight, Loader2, CheckCircle2 } from 'lucide-react'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 interface Props {
   scanID: string

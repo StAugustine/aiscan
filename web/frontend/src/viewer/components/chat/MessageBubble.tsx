@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 export interface MessageBubbleProps {
   role: 'user' | 'assistant' | 'system'

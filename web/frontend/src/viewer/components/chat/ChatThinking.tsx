@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 export interface ChatThinkingProps {
   actorName?: string | null

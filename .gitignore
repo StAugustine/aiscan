@@ -46,11 +46,6 @@ web/static.rootold*
 web/static.*
 web/static-stale/
 
-# cyber-ui submodule removed (vendored into src/{ui,markdown,viewer,terminal-view,lib/theme});
-# root-owned remnant on disk can't be deleted without sudo — ignore until reclaimed:
-#   sudo rm -rf web/frontend/cyber-ui .git/modules/web/frontend/cyber-ui
-web/frontend/cyber-ui/
-
 # operator artifacts kept on disk but out of git (2026-07-06 post-reset cleanup)
 /monitor/
 /scripts/

@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { CheckCircle, Settings, Zap, AlertCircle } from 'lucide-react'
 import { getConfigStatus, saveConfig, testLLM, testConn, listLLMModels } from '../api'
 import type { ConfigStatus, ConnCheck, DistributeConfig, LLMTestResult, ServerStatus } from '../api'
-import { Button, Input, Select, SelectTrigger, SelectContent, SelectItem, SelectValue, Badge, Spinner, Callout, Field, Dialog, DialogContent, DialogTitle, DialogDescription } from '@/ui'
-import { cn } from '@/lib/theme'
+import { Button, Input, Select, SelectTrigger, SelectContent, SelectItem, SelectValue, Badge, Spinner, Callout, Field, Dialog, DialogContent, DialogTitle, DialogDescription } from '@aspect/ui'
+import { cn } from '@aspect/theme'
 import { ModelCombobox } from './ModelCombobox'
 
 interface ConfigPanelProps {

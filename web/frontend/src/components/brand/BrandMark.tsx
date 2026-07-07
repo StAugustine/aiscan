@@ -1,4 +1,4 @@
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 interface BrandMarkProps {
   /** pixel size of the square mark */

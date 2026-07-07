@@ -15,8 +15,8 @@ import {
   Wrench,
   X,
 } from 'lucide-react'
-import { cn } from '@/lib/theme'
-import { Callout } from '@/ui'
+import { cn } from '@aspect/theme'
+import { Callout } from '@aspect/ui'
 import BrandMark from './brand/BrandMark'
 import { MarkdownContent } from '@/markdown'
 import {

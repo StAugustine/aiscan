@@ -1,4 +1,4 @@
-import { aspectPreset } from './src/lib/theme/tailwind-preset.ts'
+import { aspectPreset } from './cyber-ui/packages/theme/src/tailwind-preset.ts'
 
 const preset = aspectPreset()
 

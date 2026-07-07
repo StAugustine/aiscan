@@ -28,10 +28,10 @@ import {
   type SitemapNode,
   type ViewAsset,
 } from '../lib/scan-result'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 import { MarkdownContent } from '@/markdown'
 import { badgeToneClass } from '../lib/tones'
-import { Badge as UIBadge, Chip, StatTile } from '@/ui'
+import { Badge as UIBadge, Chip, StatTile } from '@aspect/ui'
 import FindingsSummary from './FindingsSummary'
 
 interface AssetResultViewProps {

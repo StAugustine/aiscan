@@ -7,7 +7,7 @@ import type { AgentInfo } from '../api'
 // Lazy — same @xterm chunk App splits; a static import here would pull it back
 // into the first-paint bundle.
 const AgentTerminal = lazy(() => import('./terminal'))
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 import {
   Badge,
   Button,
@@ -20,7 +20,7 @@ import {
   SheetTitle,
   Spinner,
   StatusDot,
-} from '@/ui'
+} from '@aspect/ui'
 import { usePolling } from '../hooks/usePolling'
 
 interface AgentPanelProps {

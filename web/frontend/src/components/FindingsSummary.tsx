@@ -4,7 +4,7 @@ import type { ScanResult } from '../api'
 import { buildFindingsSummary, PRIORITY_ORDER, type FindingsSummaryModel } from '../lib/scan-result'
 import { severityTone } from '../lib/tones'
 import { useMemo } from 'react'
-import { cn } from '@/lib/theme'
+import { cn } from '@aspect/theme'
 
 interface FindingsSummaryProps {
   result: ScanResult
