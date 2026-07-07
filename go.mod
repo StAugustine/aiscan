@@ -11,7 +11,7 @@ require (
 	github.com/chainreactors/ioa v0.1.2-0.20260621175506-35d6a4a11645
 	github.com/chainreactors/logs v0.0.0-20260624034259-9aaea4aa52cc
 	github.com/chainreactors/neutron v0.1.1-0.20260704194031-f57d0a560e32
-	github.com/chainreactors/proton v0.3.3-0.20260704194051-e7034d2bb8cb
+	github.com/chainreactors/proton v0.3.3-0.20260707162538-471f99ea6131
 	github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593
 	github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3
 	github.com/chainreactors/sdk v0.3.4-0.20260707120839-686d4bfa2b2b

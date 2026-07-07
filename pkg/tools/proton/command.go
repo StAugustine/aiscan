@@ -361,9 +361,35 @@ func (c *Command) resolveRelativePaths(args []string) []string {
 
 // --- output ---
 
+// jsonFinding is proton's nuclei-style JSON contract. It deliberately uses
+// hyphenated keys (template-id/template-name) rather than marshaling
+// file.Finding directly, which would leak the internal parsers.FindingResult
+// tags (template_id/template_name) and break consumers expecting nuclei output.
+type jsonFinding struct {
+	TemplateID   string   `json:"template-id"`
+	TemplateName string   `json:"template-name,omitempty"`
+	Severity     string   `json:"severity,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+	Matched      bool     `json:"matched"`
+	Extracted    bool     `json:"extracted"`
+	Class        string   `json:"class,omitempty"`
+	File         string   `json:"file,omitempty"`
+	Events       any      `json:"events,omitempty"`
+}
+
 func writeFinding(w interface{ Write([]byte) (int, error) }, f file.Finding, jsonMode bool, baseDir string) {
 	if jsonMode {
-		data, _ := json.Marshal(f)
+		data, _ := json.Marshal(jsonFinding{
+			TemplateID:   f.TemplateID,
+			TemplateName: f.TemplateName,
+			Severity:     f.Severity,
+			Tags:         f.Tags,
+			Matched:      f.Matched,
+			Extracted:    f.Extracted,
+			Class:        f.Class,
+			File:         f.FilePath,
+			Events:       f.Events,
+		})
 		fmt.Fprintln(w, string(data))
 		return
 	}

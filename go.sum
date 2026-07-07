@@ -188,8 +188,8 @@ github.com/chainreactors/neutron/operators/full v0.1.1-0.20260703124839-c4091ad1
 github.com/chainreactors/neutron/operators/full v0.1.1-0.20260703124839-c4091ad1e02d/go.mod h1:8Yg/msDYB3syXD2ryGObqSn8GG+xaBoDG/1S67A4ByQ=
 github.com/chainreactors/parsers v0.0.0-20260608085142-3d2c51baa8fe h1:n1pFLHHYXMiX5rCVWeciOTJUFggWXOrLtCu9jhq5Mbs=
 github.com/chainreactors/parsers v0.0.0-20260608085142-3d2c51baa8fe/go.mod h1:ygxMqZQ/hGY2uegUvC0LbR538hbgNH7HP4dTuv/jfSM=
-github.com/chainreactors/proton v0.3.3-0.20260704194051-e7034d2bb8cb h1:Q0iNaE0ZD724AazhfyYilTUQlqBnrm8+UehoBG7MIhg=
-github.com/chainreactors/proton v0.3.3-0.20260704194051-e7034d2bb8cb/go.mod h1:c4kezBtDrE4sBIH6qF0+OShJ3/fijZENyxcUbcfZ/qQ=
+github.com/chainreactors/proton v0.3.3-0.20260707162538-471f99ea6131 h1:gTrBbrASTvndSBr2XL75Kdw8fAM3xw/dikTqMNzoQBE=
+github.com/chainreactors/proton v0.3.3-0.20260707162538-471f99ea6131/go.mod h1:c4kezBtDrE4sBIH6qF0+OShJ3/fijZENyxcUbcfZ/qQ=
 github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593 h1:tnXa9DobeX30xGIkiAcH+BOKKwvscvxy6GfI0Q0qu8Q=
 github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593/go.mod h1:xSNRChMYF8en5O5ZQVmCOmNTTyQhvsrk0D0vluh/JKk=
 github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3 h1:WVEb3Bjq3AC67oa9pNjHJfIH+mX6PozJO3S5ccVZJYQ=
