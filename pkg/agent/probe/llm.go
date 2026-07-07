@@ -8,15 +8,17 @@ import (
 	"github.com/chainreactors/aiscan/pkg/agent"
 )
 
-// LLMTestRequest carries the connection parameters the user wants to verify.
-// It mirrors the LLM section of webproto.DistributeConfig. An empty APIKey
-// means "use the key already stored in the config" (matching the settings UI
-// where a configured key is left blank to keep it unchanged).
-type LLMTestRequest struct {
+// LLMProbeRequest carries the connection parameters the user wants to verify
+// or use for model enumeration. It mirrors the LLM section of
+// webproto.DistributeConfig. An empty APIKey means "use the key already stored
+// in the config" (matching the settings UI where a configured key is left blank
+// to keep it unchanged). Model is only required for TestLLM; ListLLMModels
+// ignores it.
+type LLMProbeRequest struct {
 	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key"`
-	Model    string `json:"model"`
+	Model    string `json:"model,omitempty"`
 	Proxy    string `json:"proxy"`
 }
 
@@ -35,16 +37,6 @@ type LLMTestResult struct {
 // unreachable endpoint fails fast instead of hanging the settings dialog.
 const llmProbeTimeout = 30 * time.Second
 
-// LLMModelsRequest carries the connection parameters needed to enumerate the
-// models an endpoint advertises. It mirrors LLMTestRequest minus Model, since
-// listing is what populates the model field in the first place. An empty APIKey
-// means "use the key already stored in the config".
-type LLMModelsRequest struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	APIKey   string `json:"api_key"`
-	Proxy    string `json:"proxy"`
-}
 
 // LLMModelsResult reports the model IDs discovered at the endpoint. ok=false
 // carries the reason (unsupported provider, auth failure, unreachable, …).
@@ -65,7 +57,7 @@ type modelLister interface {
 // by hand. Like TestLLM it never returns a transport error — failures are
 // captured inside LLMModelsResult. When req.APIKey is blank, storedAPIKey is
 // used (the settings UI leaves a configured key blank to keep it unchanged).
-func ListLLMModels(ctx context.Context, req LLMModelsRequest, storedAPIKey string) (LLMModelsResult, error) {
+func ListLLMModels(ctx context.Context, req LLMProbeRequest, storedAPIKey string) (LLMModelsResult, error) {
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(storedAPIKey)
@@ -113,7 +105,7 @@ func ListLLMModels(ctx context.Context, req LLMModelsRequest, storedAPIKey strin
 // error only signals the request was well-formed enough to attempt. When
 // req.APIKey is blank, storedAPIKey is used (the settings UI leaves a configured
 // key blank to keep it unchanged).
-func TestLLM(ctx context.Context, req LLMTestRequest, storedAPIKey string) (LLMTestResult, error) {
+func TestLLM(ctx context.Context, req LLMProbeRequest, storedAPIKey string) (LLMTestResult, error) {
 	apiKey := strings.TrimSpace(req.APIKey)
 	if apiKey == "" {
 		apiKey = strings.TrimSpace(storedAPIKey)

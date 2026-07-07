@@ -224,7 +224,6 @@ func WebMenuSpecs(cmds []Command) []webproto.SlashSpec {
 			Name:        c.Name,
 			Aliases:     c.Aliases,
 			Description: c.Description,
-			WebMenu:     true,
 		})
 	}
 	return specs

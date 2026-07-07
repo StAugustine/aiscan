@@ -698,13 +698,14 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 		return
 	}
 
-	turn := agentEventTurn(msg.Payload)
+	data := extractEventData(msg.Payload)
+	turn := turnFromEventData(data)
 	var event ChatEvent
 	switch msg.Type {
 	case "agent.turn_start":
 		event = ChatEvent{Type: ChatEventThinking, Turn: turn, Transient: true}
 	case "agent.message_start":
-		role, content, _, ok := agentMessageFromPayload(msg.Payload)
+		role, content, _, ok := messageFromEventData(data)
 		if !ok || role != "assistant" {
 			return
 		}
@@ -715,7 +716,7 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 			Turn:    turn,
 		}
 	case "agent.message_update":
-		role, content, reasoning, ok := agentMessageFromPayload(msg.Payload)
+		role, content, reasoning, ok := messageFromEventData(data)
 		if !ok || role != "assistant" {
 			return
 		}
@@ -738,7 +739,7 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 			Turn:    turn,
 		}
 	case "agent.message_end":
-		role, content, reasoning, ok := agentMessageFromPayload(msg.Payload)
+		role, content, reasoning, ok := messageFromEventData(data)
 		if !ok || role != "assistant" {
 			return
 		}
@@ -766,7 +767,7 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 			Arguments  string `json:"arguments"`
 			Turn       int    `json:"turn"`
 		}
-		if data := extractEventData(msg.Payload); len(data) > 0 {
+		if len(data) > 0 {
 			_ = json.Unmarshal(data, &ev)
 		}
 		if ev.Turn != 0 {
@@ -785,7 +786,7 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 			Result     string `json:"result"`
 			Turn       int    `json:"turn"`
 		}
-		if data := extractEventData(msg.Payload); len(data) > 0 {
+		if len(data) > 0 {
 			_ = json.Unmarshal(data, &ev)
 		}
 		if ev.Turn != 0 {
@@ -808,7 +809,7 @@ func (p *AgentPool) forwardAgentEvent(a *remoteAgent, msg WSMessage) {
 			EvalReason string `json:"eval_reason"`
 			EvalError  string `json:"eval_error"`
 		}
-		if data := extractEventData(msg.Payload); len(data) > 0 {
+		if len(data) > 0 {
 			_ = json.Unmarshal(data, &ev)
 		}
 		reason := ev.EvalReason
@@ -851,8 +852,8 @@ func extractEventData(payload json.RawMessage) json.RawMessage {
 	return payload
 }
 
-func agentEventTurn(payload json.RawMessage) int {
-	data := extractEventData(payload)
+// turnFromEventData extracts the turn number from pre-extracted event data.
+func turnFromEventData(data json.RawMessage) int {
 	if len(data) == 0 {
 		return 0
 	}
@@ -863,8 +864,8 @@ func agentEventTurn(payload json.RawMessage) int {
 	return event.Turn
 }
 
-func agentMessageFromPayload(payload json.RawMessage) (role, content, reasoning string, ok bool) {
-	data := extractEventData(payload)
+// messageFromEventData extracts role, content, and reasoning from pre-extracted event data.
+func messageFromEventData(data json.RawMessage) (role, content, reasoning string, ok bool) {
 	if len(data) == 0 {
 		return "", "", "", false
 	}

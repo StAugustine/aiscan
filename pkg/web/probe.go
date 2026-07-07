@@ -4,21 +4,21 @@ import (
 	"context"
 	"strings"
 
-	"github.com/chainreactors/aiscan/pkg/probe"
+	"github.com/chainreactors/aiscan/pkg/agent/probe"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
 // TestConn probes one settings section's external dependencies, resolving blank
 // secrets against the stored config, then delegates to pkg/probe. Probe failures
 // live inside the response; a returned error only signals an untestable section.
-func (s *Service) TestConn(ctx context.Context, section string, in webproto.DistributeConfig) (probe.ConnTestResponse, error) {
+func (s *Service) TestConn(ctx context.Context, section string, in webproto.DistributeConfig) ([]probe.ConnCheck, error) {
 	stored, _ := s.storedConfig(ctx)
 	return probe.TestConn(ctx, section, in, stored)
 }
 
 // TestLLM probes the supplied LLM settings, falling back to the stored API key
 // when the request leaves it blank, then delegates to pkg/probe.
-func (s *Service) TestLLM(ctx context.Context, req probe.LLMTestRequest) (probe.LLMTestResult, error) {
+func (s *Service) TestLLM(ctx context.Context, req probe.LLMProbeRequest) (probe.LLMTestResult, error) {
 	var storedKey string
 	if s.config != nil {
 		if dc, err := s.GetDistributeConfig(ctx); err == nil {
@@ -31,7 +31,7 @@ func (s *Service) TestLLM(ctx context.Context, req probe.LLMTestRequest) (probe.
 // ListLLMModels enumerates the models the supplied LLM endpoint advertises,
 // falling back to the stored API key when the request leaves it blank, then
 // delegates to pkg/probe.
-func (s *Service) ListLLMModels(ctx context.Context, req probe.LLMModelsRequest) (probe.LLMModelsResult, error) {
+func (s *Service) ListLLMModels(ctx context.Context, req probe.LLMProbeRequest) (probe.LLMModelsResult, error) {
 	var storedKey string
 	if s.config != nil {
 		if dc, err := s.GetDistributeConfig(ctx); err == nil {

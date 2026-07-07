@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/chainreactors/aiscan/pkg/probe"
+	"github.com/chainreactors/aiscan/pkg/agent/probe"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
@@ -135,7 +135,7 @@ func (h *handlerImpl) getDistributeConfig(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handlerImpl) testLLM(w http.ResponseWriter, r *http.Request) {
-	var req probe.LLMTestRequest
+	var req probe.LLMProbeRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -148,7 +148,7 @@ func (h *handlerImpl) testLLM(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlerImpl) listLLMModels(w http.ResponseWriter, r *http.Request) {
-	var req probe.LLMModelsRequest
+	var req probe.LLMProbeRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
@@ -299,12 +299,8 @@ func (h *handlerImpl) sendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
-	opts := webproto.ChatPayload{
-		Persist:         req.Persist,
-		EvalCriteria:    strings.TrimSpace(req.EvalCriteria),
-		EvalMaxRounds:   req.EvalMaxRounds,
-		PersistMaxTurns: req.PersistMaxTurns,
-	}
+	opts := req.ChatPayload
+	opts.EvalCriteria = strings.TrimSpace(opts.EvalCriteria)
 	msg, err := h.service.HandleUserMessage(r.Context(), r.PathValue("id"), req.Content, opts)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

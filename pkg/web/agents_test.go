@@ -240,7 +240,7 @@ func TestDispatchChatSessionCarriesGoalOptions(t *testing.T) {
 		t.Fatal("expected chat-capable agent")
 	}
 
-	opts := webproto.ChatPayload{Persist: true, EvalCriteria: "find at least one SQLi", EvalMaxRounds: 5}
+	opts := webproto.ChatPayload{EvalCriteria: "find at least one SQLi", EvalMaxRounds: 5}
 	resultCh, err := pool.DispatchChatSession(agent.id, "task-goal", "sess-1", "audit target", opts)
 	if err != nil {
 		t.Fatal(err)
@@ -266,10 +266,6 @@ func TestDispatchChatSessionCarriesGoalOptions(t *testing.T) {
 	if payload.EvalMaxRounds != 5 {
 		t.Errorf("eval_max_rounds = %d, want 5", payload.EvalMaxRounds)
 	}
-	if !payload.Persist {
-		t.Errorf("persist = false, want true")
-	}
-
 	conn.WriteJSON(WSMessage{Type: "complete", TaskID: "task-goal", Data: "ok"})
 	select {
 	case <-resultCh:

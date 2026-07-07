@@ -26,7 +26,6 @@ type SlashSpec struct {
 	Aliases     []string `json:"aliases,omitempty"`
 	Usage       string   `json:"usage,omitempty"`
 	Description string   `json:"description,omitempty"`
-	WebMenu     bool     `json:"web_menu,omitempty"`
 }
 
 type RegisterPayload struct {
@@ -80,7 +79,6 @@ type AgentStats struct {
 // agent run the evaluator loop against the criteria for up to EvalMaxRounds.
 type ChatPayload struct {
 	SessionID       string `json:"session_id,omitempty"`
-	Persist         bool   `json:"persist,omitempty"`
 	EvalCriteria    string `json:"eval_criteria,omitempty"`
 	EvalMaxRounds   int    `json:"eval_max_rounds,omitempty"`
 	PersistMaxTurns int    `json:"persist_max_turns,omitempty"`

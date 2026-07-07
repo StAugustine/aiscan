@@ -1136,9 +1136,9 @@ func (s *Service) handleHelpCommand(sessionID string) {
 // single source both the "/" menu (GET .../commands) and /help render from.
 func (s *Service) SessionMenu(sessionID string) []webproto.SlashSpec {
 	hubSpecs := []webproto.SlashSpec{
-		{Name: "/help", Description: "查看命令面板", WebMenu: true},
-		{Name: "/scan", Description: "在本会话运行扫描", Usage: "/scan <target> [--mode full] [--verify] [--sniper] [--deep]", WebMenu: true},
-		{Name: "/agents", Description: "列出已连接的 agent", WebMenu: true},
+		{Name: "/help", Description: "查看命令面板"},
+		{Name: "/scan", Description: "在本会话运行扫描", Usage: "/scan <target> [--mode full] [--verify] [--sniper] [--deep]"},
+		{Name: "/agents", Description: "列出已连接的 agent"},
 	}
 	agentSpecs := s.sessionAgent(sessionID).slashSpecs()
 	if len(agentSpecs) == 0 {

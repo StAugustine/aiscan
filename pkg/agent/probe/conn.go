@@ -34,11 +34,6 @@ type ConnCheck struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// ConnTestResponse bundles every check run for one settings section.
-type ConnTestResponse struct {
-	Checks []ConnCheck `json:"checks"`
-}
-
 // connProbeTimeout bounds a single connectivity check so an unreachable or
 // misconfigured endpoint fails fast instead of hanging the settings dialog.
 const connProbeTimeout = 20 * time.Second
@@ -56,7 +51,7 @@ var (
 // convention where a configured secret is left empty to keep it unchanged. Like
 // TestLLM, probe failures are reported inside ConnCheck rather than as a
 // returned error; a non-nil error only signals an unknown/untestable section.
-func TestConn(ctx context.Context, section string, in, stored webproto.DistributeConfig) (ConnTestResponse, error) {
+func TestConn(ctx context.Context, section string, in, stored webproto.DistributeConfig) ([]ConnCheck, error) {
 	switch strings.ToLower(strings.TrimSpace(section)) {
 	case "cyberhub":
 		return testCyberhub(ctx, in, stored), nil
@@ -67,16 +62,16 @@ func TestConn(ctx context.Context, section string, in, stored webproto.Distribut
 	case "ioa":
 		return testIOA(ctx, in, stored), nil
 	default:
-		return ConnTestResponse{}, fmt.Errorf("section %q has no connection to test", section)
+		return nil, fmt.Errorf("section %q has no connection to test", section)
 	}
 }
 
 // --- section probes ---
 
-func testCyberhub(ctx context.Context, in, stored webproto.DistributeConfig) ConnTestResponse {
+func testCyberhub(ctx context.Context, in, stored webproto.DistributeConfig) []ConnCheck {
 	hubURL := fallbackStr(in.Cyberhub.URL, stored.Cyberhub.URL)
 	key := fallbackStr(in.Cyberhub.Key, stored.Cyberhub.Key)
-	return ConnTestResponse{Checks: []ConnCheck{runCheck("cyberhub", func() (string, error) {
+	return []ConnCheck{runCheck("cyberhub", func() (string, error) {
 		if strings.TrimSpace(hubURL) == "" {
 			return "", fmt.Errorf("cyberhub url is empty")
 		}
@@ -90,10 +85,10 @@ func testCyberhub(ctx context.Context, in, stored webproto.DistributeConfig) Con
 			return "", err
 		}
 		return fmt.Sprintf("reachable · %d fingerprint(s) sampled", len(fingers)), nil
-	})}}
+	})}
 }
 
-func testRecon(ctx context.Context, in, stored webproto.DistributeConfig) ConnTestResponse {
+func testRecon(ctx context.Context, in, stored webproto.DistributeConfig) []ConnCheck {
 	proxy := fallbackStr(in.Recon.Proxy, stored.Recon.Proxy)
 	var checks []ConnCheck
 
@@ -118,12 +113,12 @@ func testRecon(ctx context.Context, in, stored webproto.DistributeConfig) ConnTe
 	if len(checks) == 0 {
 		checks = append(checks, ConnCheck{Name: "recon", Error: "no FOFA or Hunter credentials configured"})
 	}
-	return ConnTestResponse{Checks: checks}
+	return checks
 }
 
-func testSearch(ctx context.Context, in, stored webproto.DistributeConfig) ConnTestResponse {
+func testSearch(ctx context.Context, in, stored webproto.DistributeConfig) []ConnCheck {
 	keys := fallbackStr(in.Search.TavilyKeys, stored.Search.TavilyKeys)
-	return ConnTestResponse{Checks: []ConnCheck{runCheck("tavily", func() (string, error) {
+	return []ConnCheck{runCheck("tavily", func() (string, error) {
 		first := firstCSV(keys)
 		if first == "" {
 			return "", fmt.Errorf("no tavily api key configured")
@@ -131,13 +126,13 @@ func testSearch(ctx context.Context, in, stored webproto.DistributeConfig) ConnT
 		probeCtx, cancel := context.WithTimeout(ctx, connProbeTimeout)
 		defer cancel()
 		return search.ProbeTavily(probeCtx, first, "")
-	})}}
+	})}
 }
 
-func testIOA(ctx context.Context, in, stored webproto.DistributeConfig) ConnTestResponse {
+func testIOA(ctx context.Context, in, stored webproto.DistributeConfig) []ConnCheck {
 	ioaURL := fallbackStr(in.IOA.URL, stored.IOA.URL)
 	token := fallbackStr(in.IOA.Token, stored.IOA.Token)
-	return ConnTestResponse{Checks: []ConnCheck{runCheck("ioa", func() (string, error) {
+	return []ConnCheck{runCheck("ioa", func() (string, error) {
 		if strings.TrimSpace(ioaURL) == "" {
 			return "", fmt.Errorf("ioa url is empty")
 		}
@@ -155,7 +150,7 @@ func testIOA(ctx context.Context, in, stored webproto.DistributeConfig) ConnTest
 			return "", err
 		}
 		return fmt.Sprintf("connected · %d space(s)", len(spaces)), nil
-	})}}
+	})}
 }
 
 // --- provider probes ---
@@ -183,7 +178,16 @@ func probeGetJSON(ctx context.Context, endpoint, proxy string) ([]byte, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	resp, err := proxyHTTPClient(proxy, connProbeTimeout).Do(req)
+
+	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if strings.TrimSpace(proxy) != "" {
+		if proxyURL, err := url.Parse(proxy); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURL)
+		}
+	}
+	client := &http.Client{Timeout: connProbeTimeout, Transport: transport}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		// The provider key rides in the query string (FOFA/Hunter have no
 		// header/body auth), and *url.Error.Error() echoes the full URL — which
@@ -194,7 +198,11 @@ func probeGetJSON(ctx context.Context, endpoint, proxy string) ([]byte, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet(body))
+		s := strings.TrimSpace(string(body))
+		if len(s) > 200 {
+			s = s[:200] + "…"
+		}
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, s)
 	}
 	return body, nil
 }
@@ -315,20 +323,3 @@ func firstCSV(s string) string {
 	return ""
 }
 
-func proxyHTTPClient(proxy string, timeout time.Duration) *http.Client {
-	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
-	if strings.TrimSpace(proxy) != "" {
-		if proxyURL, err := url.Parse(proxy); err == nil {
-			transport.Proxy = http.ProxyURL(proxyURL)
-		}
-	}
-	return &http.Client{Timeout: timeout, Transport: transport}
-}
-
-func snippet(body []byte) string {
-	s := strings.TrimSpace(string(body))
-	if len(s) > 200 {
-		return s[:200] + "…"
-	}
-	return s
-}

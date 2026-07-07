@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chainreactors/aiscan/pkg/probe"
+	"github.com/chainreactors/aiscan/pkg/agent/probe"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
@@ -51,7 +51,7 @@ func TestTestLLMSuccess(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
-	res, err := svc.TestLLM(context.Background(), probe.LLMTestRequest{
+	res, err := svc.TestLLM(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  srv.URL + "/v1",
 		APIKey:   "sk-test",
@@ -73,7 +73,7 @@ func TestTestLLMSuccess(t *testing.T) {
 
 func TestTestLLMMissingModel(t *testing.T) {
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
-	res, err := svc.TestLLM(context.Background(), probe.LLMTestRequest{Provider: "openai", APIKey: "sk-test"})
+	res, err := svc.TestLLM(context.Background(), probe.LLMProbeRequest{Provider: "openai", APIKey: "sk-test"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestTestLLMFallsBackToStoredKey(t *testing.T) {
 	svc := NewService(ServiceConfig{ConfigStore: store})
 
 	// APIKey left blank: the stored secret must be used.
-	res, err := svc.TestLLM(context.Background(), probe.LLMTestRequest{
+	res, err := svc.TestLLM(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  srv.URL + "/v1",
 		Model:    "gpt-test",
@@ -114,7 +114,7 @@ func TestTestLLMFallsBackToStoredKey(t *testing.T) {
 func TestTestLLMReportsTransportError(t *testing.T) {
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
 	// Unroutable port → connection refused, surfaced inside the result.
-	res, err := svc.TestLLM(context.Background(), probe.LLMTestRequest{
+	res, err := svc.TestLLM(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  "http://127.0.0.1:1/v1",
 		APIKey:   "sk-test",
@@ -156,7 +156,7 @@ func TestListLLMModelsSuccess(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
-	res, err := svc.ListLLMModels(context.Background(), probe.LLMModelsRequest{
+	res, err := svc.ListLLMModels(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  srv.URL + "/v1",
 		APIKey:   "sk-test",
@@ -185,7 +185,7 @@ func TestListLLMModelsFallsBackToStoredKey(t *testing.T) {
 	svc := NewService(ServiceConfig{ConfigStore: store})
 
 	// APIKey left blank: the stored secret must be used.
-	res, err := svc.ListLLMModels(context.Background(), probe.LLMModelsRequest{
+	res, err := svc.ListLLMModels(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  srv.URL + "/v1",
 	})
@@ -202,7 +202,7 @@ func TestListLLMModelsFallsBackToStoredKey(t *testing.T) {
 
 func TestListLLMModelsReportsTransportError(t *testing.T) {
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
-	res, err := svc.ListLLMModels(context.Background(), probe.LLMModelsRequest{
+	res, err := svc.ListLLMModels(context.Background(), probe.LLMProbeRequest{
 		Provider: "openai",
 		BaseURL:  "http://127.0.0.1:1/v1",
 		APIKey:   "sk-test",
@@ -241,7 +241,7 @@ func TestListLLMModelsAnthropic(t *testing.T) {
 	defer srv.Close()
 
 	svc := NewService(ServiceConfig{ConfigStore: &fakeConfigStore{}})
-	res, err := svc.ListLLMModels(context.Background(), probe.LLMModelsRequest{
+	res, err := svc.ListLLMModels(context.Background(), probe.LLMProbeRequest{
 		Provider: "anthropic",
 		BaseURL:  srv.URL + "/v1",
 		APIKey:   "sk-test",

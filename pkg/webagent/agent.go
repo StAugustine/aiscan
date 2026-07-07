@@ -273,7 +273,8 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 			}(msg, taskCtx, cancel)
 
 		case "chat":
-			webSessionID := chatSessionID(msg)
+			chatOpts := parseChatPayload(msg)
+			webSessionID := chatOpts.SessionID
 			ag, agErr := chatRuntime.agentFor(webSessionID)
 			if agErr != nil {
 				send(webproto.Message{Type: "error", TaskID: msg.TaskID, Data: agErr.Error()})
@@ -327,7 +328,7 @@ func runConnectionOnce(ctx context.Context, serverURL, name string, reg *command
 					}
 					mu.Unlock()
 				}()
-				runChatWithAgent(cCtx, m, ag, rt, send)
+				runChatWithAgent(cCtx, m, chatOpts, ag, rt, send)
 			}(msg, chatCtx, chatCancel)
 
 		case "upload":
@@ -701,7 +702,7 @@ func reloadAgentConfig(serverURL string, rt *runner.AgentRuntime, cr *chatRuntim
 	return provider, model, true
 }
 
-func runChatWithAgent(ctx context.Context, msg webproto.Message, ag *agent.Agent, rt *runner.AgentRuntime, send func(webproto.Message)) {
+func runChatWithAgent(ctx context.Context, msg webproto.Message, opts webproto.ChatPayload, ag *agent.Agent, rt *runner.AgentRuntime, send func(webproto.Message)) {
 	prompt := strings.TrimSpace(msg.Data)
 	if rt == nil || rt.App == nil {
 		send(webproto.Message{
@@ -731,8 +732,6 @@ func runChatWithAgent(ctx context.Context, msg webproto.Message, ag *agent.Agent
 		return
 	}
 
-	opts := parseChatPayload(msg)
-
 	// Goal "达成条件" mode: run the agent under an independent evaluator that
 	// judges the natural-language criteria each round and re-drives the agent
 	// with feedback until it passes (or the round budget is spent).
@@ -744,7 +743,7 @@ func runChatWithAgent(ctx context.Context, msg webproto.Message, ag *agent.Agent
 
 	// Goal "固定轮次" mode caps this run at PersistMaxTurns; otherwise restore
 	// the session default so a prior capped message never leaks its cap forward.
-	if opts.Persist && opts.PersistMaxTurns > 0 {
+	if opts.PersistMaxTurns > 0 {
 		ag.SetMaxTurns(opts.PersistMaxTurns)
 	} else {
 		ag.SetMaxTurns(rt.Config.MaxTurns)
@@ -788,10 +787,6 @@ func runChatEval(ctx context.Context, msg webproto.Message, prompt string, opts 
 		return
 	}
 	send(webproto.Message{Type: "complete", TaskID: msg.TaskID, Data: trimChatOutput(result.Output)})
-}
-
-func chatSessionID(msg webproto.Message) string {
-	return parseChatPayload(msg).SessionID
 }
 
 func handleFileUpload(msg webproto.Message, send func(webproto.Message), cr *chatRuntimeManager) {
@@ -1001,7 +996,6 @@ func agentSlashCatalog(rt *runner.AgentRuntime) []webproto.SlashSpec {
 		specs = append(specs, webproto.SlashSpec{
 			Name:        "/" + strings.TrimPrefix(strings.TrimSpace(sk.Name), "/"),
 			Description: sk.Description,
-			WebMenu:     true,
 		})
 	}
 	return specs

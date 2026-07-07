@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chainreactors/aiscan/pkg/probe"
+	"github.com/chainreactors/aiscan/pkg/agent/probe"
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
@@ -28,8 +28,8 @@ func newService(store ConfigStore) *Service {
 	return NewService(ServiceConfig{ConfigStore: store})
 }
 
-func findCheck(resp probe.ConnTestResponse, name string) (probe.ConnCheck, bool) {
-	for _, c := range resp.Checks {
+func findCheck(checks []probe.ConnCheck, name string) (probe.ConnCheck, bool) {
+	for _, c := range checks {
 		if c.Name == name {
 			return c, true
 		}
@@ -68,7 +68,7 @@ func TestProbeCyberhubSuccess(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if c, ok := findCheck(resp, "cyberhub"); !ok || !c.OK {
-		t.Fatalf("expected cyberhub ok, got %+v", resp.Checks)
+		t.Fatalf("expected cyberhub ok, got %+v", resp)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestProbeFofaSuccessAndStoredKeyFallback(t *testing.T) {
 	}
 	c, ok := findCheck(resp, "fofa")
 	if !ok || !c.OK {
-		t.Fatalf("expected fofa ok, got %+v", resp.Checks)
+		t.Fatalf("expected fofa ok, got %+v", resp)
 	}
 	if gotKey != "stored-fofa" {
 		t.Fatalf("expected stored key, server saw %q", gotKey)
@@ -137,7 +137,7 @@ func TestProbeFofaError(t *testing.T) {
 	resp, _ := svc.TestConn(context.Background(), "recon", configWith(func(c *cfgT) { c.Recon.FofaKey = "bad" }))
 	c, ok := findCheck(resp, "fofa")
 	if !ok || c.OK {
-		t.Fatalf("expected fofa failure, got %+v", resp.Checks)
+		t.Fatalf("expected fofa failure, got %+v", resp)
 	}
 	if !strings.Contains(c.Error, "account invalid") {
 		t.Fatalf("expected errmsg surfaced, got %q", c.Error)
@@ -162,7 +162,7 @@ func TestProbeHunterSuccess(t *testing.T) {
 	svc := newService(&fakeConfigStore{})
 	resp, _ := svc.TestConn(context.Background(), "recon", configWith(func(c *cfgT) { c.Recon.HunterAPIKey = "hk" }))
 	if c, ok := findCheck(resp, "hunter"); !ok || !c.OK {
-		t.Fatalf("expected hunter ok, got %+v", resp.Checks)
+		t.Fatalf("expected hunter ok, got %+v", resp)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestProbeHunterError(t *testing.T) {
 	resp, _ := svc.TestConn(context.Background(), "recon", configWith(func(c *cfgT) { c.Recon.HunterToken = "bad" }))
 	c, ok := findCheck(resp, "hunter")
 	if !ok || c.OK {
-		t.Fatalf("expected hunter failure, got %+v", resp.Checks)
+		t.Fatalf("expected hunter failure, got %+v", resp)
 	}
 	if !strings.Contains(c.Error, "invalid api-key") {
 		t.Fatalf("expected hunter message surfaced, got %q", c.Error)
@@ -190,7 +190,7 @@ func TestReconNoCredentials(t *testing.T) {
 	svc := newService(&fakeConfigStore{})
 	resp, _ := svc.TestConn(context.Background(), "recon", configWith(nil))
 	if c, ok := findCheck(resp, "recon"); !ok || c.OK || c.Error == "" {
-		t.Fatalf("expected a single failing recon check, got %+v", resp.Checks)
+		t.Fatalf("expected a single failing recon check, got %+v", resp)
 	}
 }
 
@@ -210,12 +210,12 @@ func TestHandlerTestConnRouting(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	var out probe.ConnTestResponse
+	var out []probe.ConnCheck
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out.Checks) != 1 || out.Checks[0].Name != "cyberhub" {
-		t.Fatalf("expected one cyberhub check, got %+v", out.Checks)
+	if len(out) != 1 || out[0].Name != "cyberhub" {
+		t.Fatalf("expected one cyberhub check, got %+v", out)
 	}
 
 	// An untestable section is rejected with 400.
@@ -246,7 +246,7 @@ func TestProbeIOASuccess(t *testing.T) {
 	}
 	c, ok := findCheck(resp, "ioa")
 	if !ok || !c.OK {
-		t.Fatalf("expected ioa ok, got %+v", resp.Checks)
+		t.Fatalf("expected ioa ok, got %+v", resp)
 	}
 	if !strings.Contains(c.Detail, "1 space") {
 		t.Fatalf("expected space count in detail, got %q", c.Detail)

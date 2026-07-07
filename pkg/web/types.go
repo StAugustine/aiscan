@@ -234,10 +234,7 @@ type SendMessageRequest struct {
 	Content string `json:"content"`
 	// Goal-mode run controls (optional). The frontend sends these when the user
 	// enables the Goal panel; a plain chat send leaves them zero.
-	Persist         bool   `json:"persist,omitempty"`
-	EvalCriteria    string `json:"eval_criteria,omitempty"`
-	EvalMaxRounds   int    `json:"eval_max_rounds,omitempty"`
-	PersistMaxTurns int    `json:"persist_max_turns,omitempty"`
+	webproto.ChatPayload
 }
 
 type CreateSessionRequest struct {
