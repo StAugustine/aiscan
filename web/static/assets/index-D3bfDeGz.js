@@ -1,4 +1,4 @@
-import{j as v,r as q}from"./react-TFriIvjh.js";import{c as gt,a as bn,T as wn,b as yn,B as Cn,d as xn}from"./index-BJshaWtJ.js";import{f as kn,X as En,h as Bn,$ as Dn,o as Rn,v as Mn}from"./icons-BRqk5uus.js";import{u as cs}from"./i18n-DjBzTsNj.js";import"./radix-cIUhMWi2.js";/**
+import{j as v,r as q}from"./react-TFriIvjh.js";import{c as gt,a as bn,T as wn,b as yn,B as Cn,d as xn}from"./index-BuCOmECS.js";import{h as kn,X as En,j as Bn,a0 as Dn,q as Rn,x as Mn}from"./icons-BJFh5TTy.js";import{u as cs}from"./i18n-DjBzTsNj.js";import"./radix-DV7aQMgm.js";/**
  * Copyright (c) 2014-2024 The xterm.js authors. All rights reserved.
  * @license MIT
  *
