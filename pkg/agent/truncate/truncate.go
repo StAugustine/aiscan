@@ -219,15 +219,6 @@ func Tail(content string, opts Options) Result {
 	}
 }
 
-// Line truncates a single line to maxChars runes, appending "... [truncated]".
-func Line(line string, maxChars int) (string, bool) {
-	if utf8.RuneCountInString(line) <= maxChars {
-		return line, false
-	}
-	runes := []rune(line)
-	return string(runes[:maxChars]) + "... [truncated]", true
-}
-
 // FormatSize returns a human-readable size string.
 func FormatSize(bytes int) string {
 	return util.FormatSize(bytes)

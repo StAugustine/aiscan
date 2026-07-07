@@ -160,23 +160,6 @@ func TestTail_UTF8Boundary(t *testing.T) {
 	}
 }
 
-func TestLine_NoTruncation(t *testing.T) {
-	text, trunc := Line("short", 100)
-	if trunc || text != "short" {
-		t.Fatalf("unexpected: %q trunc=%v", text, trunc)
-	}
-}
-
-func TestLine_Truncation(t *testing.T) {
-	text, trunc := Line("abcdefghij", 5)
-	if !trunc {
-		t.Fatal("expected truncation")
-	}
-	if text != "abcde... [truncated]" {
-		t.Fatalf("unexpected: %q", text)
-	}
-}
-
 func TestFormatSize(t *testing.T) {
 	tests := []struct {
 		bytes int

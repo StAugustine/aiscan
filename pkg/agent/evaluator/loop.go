@@ -29,7 +29,13 @@ func RunWithEval(ctx context.Context, a *agent.Agent, cfg EvalLoopConfig) (*agen
 	}
 
 	for attempt := 0; attempt < cfg.MaxEvalRounds; attempt++ {
-		if result.Stop != agent.StopReasonTerminated && result.Stop != agent.StopReasonCompleted {
+		// Judge whenever the run produced work worth evaluating. Only bail on a
+		// hard error or a user cancel — a run that merely hit its turn or token
+		// budget (Stopped/Budget) still did work the criteria should be checked
+		// against, and is exactly when a fresh feedback round is most useful.
+		// (The old gate skipped everything but Terminated/Completed, so a
+		// turn-capped agent silently never got evaluated.)
+		if result.Stop == agent.StopReasonError || result.Stop == agent.StopReasonCanceled {
 			return result, nil, nil
 		}
 

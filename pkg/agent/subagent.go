@@ -32,12 +32,12 @@ type subAgentInfo struct {
 }
 
 type SubAgentTool struct {
-	agent      *Agent
-	inbox      inbox.Inbox
-	messages   func() []ChatMessage
-	resolve    AgentTypeResolver
-	mu         sync.Mutex
-	running    map[string]*subAgentInfo
+	agent    *Agent
+	inbox    inbox.Inbox
+	messages func() []ChatMessage
+	resolve  AgentTypeResolver
+	mu       sync.Mutex
+	running  map[string]*subAgentInfo
 }
 
 func NewSubAgentTool(agent *Agent, parentInbox inbox.Inbox, resolve AgentTypeResolver) *SubAgentTool {
@@ -265,12 +265,6 @@ func (t *SubAgentTool) sendMessage(name, message string) (string, error) {
 		return fmt.Sprintf("Subagent %q inbox: %s, message dropped.", name, err), nil
 	}
 	return fmt.Sprintf("Message sent to subagent %q.", name), nil
-}
-
-func (t *SubAgentTool) RunningCount() int {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return len(t.running)
 }
 
 func (t *SubAgentTool) list() string {
