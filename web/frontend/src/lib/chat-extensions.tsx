@@ -1,5 +1,5 @@
 import { Activity, Bot, CheckCircle2 } from 'lucide-react'
-import { registerTimelineRenderer } from '@aspect/viewer'
+import { registerTimelineRenderer } from '@/viewer'
 import type { ScanResult } from '../api'
 import ScanProgressInline from '../components/chat/ScanProgressInline'
 import ScanSummaryCard from '../components/chat/ScanSummaryCard'

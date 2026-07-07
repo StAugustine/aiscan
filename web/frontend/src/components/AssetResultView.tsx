@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { AlertCircle, Brain, CheckCircle2, ChevronRight, Crosshair, File, Fingerprint, Folder, FolderOpen, Globe, Link2, Network, Radar, Server } from 'lucide-react'
 import type { AssetItem, ScanResult } from '../api'
 import {
@@ -27,8 +28,10 @@ import {
   type SitemapNode,
   type ViewAsset,
 } from '../lib/scan-result'
-import { cn } from '@aspect/theme'
-import { MarkdownContent } from '@aspect/markdown'
+import { cn } from '@/lib/theme'
+import { MarkdownContent } from '@/markdown'
+import { badgeToneClass } from '../lib/tones'
+import { Badge as UIBadge, Chip, StatTile } from '@/ui'
 import FindingsSummary from './FindingsSummary'
 
 interface AssetResultViewProps {
@@ -37,38 +40,39 @@ interface AssetResultViewProps {
 
 type AssetPanel = {
   id: string
-  label: string
+  labelKey: string
   count?: number
   preferred?: boolean
   render: () => ReactNode
 }
 
 export default function AssetResultView({ result }: AssetResultViewProps) {
+  const { t } = useTranslation('findings')
   const model = useMemo(() => buildResultModel(result), [result])
 
   return (
     <div className="space-y-4 animate-fade-in">
       <div className="rounded-lg border border-border bg-card/50 p-4">
         <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-9">
-          <Metric label="Hosts" value={model.metrics.hosts} />
-          <Metric label="Assets" value={model.metrics.assets} />
-          <Metric label="Services" value={model.metrics.services} />
-          <Metric label="Web" value={model.metrics.web} />
-          <Metric label="Probes" value={model.metrics.probes} />
-          <Metric label="Fingers" value={model.metrics.fingers} />
-          <Metric label="Loots" value={model.metrics.loots} />
-          <Metric label="Errors" value={model.metrics.errors} />
-          <Metric label="Duration" value={model.metrics.duration} />
+          <StatTile label={t('hosts')} value={model.metrics.hosts} />
+          <StatTile label={t('assets')} value={model.metrics.assets} />
+          <StatTile label={t('services')} value={model.metrics.services} />
+          <StatTile label={t('web')} value={model.metrics.web} />
+          <StatTile label={t('probes')} value={model.metrics.probes} />
+          <StatTile label={t('fingers')} value={model.metrics.fingers} />
+          <StatTile label={t('loots')} value={model.metrics.loots} />
+          <StatTile label={t('errors')} value={model.metrics.errors} />
+          <StatTile label={t('duration')} value={model.metrics.duration} />
         </div>
       </div>
 
       <FindingsSummary result={result} />
 
-      <Section title="Hosts">
+      <Section title={t('hosts')}>
         {model.hosts.length > 0 ? (
           <HostList hosts={model.hosts} />
         ) : (
-          <div className="py-8 text-center text-sm text-muted-foreground">No hosts.</div>
+          <div className="py-8 text-center text-sm text-muted-foreground">{t('noHosts')}</div>
         )}
       </Section>
     </div>
@@ -86,6 +90,7 @@ function HostList({ hosts }: { hosts: HostGroup[] }) {
 }
 
 function HostPanel({ host }: { host: HostGroup }) {
+  const { t } = useTranslation('findings')
   const [open, setOpen] = useState(true)
   const webCount = host.services.filter((service) => service.web).length
   const anchor = assetAnchor('host', host.id)
@@ -103,9 +108,9 @@ function HostPanel({ host }: { host: HostGroup }) {
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <span className="break-all font-mono text-sm font-semibold text-foreground">{host.host}</span>
-            <AnchorLink id={anchor} label={`Link to ${host.host}`} />
+            <AnchorLink id={anchor} label={t('linkTo', { name: host.host })} />
             <Badge>{formatCount(host.services.length, 'service')}</Badge>
-            {webCount > 0 && <Badge tone="cyan">{webCountLabel(webCount)}</Badge>}
+            {webCount > 0 && <Badge tone="cyan">{t('webCount', { count: webCount })}</Badge>}
           </div>
         </div>
       </summary>
@@ -128,6 +133,7 @@ function ServiceList({ services }: { services: ServiceNode[] }) {
 }
 
 function ServiceRow({ service }: { service: ServiceNode }) {
+  const { t } = useTranslation('findings')
   const panels = useMemo(() => servicePanels(service), [service])
   const [open, setOpen] = useState(false)
   const [activePanelID, setActivePanelID] = useState(() => defaultPanelID(panels))
@@ -169,7 +175,7 @@ function ServiceRow({ service }: { service: ServiceNode }) {
             <TabChip
               key={panel.id}
               active={open && activePanel?.id === panel.id}
-              label={panel.label}
+              label={t(panel.labelKey)}
               count={panel.count}
               onClick={selectPanel(panel.id)}
             />
@@ -187,6 +193,7 @@ function ServiceRow({ service }: { service: ServiceNode }) {
 }
 
 function ServiceLine({ service, expandable = false }: { service: ServiceNode; expandable?: boolean }) {
+  const { t } = useTranslation('findings')
   const displayTarget = service.web ? service.asset.target : service.target
   const aiStatus = serviceAIStatus(service)
 
@@ -205,23 +212,17 @@ function ServiceLine({ service, expandable = false }: { service: ServiceNode; ex
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
             <ServiceIcon service={service} />
             <span className="font-medium text-foreground">{service.service || service.protocol || 'service'}</span>
-            <AnchorLink id={assetAnchor('service', service.id)} label={`Link to ${service.target || service.service || service.port}`} />
+            <AnchorLink id={assetAnchor('service', service.id)} label={t('linkTo', { name: service.target || service.service || service.port })} />
             {service.protocol && service.protocol !== service.service && <Badge>{service.protocol}</Badge>}
-            {service.web && <Badge tone="cyan">{service.pathCount > 0 ? webCountLabel(service.pathCount) : 'web'}</Badge>}
+            {service.web && <Badge tone="cyan">{service.pathCount > 0 ? t('webCount', { count: service.pathCount }) : t('web')}</Badge>}
             {aiStatus === 'verified' && (
-              <span className="inline-flex items-center gap-1 rounded bg-green-400/10 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-400">
-                <CheckCircle2 className="h-3 w-3" />AI Verified
-              </span>
+              <UIBadge size="sm" variant="success"><CheckCircle2 className="h-3 w-3" />{t('aiVerified')}</UIBadge>
             )}
             {aiStatus === 'sniper' && (
-              <span className="inline-flex items-center gap-1 rounded bg-red-400/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
-                <Crosshair className="h-3 w-3" />CVE Intel
-              </span>
+              <UIBadge size="sm" variant="danger"><Crosshair className="h-3 w-3" />{t('cveIntel')}</UIBadge>
             )}
             {aiStatus === 'deep' && (
-              <span className="inline-flex items-center gap-1 rounded bg-yellow-400/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-700 dark:text-warning">
-                <Radar className="h-3 w-3" />Deep Test
-              </span>
+              <UIBadge size="sm" variant="warning"><Radar className="h-3 w-3" />{t('deepTest')}</UIBadge>
             )}
             {service.title && (
               <span className="min-w-0 break-words text-xs text-muted-foreground">{service.title}</span>
@@ -238,7 +239,7 @@ function ServiceLine({ service, expandable = false }: { service: ServiceNode; ex
             ))}
             <FingerChips fingers={service.fingers} />
             {service.analysisItems.length > 0 && (
-              <span className="text-primary">{service.analysisItems.length} analysis</span>
+              <span className="text-primary">{t('analysisCount', { count: service.analysisItems.length })}</span>
             )}
           </div>
         </div>
@@ -253,7 +254,7 @@ function ServiceIcon({ service }: { service: ServiceNode }) {
     return <Globe className="h-3.5 w-3.5 shrink-0 text-primary" />
   }
   if (service.fingers.length > 0) {
-    return <Fingerprint className="h-3.5 w-3.5 shrink-0 text-yellow-700 dark:text-yellow-300" />
+    return <Fingerprint className="h-3.5 w-3.5 shrink-0 text-warning" />
   }
   return <Server className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 }
@@ -263,7 +264,7 @@ function servicePanels(service: ServiceNode): AssetPanel[] {
   if (service.paths.length > 0) {
     panels.push({
       id: 'sitemap',
-      label: 'Sitemap',
+      labelKey: 'sitemap',
       count: service.paths.length,
       preferred: true,
       render: () => <SitemapBlock items={service.paths} />,
@@ -272,7 +273,7 @@ function servicePanels(service: ServiceNode): AssetPanel[] {
   if (service.analysisItems.length > 0) {
     panels.push({
       id: 'analysis',
-      label: 'Analysis',
+      labelKey: 'analysis',
       count: service.analysisItems.length,
       render: () => <AssetItemsBlock asset={service.asset} items={service.analysisItems} />,
     })
@@ -282,10 +283,6 @@ function servicePanels(service: ServiceNode): AssetPanel[] {
 
 function defaultPanelID(panels: AssetPanel[]) {
   return panels.find((panel) => panel.preferred)?.id || panels[0]?.id || ''
-}
-
-function webCountLabel(count: number) {
-  return `${count} web`
 }
 
 function ItemFactLine({ item, search, className }: { item: AssetItem; search?: string; className?: string }) {
@@ -319,6 +316,7 @@ function AssetItemsBlock({ asset, items }: { asset: ViewAsset; items: AssetItem[
 }
 
 function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
+  const { t } = useTranslation('findings')
   const markdown = isAnalysisItem(item)
   const title = markdown ? firstText(item.summary, item.title) : itemTitle(item)
   const detail = itemContent(item)
@@ -333,13 +331,13 @@ function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
   return (
     <div id={anchor} className={cn(
       'scroll-mt-24 rounded-md border p-3 text-xs',
-      isAI && item.status === 'confirmed' && 'border-l-4 border-l-green-500',
-      isAI && item.source === 'sniper' && 'border-l-4 border-l-red-500',
-      isAI && item.source === 'deep' && 'border-l-4 border-l-yellow-500',
+      isAI && item.status === 'confirmed' && 'border-l-4 border-l-success',
+      isAI && item.source === 'sniper' && 'border-l-4 border-l-destructive',
+      isAI && item.source === 'deep' && 'border-l-4 border-l-warning',
       item.kind === 'error'
-        ? 'border-red-400/20 bg-red-400/10'
+        ? 'border-destructive/20 bg-destructive/10'
         : item.kind === 'loot'
-          ? 'border-red-400/20 bg-red-400/5'
+          ? 'border-destructive/20 bg-destructive/5'
           : 'border-border/70 bg-background/30',
     )}>
       <div className="flex flex-wrap items-center gap-2">
@@ -348,7 +346,7 @@ function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
           <Badge key={badge.id} tone={badge.tone}>{badge.label}</Badge>
         ))}
         <VerificationBadge source={item.source} status={item.status} />
-        <AnchorLink id={anchor} label={`Link to ${title || item.kind}`} />
+        <AnchorLink id={anchor} label={t('linkTo', { name: title || item.kind })} />
         {showTarget && <span className="break-all font-mono text-muted-foreground">{item.target}</span>}
       </div>
       {title && <div className="mt-1 break-words text-foreground">{title}</div>}
@@ -357,12 +355,12 @@ function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
         <div className={cn(
           'mt-2 max-h-96 overflow-auto rounded-md p-3 text-muted-foreground',
           isAI
-            ? 'border-l-4 border-l-primary bg-primary/5'
+            ? 'border-l-4 border-l-ai bg-ai/5'
             : 'border border-border bg-background/50',
         )}>
           {isAI && (
-            <div className="mb-2 text-[10px] font-medium uppercase text-primary">
-              {item.source === 'verify' ? 'AI Verification' : item.source === 'sniper' ? 'CVE Intelligence' : 'Dynamic Analysis'}
+            <div className="mono-label mb-2 text-ai">
+              {item.source === 'verify' ? t('aiVerification') : item.source === 'sniper' ? t('cveIntelligence') : t('dynamicAnalysis')}
             </div>
           )}
           {markdown ? (
@@ -384,35 +382,24 @@ function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
 }
 
 function VerificationBadge({ source, status }: { source?: string; status?: string }) {
+  const { t } = useTranslation('findings')
   if (source === 'verify') {
     if (status === 'confirmed') {
-      return (
-        <span className="inline-flex items-center gap-1 rounded bg-green-400/10 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:text-green-400">
-          <CheckCircle2 className="h-3 w-3" />Confirmed
-        </span>
-      )
+      return <UIBadge size="sm" variant="success"><CheckCircle2 className="h-3 w-3" />{t('confirmed')}</UIBadge>
     }
     if (status === 'not_confirmed') {
-      return <span className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Not Confirmed</span>
+      return <UIBadge size="sm" variant="muted">{t('notConfirmed')}</UIBadge>
     }
     if (status === 'inconclusive') {
-      return <span className="inline-flex items-center gap-1 rounded bg-yellow-400/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-700 dark:text-warning">Inconclusive</span>
+      return <UIBadge size="sm" variant="warning">{t('inconclusive')}</UIBadge>
     }
-    return <span className="inline-flex items-center gap-1 rounded bg-blue-400/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:text-blue-400">Info</span>
+    return <UIBadge size="sm" variant="info">{t('info')}</UIBadge>
   }
   if (source === 'sniper') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded bg-red-400/10 px-1.5 py-0.5 text-[10px] font-medium text-red-700 dark:text-red-400">
-        <Crosshair className="h-3 w-3" />CVE Intel
-      </span>
-    )
+    return <UIBadge size="sm" variant="danger"><Crosshair className="h-3 w-3" />{t('cveIntel')}</UIBadge>
   }
   if (source === 'deep') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded bg-yellow-400/10 px-1.5 py-0.5 text-[10px] font-medium text-yellow-700 dark:text-warning">
-        <Radar className="h-3 w-3" />Deep Test
-      </span>
-    )
+    return <UIBadge size="sm" variant="warning"><Radar className="h-3 w-3" />{t('deepTest')}</UIBadge>
   }
   return null
 }
@@ -469,18 +456,19 @@ function firstText(...values: Array<string | undefined>) {
 
 function ItemIcon({ kind }: { kind: string }) {
   if (kind === 'loot') {
-    return <AlertCircle className="h-3.5 w-3.5 text-red-700 dark:text-red-300" />
+    return <AlertCircle className="h-3.5 w-3.5 text-destructive" />
   }
   if (kind === 'note' || kind === 'response') {
-    return <Brain className="h-3.5 w-3.5 text-primary" />
+    return <Brain className="h-3.5 w-3.5 text-ai" />
   }
   if (kind === 'fingerprint') {
-    return <Fingerprint className="h-3.5 w-3.5 text-yellow-700 dark:text-yellow-300" />
+    return <Fingerprint className="h-3.5 w-3.5 text-warning" />
   }
   return <Server className="h-3.5 w-3.5 text-muted-foreground" />
 }
 
 function SitemapBlock({ items }: { items: AssetItem[] }) {
+  const { t } = useTranslation('findings')
   const tree = useMemo(() => buildSitemapTree(items), [items])
   const folderIDs = useMemo(() => collectSitemapFolderIDs(tree), [tree])
   const [openIDs, setOpenIDs] = useState<Set<string>>(() => defaultOpenSitemapNodes(tree))
@@ -505,15 +493,15 @@ function SitemapBlock({ items }: { items: AssetItem[] }) {
     <div className="overflow-hidden rounded-md border border-border/70 bg-background/30">
       {folderIDs.length > 0 && (
         <div className="flex items-center justify-end gap-1 border-b border-border/70 px-2 py-1">
-          <IconButton label="Expand all" onClick={() => setOpenIDs(new Set(folderIDs))}>
+          <IconButton label={t('expandAll')} onClick={() => setOpenIDs(new Set(folderIDs))}>
             <FolderOpen className="h-3.5 w-3.5" />
           </IconButton>
-          <IconButton label="Collapse all" onClick={() => setOpenIDs(new Set())}>
+          <IconButton label={t('collapseAll')} onClick={() => setOpenIDs(new Set())}>
             <Folder className="h-3.5 w-3.5" />
           </IconButton>
         </div>
       )}
-      <div role="tree" aria-label="Sitemap">
+      <div role="tree" aria-label={t('sitemap')}>
         {tree.map((node) => (
           <SitemapTreeNode
             key={node.id}
@@ -612,6 +600,7 @@ function EndpointFile({ item, depth }: { item: AssetItem; depth: number }) {
 }
 
 function SourceChips({ sources, className }: { sources: string[]; className?: string }) {
+  const { t } = useTranslation('findings')
   if (sources.length === 0) {
     return null
   }
@@ -620,7 +609,7 @@ function SourceChips({ sources, className }: { sources: string[]; className?: st
   const hidden = sources.length - visible.length
 
   return (
-    <span className={cn('inline-flex min-w-0 flex-wrap items-center gap-1 text-primary', className)} title="Sources">
+    <span className={cn('inline-flex min-w-0 flex-wrap items-center gap-1 text-primary', className)} title={t('sources')}>
       <Server className="h-3 w-3 shrink-0" />
       {visible.map((source) => (
         <span key={`source:${source}`} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px]">{source}</span>
@@ -631,6 +620,7 @@ function SourceChips({ sources, className }: { sources: string[]; className?: st
 }
 
 function FingerChips({ fingers }: { fingers: string[] }) {
+  const { t } = useTranslation('findings')
   if (fingers.length === 0) {
     return null
   }
@@ -639,12 +629,12 @@ function FingerChips({ fingers }: { fingers: string[] }) {
   const hidden = fingers.length - visible.length
 
   return (
-    <span className="inline-flex min-w-0 flex-wrap items-center gap-1 text-yellow-700 dark:text-yellow-300" title="Fingerprints">
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1 text-warning" title={t('fingerprints')}>
       <Fingerprint className="h-3 w-3 shrink-0" />
       {visible.map((finger) => (
-        <span key={`finger:${finger}`} className="rounded bg-yellow-400/10 px-1.5 py-0.5 text-[10px]">{finger}</span>
+        <span key={`finger:${finger}`} className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px]">{finger}</span>
       ))}
-      {hidden > 0 && <span className="rounded bg-yellow-400/10 px-1.5 py-0.5 text-[10px]">+{hidden}</span>}
+      {hidden > 0 && <span className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px]">+{hidden}</span>}
     </span>
   )
 }
@@ -683,33 +673,10 @@ function TabChip({
   onClick: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        'rounded border px-2 py-1 text-[10px] font-medium transition-colors',
-        active
-          ? 'border-primary/40 bg-primary/15 text-primary'
-          : 'border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground',
-      )}
-    >
+    <Chip active={active} onClick={onClick} className="gap-1 rounded px-2 text-[10px]">
       {label}
-      {typeof count === 'number' && count > 0 && (
-        <>
-          {' '}
-          <span className="opacity-70">{count}</span>
-        </>
-      )}
-    </button>
-  )
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div>
-      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
-      <div className="mt-1 font-mono text-sm text-foreground">{value}</div>
-    </div>
+      {typeof count === 'number' && count > 0 && <span className="opacity-70">{count}</span>}
+    </Chip>
   )
 }
 
@@ -723,18 +690,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function Badge({ children, tone = 'muted' }: { children: ReactNode; tone?: BadgeTone }) {
+  // Compact chip shape now comes from the cyber-ui Badge (size="sm"); the tone →
+  // token colour map stays here in the domain layer (lib/tones.ts BadgeTone).
   return (
-    <span
-      className={cn(
-        'inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium',
-        tone === 'cyan' && 'bg-primary/10 text-primary',
-        tone === 'yellow' && 'bg-yellow-400/10 text-yellow-700 dark:text-yellow-300',
-        tone === 'green' && 'bg-green-400/10 text-green-700 dark:text-green-300',
-        tone === 'red' && 'bg-red-400/10 text-red-700 dark:text-red-300',
-        tone === 'muted' && 'bg-background text-muted-foreground',
-      )}
-    >
+    <UIBadge size="sm" className={cn('border-transparent', badgeToneClass[tone])}>
       {children}
-    </span>
+    </UIBadge>
   )
 }
