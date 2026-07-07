@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/chainreactors/aiscan/core/eventbus"
+	"github.com/chainreactors/aiscan/core/output"
 	"github.com/chainreactors/aiscan/pkg/commands"
 	"github.com/chainreactors/aiscan/pkg/telemetry"
 	"github.com/chainreactors/aiscan/pkg/tools/toolargs"
@@ -30,6 +32,11 @@ func (c *Command) WithLogger(logger telemetry.Logger) *Command {
 
 func (c *Command) WithProxy(proxy string) *Command {
 	c.Proxy = proxy
+	return c
+}
+
+func (c *Command) WithDataBus(bus *eventbus.Bus[output.ToolDataEvent]) *Command {
+	c.DataBus = bus
 	return c
 }
 
