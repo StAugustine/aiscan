@@ -5,7 +5,8 @@ import type { ScanResult } from '../api'
 import { buildFindings, findingTargetURL, PRIORITY_ORDER, type FindingItem, type FindingPriority } from '../lib/scan-result'
 import { severityTone } from '../lib/tones'
 import { cn } from '@aspect/theme'
-import { Badge, Chip } from '@aspect/ui'
+import { Badge, Chip, EmptyState } from '@aspect/ui'
+import { AiPanel } from '@/components/AiPanel'
 import { MarkdownContent } from '@/markdown'
 
 interface FindingsPanelProps {
@@ -34,12 +35,7 @@ export default function FindingsPanel({ result }: FindingsPanelProps) {
   }, [filtered])
 
   if (findings.length === 0) {
-    return (
-      <div className="py-12 text-center text-sm text-muted-foreground">
-        <Shield className="mx-auto mb-3 h-8 w-8 opacity-40" />
-        <p>{t('noFindings')}</p>
-      </div>
-    )
+    return <EmptyState icon={Shield} title={t('noFindings')} />
   }
 
   const aiCount = findings.filter(f => f.source === 'verify' && f.status === 'confirmed').length
@@ -101,13 +97,13 @@ function FindingCard({ item }: { item: FindingItem }) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-foreground break-words">{item.title}</span>
-            <span className="rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{item.kind}</span>
+            <Badge variant="muted" size="sm">{item.kind}</Badge>
             <FindingSourceBadge source={item.source} status={item.status} />
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
             <FindingTarget target={item.target} />
             {item.tags.slice(0, 5).map(tag => (
-              <span key={tag} className="rounded bg-secondary/80 px-1.5 py-0.5 text-[10px]">{tag}</span>
+              <Badge key={tag} variant="secondary" size="sm" className="text-muted-foreground">{tag}</Badge>
             ))}
             {item.tags.length > 5 && (
               <span className="text-[10px]">+{item.tags.length - 5}</span>
@@ -127,11 +123,9 @@ function FindingCard({ item }: { item: FindingItem }) {
               {t('showAIAnalysis')}
             </button>
           ) : (
-            <div className="mt-1 rounded-md border-l-4 border-l-ai bg-ai/5 p-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="mono-label text-ai">
-                  {item.source === 'verify' ? t('aiVerification') : item.source === 'sniper' ? t('cveIntelligence') : t('analysis')}
-                </span>
+            <AiPanel
+              label={item.source === 'verify' ? t('aiVerification') : item.source === 'sniper' ? t('cveIntelligence') : t('analysis')}
+              action={
                 <button
                   type="button"
                   className="text-[10px] text-muted-foreground hover:text-foreground"
@@ -139,11 +133,12 @@ function FindingCard({ item }: { item: FindingItem }) {
                 >
                   {t('hide')}
                 </button>
-              </div>
-              <div className="max-h-72 overflow-auto text-muted-foreground">
-                <MarkdownContent content={item.detail} compact muted />
-              </div>
-            </div>
+              }
+              className="mt-1"
+              bodyClassName="max-h-72 overflow-auto"
+            >
+              <MarkdownContent content={item.detail} compact muted />
+            </AiPanel>
           )}
         </div>
       )}

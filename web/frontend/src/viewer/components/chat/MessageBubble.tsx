@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { cn } from '@aspect/theme'
+import { AgentVoiceCard } from './AgentVoiceCard'
 
 export interface MessageBubbleProps {
   role: 'user' | 'assistant' | 'system'
@@ -63,21 +64,22 @@ export default function MessageBubble({
         <Chevron className="h-2.5 w-2.5 shrink-0 text-muted-foreground" />
       </button>
 
-      {/* body */}
-      {expanded && (
-        <div
-          className={cn(
-            'mt-1 min-w-0 rounded-lg px-3 py-2 text-sm leading-relaxed xl:mt-0',
-            isUser
-              ? 'max-w-[min(85%,52rem)] bg-primary/10 text-foreground'
-              : 'w-full border border-border border-l-2 border-l-ai/40 bg-card text-foreground shadow-soft',
-            streaming && 'border-primary/40',
-          )}
-        >
-          {body || (!streaming && <span className="text-muted-foreground italic">Empty message</span>)}
-          {streaming && <StreamingCursor />}
-        </div>
-      )}
+      {/* body — user messages sit in a soft primary bubble; the agent's voice
+          uses the shared AgentVoiceCard shell (Cortex-blue left edge). */}
+      {expanded &&
+        (isUser ? (
+          <div className="mt-1 min-w-0 max-w-[min(85%,52rem)] rounded-lg bg-primary/10 px-3 py-2 text-sm leading-relaxed text-foreground xl:mt-0">
+            {body || <span className="text-muted-foreground italic">Empty message</span>}
+          </div>
+        ) : (
+          <AgentVoiceCard
+            streaming={streaming}
+            className="mt-1 w-full min-w-0 px-3 py-2 text-sm leading-relaxed xl:mt-0"
+          >
+            {body || (!streaming && <span className="text-muted-foreground italic">Empty message</span>)}
+            {streaming && <StreamingCursor />}
+          </AgentVoiceCard>
+        ))}
     </div>
   )
 }

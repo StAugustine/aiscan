@@ -12,14 +12,13 @@ import BrandLogo from './components/brand/BrandLogo'
 // Lazy: the agent terminal drags in @xterm (~its own chunk) but only renders
 // when a node's console is opened — keep it out of the first-paint bundle.
 const AgentTerminal = lazy(() => import('./components/terminal'))
-import { ThemeToggle, useConfirm } from '@aspect/ui'
+import { Button, ThemeToggle, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, useConfirm } from '@aspect/ui'
 import { ThemeProvider, useTheme } from '@aspect/theme'
 import { getStatus } from './api'
 import type { ServerStatus } from './api'
 import { useChatSession, agentNodeKey } from './hooks/useChatSession'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
-import { TooltipProvider } from '@aspect/ui'
 import { cn } from '@aspect/theme'
 
 const sidebarStorageKey = 'aiscan-sidebar-open'
@@ -254,39 +253,50 @@ function AgentsButton({ count, onClick }: { count: number; onClick: () => void }
   const { t } = useTranslation('app')
   const active = count > 0
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={active ? t('agentsConnected', { count }) : t('noAgents')}
-      aria-label={active ? t('agentsConnected', { count }) : t('noAgents')}
-      className={cn(
-        'inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border px-2 text-[10px] font-medium transition-colors hover:opacity-80',
-        // A connection count is neutral status, not an alert — keep warm hues for
-        // severity only. Blue when connected, quiet neutral when none.
-        active
-          ? 'border-primary/30 bg-primary/10 text-primary'
-          : 'border-border bg-secondary/50 text-muted-foreground',
-      )}
-    >
-      <Monitor className="h-3 w-3" aria-hidden="true" />
-      <span className="font-mono" aria-hidden="true">{count}</span>
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          active={active}
+          onClick={onClick}
+          aria-label={active ? t('agentsConnected', { count }) : t('noAgents')}
+          className={cn(
+            'h-7 shrink-0 cursor-pointer gap-1.5 rounded-md border hover:opacity-80',
+            // A connection count is neutral status, not an alert — keep warm hues for
+            // severity only. Blue when connected, quiet neutral when none.
+            active
+              ? 'border-primary/30'
+              : 'border-border bg-secondary/50 text-muted-foreground hover:bg-secondary/50 hover:text-muted-foreground',
+          )}
+        >
+          <Monitor className="h-3 w-3" aria-hidden="true" />
+          <span className="font-mono" aria-hidden="true">{count}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{active ? t('agentsConnected', { count }) : t('noAgents')}</TooltipContent>
+    </Tooltip>
   )
 }
 
 function HeaderIconButton({ children, label, onClick, active }: { children: ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className={cn(
-        'inline-flex h-7 w-7 items-center justify-center rounded-md hover:bg-accent hover:text-foreground',
-        active ? 'bg-primary/10 text-primary' : 'text-muted-foreground',
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          active={active}
+          aria-label={label}
+          onClick={onClick}
+          className={cn('hover:text-foreground', !active && 'text-muted-foreground')}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }

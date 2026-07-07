@@ -11,7 +11,7 @@ import {
   positiveNumber,
   sessionTitle,
   stateLabel,
-} from '@/terminal-view'
+} from '@aspect/terminal'
 
 export function TerminalDetails({
   agent,

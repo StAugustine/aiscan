@@ -4,7 +4,6 @@ import i18n from '../i18n'
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronDown,
   FileText,
   GitBranch,
   Loader2,
@@ -16,7 +15,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@aspect/theme'
-import { Callout } from '@aspect/ui'
+import { Button, Callout, DisclosureCard, Tooltip, TooltipContent, TooltipTrigger } from '@aspect/ui'
 import BrandMark from './brand/BrandMark'
 import { MarkdownContent } from '@/markdown'
 import {
@@ -392,23 +391,22 @@ export default function ChatPanel({
                     </div>
                   ) : undefined}
                   leading={
-                    <button
-                      type="button"
-                      onClick={() => setPersist((v) => !v)}
-                      aria-pressed={persist}
-                      title={t('persistHint')}
-                      className={cn(
-                        // Ghost chip — lives *inside* the composer capsule now,
-                        // so no border of its own (that would be a pill-in-pill).
-                        'inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-xs font-medium transition-colors',
-                        persist
-                          ? 'bg-primary/15 text-primary'
-                          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                      )}
-                    >
-                      <Target className="h-3.5 w-3.5" />
-                      {t('persistMode')}
-                    </button>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        {/* Ghost chip — lives *inside* the composer capsule, so no
+                            border of its own (that would be a pill-in-pill). */}
+                        <Button
+                          variant="ghost"
+                          active={persist}
+                          onClick={() => setPersist((v) => !v)}
+                          className={cn('h-10 shrink-0 gap-1.5 rounded-full px-3.5 text-xs', !persist && 'text-muted-foreground')}
+                        >
+                          <Target className="h-3.5 w-3.5" />
+                          {t('persistMode')}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{t('persistHint')}</TooltipContent>
+                    </Tooltip>
                   }
                   onSend={handleSendWithAttachments}
                   onPause={onPause}
@@ -944,26 +942,23 @@ function AttachmentCard({ name, body }: { name: string; body: string }) {
   const [open, setOpen] = useState(false)
   const bytes = useMemo(() => new Blob([body]).size, [body])
   return (
-    <div className="w-[min(28rem,100%)] overflow-hidden rounded-lg border border-border/70 bg-background/50">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-accent/40"
-      >
-        <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
-        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{name}</span>
-        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{formatBytes(bytes)}</span>
-        <ChevronDown
-          className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200', open && 'rotate-180')}
-        />
-      </button>
-      {open && (
-        <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 bg-card/40 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
-          {body}
-        </pre>
-      )}
-    </div>
+    <DisclosureCard
+      expanded={open}
+      onToggle={setOpen}
+      className="w-[min(28rem,100%)] border-border/70 bg-background/50"
+      headerClassName="px-2.5 py-1.5 hover:bg-accent/40"
+      header={
+        <>
+          <FileText className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">{name}</span>
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{formatBytes(bytes)}</span>
+        </>
+      }
+    >
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-border/60 bg-card/40 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+        {body}
+      </pre>
+    </DisclosureCard>
   )
 }
 

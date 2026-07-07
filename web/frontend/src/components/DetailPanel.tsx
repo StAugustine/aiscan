@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, FileText, Shield, TableProperties } from 'lucide-react'
-import { Tabs, TabsList, TabsTrigger, TabsContent, Button } from '@aspect/ui'
+import { Tabs, TabsList, TabsTrigger, TabsContent, Button, Badge, EmptyState } from '@aspect/ui'
 import { fetchScanReport, type ScanResult } from '../api'
 import { buildFindings } from '../lib/scan-result'
 import { MarkdownContent } from '@/markdown'
@@ -57,7 +57,7 @@ export default function DetailPanel({ scanID, result, report, onClose }: Props) 
             </span>
           )}
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="h-7 w-7 text-muted-foreground" aria-label={t('closeDetailPanel')}>
+        <Button variant="ghost" size="icon-xs" onClick={onClose} className="text-muted-foreground" aria-label={t('closeDetailPanel')}>
           <X className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -74,9 +74,7 @@ export default function DetailPanel({ scanID, result, report, onClose }: Props) 
                 <TabsTrigger value="findings">
                   <Shield className="h-3.5 w-3.5" />
                   {t('findings')}
-                  <span className="ml-1 rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold text-destructive">
-                    {findingsCount}
-                  </span>
+                  <Badge variant="danger" size="sm" className="ml-1 font-bold">{findingsCount}</Badge>
                 </TabsTrigger>
               )}
               <TabsTrigger value="report">
@@ -100,9 +98,7 @@ export default function DetailPanel({ scanID, result, report, onClose }: Props) 
             </TabsContent>
           </Tabs>
         ) : (
-          <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">
-            {t('noResultsAvailable')}
-          </div>
+          <EmptyState compact title={t('noResultsAvailable')} />
         )}
       </div>
     </aside>

@@ -2,6 +2,7 @@ import { ArrowRight, Shield, Server, Bug, FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { ScanResult } from '../../api'
 import { cn } from '@aspect/theme'
+import { Button } from '@aspect/ui'
 
 interface Props {
   scanID: string
@@ -28,18 +29,15 @@ export default function ScanSummaryCard({ scanID, result, onViewDetails }: Props
         <Metric icon={<Bug className="h-3 w-3" />} label={t('lootsLabel')} value={s.loots} tone={s.loots > 0 ? 'warn' : 'muted'} />
         {s.errors > 0 && <Metric icon={<Bug className="h-3 w-3" />} label={t('errorsLabel')} value={s.errors} tone="error" />}
       </div>
-      <button
+      <Button
+        variant="ghost"
         type="button"
         onClick={() => onViewDetails(scanID)}
-        className={cn(
-          'flex w-full items-center justify-center gap-1.5 border-t border-primary/20',
-          'px-3 py-1.5 text-xs font-medium text-primary',
-          'hover:bg-primary/10 transition-colors',
-        )}
+        className="flex h-auto w-full justify-center gap-1.5 rounded-none border-t border-primary/20 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 hover:text-primary"
       >
         {t('viewDetails')}
         <ArrowRight className="h-3 w-3" />
-      </button>
+      </Button>
     </div>
   )
 }

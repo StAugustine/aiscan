@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react'
 import { cn } from '@aspect/theme'
 import { Collapsible } from '@aspect/ui'
+import { AgentVoiceCard } from './AgentVoiceCard'
 import { StreamingCursor } from './MessageBubble'
 import { ThinkingDots } from './ChatThinking'
 
@@ -48,13 +49,8 @@ export default function AssistantResponse({
       </div>
 
       {/* card — a hairline Cortex-blue left edge marks it as the agent's voice,
-          echoing the rail's blue node without a competing avatar. */}
-      <div
-        className={cn(
-          'overflow-hidden rounded-lg border border-border border-l-2 border-l-ai/40 bg-card text-foreground shadow-soft',
-          streaming && 'border-primary/40',
-        )}
-      >
+          echoing the rail's blue node without a competing avatar (AgentVoiceCard). */}
+      <AgentVoiceCard streaming={streaming} className="overflow-hidden">
         {hasThinking && (
           <Collapsible
             title={labels?.thinking || 'Thinking'}
@@ -96,7 +92,7 @@ export default function AssistantResponse({
             {tools}
           </Section>
         )}
-      </div>
+      </AgentVoiceCard>
     </div>
   )
 }

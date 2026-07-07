@@ -5,6 +5,7 @@ import { buildFindingsSummary, PRIORITY_ORDER, type FindingsSummaryModel } from 
 import { severityTone } from '../lib/tones'
 import { useMemo } from 'react'
 import { cn } from '@aspect/theme'
+import { Badge, Card, Meter } from '@aspect/ui'
 
 interface FindingsSummaryProps {
   result: ScanResult
@@ -17,7 +18,7 @@ export default function FindingsSummary({ result }: FindingsSummaryProps) {
   if (!summary) return null
 
   return (
-    <div className="rounded-lg border border-border bg-card/50 p-4 space-y-4">
+    <Card className="bg-card/50 p-4 space-y-4">
       <div className="flex items-center gap-2 text-sm font-medium text-ai">
         <ShieldCheck className="h-4 w-4" />
         <span>{t('aiAnalysisSummary')}</span>
@@ -32,7 +33,7 @@ export default function FindingsSummary({ result }: FindingsSummaryProps) {
       {summary.topFinding && (
         <TopFinding summary={summary} />
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -82,12 +83,7 @@ function VerificationStats({ summary }: { summary: FindingsSummaryModel }) {
         </span>
       </div>
 
-      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
-        <div
-          className="h-full rounded-full bg-success transition-all"
-          style={{ width: `${ratio}%` }}
-        />
-      </div>
+      <Meter value={ratio} tone="success" />
 
       <div className="flex flex-wrap gap-3 text-[11px]">
         {confirmed > 0 && (
@@ -137,7 +133,7 @@ function TopFinding({ summary }: { summary: FindingsSummaryModel }) {
               </span>
             )}
             {top.tags.slice(0, 3).map(tag => (
-              <span key={tag} className="rounded bg-background/50 px-1.5 py-0.5 text-[10px]">{tag}</span>
+              <Badge key={tag} variant="muted" size="sm" className="bg-background/50">{tag}</Badge>
             ))}
           </div>
         </div>

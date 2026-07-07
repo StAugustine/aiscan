@@ -31,7 +31,8 @@ import {
 import { cn } from '@aspect/theme'
 import { MarkdownContent } from '@/markdown'
 import { badgeToneClass } from '../lib/tones'
-import { Badge as UIBadge, Chip, StatTile } from '@aspect/ui'
+import { Badge as UIBadge, Button, Card, CardContent, CardHeader, Chip, EmptyState, StatTile, Tooltip, TooltipContent, TooltipTrigger } from '@aspect/ui'
+import { AiPanel } from '@/components/AiPanel'
 import FindingsSummary from './FindingsSummary'
 
 interface AssetResultViewProps {
@@ -52,7 +53,7 @@ export default function AssetResultView({ result }: AssetResultViewProps) {
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div className="rounded-lg border border-border bg-card/50 p-4">
+      <Card className="bg-card/50 p-4">
         <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3 lg:grid-cols-9">
           <StatTile label={t('hosts')} value={model.metrics.hosts} />
           <StatTile label={t('assets')} value={model.metrics.assets} />
@@ -64,7 +65,7 @@ export default function AssetResultView({ result }: AssetResultViewProps) {
           <StatTile label={t('errors')} value={model.metrics.errors} />
           <StatTile label={t('duration')} value={model.metrics.duration} />
         </div>
-      </div>
+      </Card>
 
       <FindingsSummary result={result} />
 
@@ -72,7 +73,7 @@ export default function AssetResultView({ result }: AssetResultViewProps) {
         {model.hosts.length > 0 ? (
           <HostList hosts={model.hosts} />
         ) : (
-          <div className="py-8 text-center text-sm text-muted-foreground">{t('noHosts')}</div>
+          <EmptyState compact title={t('noHosts')} />
         )}
       </Section>
     </div>
@@ -352,23 +353,26 @@ function AssetItemRow({ item, asset }: { item: AssetItem; asset: ViewAsset }) {
       {title && <div className="mt-1 break-words text-foreground">{title}</div>}
       <ItemFactLine item={item} className="mt-2" />
       {detail && (
-        <div className={cn(
-          'mt-2 max-h-96 overflow-auto rounded-md p-3 text-muted-foreground',
-          isAI
-            ? 'border-l-4 border-l-ai bg-ai/5'
-            : 'border border-border bg-background/50',
-        )}>
-          {isAI && (
-            <div className="mono-label mb-2 text-ai">
-              {item.source === 'verify' ? t('aiVerification') : item.source === 'sniper' ? t('cveIntelligence') : t('dynamicAnalysis')}
-            </div>
-          )}
-          {markdown ? (
-            <MarkdownContent content={detail} compact muted />
-          ) : (
-            <div className="whitespace-pre-wrap">{detail}</div>
-          )}
-        </div>
+        isAI ? (
+          <AiPanel
+            label={item.source === 'verify' ? t('aiVerification') : item.source === 'sniper' ? t('cveIntelligence') : t('dynamicAnalysis')}
+            className="mt-2 max-h-96 overflow-auto"
+          >
+            {markdown ? (
+              <MarkdownContent content={detail} compact muted />
+            ) : (
+              <div className="whitespace-pre-wrap">{detail}</div>
+            )}
+          </AiPanel>
+        ) : (
+          <div className="mt-2 max-h-96 overflow-auto rounded-md border border-border bg-background/50 p-3 text-muted-foreground">
+            {markdown ? (
+              <MarkdownContent content={detail} compact muted />
+            ) : (
+              <div className="whitespace-pre-wrap">{detail}</div>
+            )}
+          </div>
+        )
       )}
       {tags.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
@@ -609,13 +613,18 @@ function SourceChips({ sources, className }: { sources: string[]; className?: st
   const hidden = sources.length - visible.length
 
   return (
-    <span className={cn('inline-flex min-w-0 flex-wrap items-center gap-1 text-primary', className)} title={t('sources')}>
-      <Server className="h-3 w-3 shrink-0" />
-      {visible.map((source) => (
-        <span key={`source:${source}`} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px]">{source}</span>
-      ))}
-      {hidden > 0 && <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px]">+{hidden}</span>}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className={cn('inline-flex min-w-0 flex-wrap items-center gap-1 text-primary', className)}>
+          <Server className="h-3 w-3 shrink-0" />
+          {visible.map((source) => (
+            <Badge key={`source:${source}`} tone="cyan">{source}</Badge>
+          ))}
+          {hidden > 0 && <Badge tone="cyan">+{hidden}</Badge>}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{t('sources')}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -629,13 +638,18 @@ function FingerChips({ fingers }: { fingers: string[] }) {
   const hidden = fingers.length - visible.length
 
   return (
-    <span className="inline-flex min-w-0 flex-wrap items-center gap-1 text-warning" title={t('fingerprints')}>
-      <Fingerprint className="h-3 w-3 shrink-0" />
-      {visible.map((finger) => (
-        <span key={`finger:${finger}`} className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px]">{finger}</span>
-      ))}
-      {hidden > 0 && <span className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px]">+{hidden}</span>}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex min-w-0 flex-wrap items-center gap-1 text-warning">
+          <Fingerprint className="h-3 w-3 shrink-0" />
+          {visible.map((finger) => (
+            <Badge key={`finger:${finger}`} tone="yellow">{finger}</Badge>
+          ))}
+          {hidden > 0 && <Badge tone="yellow">+{hidden}</Badge>}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{t('fingerprints')}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -649,15 +663,21 @@ function IconButton({
   onClick: () => void
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="inline-flex h-6 w-6 items-center justify-center rounded border border-border bg-background text-muted-foreground hover:border-primary/30 hover:text-foreground"
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon-xs"
+          aria-label={label}
+          onClick={onClick}
+          className="border-border text-muted-foreground"
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -682,10 +702,10 @@ function TabChip({
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-lg border border-border bg-card/50">
-      <div className="border-b border-border px-4 py-2 text-sm font-medium text-primary">{title}</div>
-      <div className="p-4">{children}</div>
-    </div>
+    <Card className="bg-card/50">
+      <CardHeader className="border-b border-border px-4 py-2 text-sm font-medium text-primary">{title}</CardHeader>
+      <CardContent className="p-4">{children}</CardContent>
+    </Card>
   )
 }
 

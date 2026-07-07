@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
+import { Button } from '@aspect/ui'
 
 interface Props {
   children: ReactNode
@@ -57,20 +58,17 @@ function ErrorFallback({ error, onReset }: { error: Error; onReset: () => void }
         </pre>
       )}
       <div className="flex gap-2">
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={onReset}
-          className="rounded-md border border-border bg-secondary px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          className="border border-border text-foreground hover:bg-accent"
         >
           {t('crashReset', 'Try again')}
-        </button>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-        >
+        </Button>
+        <Button type="button" onClick={() => window.location.reload()}>
           {t('crashReload', 'Reload')}
-        </button>
+        </Button>
       </div>
     </div>
   )

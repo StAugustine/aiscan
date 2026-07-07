@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronDown, RefreshCw } from 'lucide-react'
-import { Button, Input } from '@aspect/ui'
+import { Button, Input, Tooltip, TooltipContent, TooltipTrigger } from '@aspect/ui'
 import { cn } from '@aspect/theme'
 
 interface ModelComboboxProps {
@@ -169,18 +169,22 @@ export function ModelCombobox({ value, onChange, models, loading = false, error,
       </div>
 
       {onRefresh && (
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="shrink-0"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onRefresh}
-          disabled={loading}
-          title={t('fetchModels')}
-        >
-          <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="shrink-0"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={onRefresh}
+              disabled={loading}
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t('fetchModels')}</TooltipContent>
+        </Tooltip>
       )}
 
       {open && (

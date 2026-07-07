@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { CheckCircle, Settings, Zap, AlertCircle } from 'lucide-react'
+import { CheckCircle, Settings, Zap } from 'lucide-react'
 import { getConfigStatus, saveConfig, testLLM, testConn, listLLMModels } from '../api'
 import type { ConfigStatus, ConnCheck, DistributeConfig, LLMTestResult, ServerStatus } from '../api'
-import { Button, Input, Select, SelectTrigger, SelectContent, SelectItem, SelectValue, Badge, Spinner, Callout, Field, Dialog, DialogContent, DialogTitle, DialogDescription } from '@aspect/ui'
+import { Button, Input, Select, SelectTrigger, SelectContent, SelectItem, SelectValue, Badge, Spinner, Callout, Field, Switch, Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, ResultLine } from '@aspect/ui'
 import { cn } from '@aspect/theme'
 import { ModelCombobox } from './ModelCombobox'
 
@@ -130,7 +130,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
         className="block max-h-[85vh] w-full max-w-3xl gap-0 overflow-y-auto overflow-x-hidden rounded-2xl border-border/70 bg-card p-0 sm:rounded-2xl"
       >
         <form onSubmit={handleSave}>
-        <div className="flex items-center justify-between border-b border-border/60 px-4 py-3 pr-12">
+        <DialogHeader className="flex flex-row items-center justify-between border-b border-border/60 px-4 py-3 pr-12 text-left">
           <div className="flex items-center gap-2">
             <Settings className="h-4 w-4 text-primary" />
             <div>
@@ -138,14 +138,15 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               <DialogDescription className="text-xs text-muted-foreground">{cs?.config_path || status?.config_path || 'config.yaml'}</DialogDescription>
             </div>
           </div>
-        </div>
+        </DialogHeader>
 
         <div className="flex gap-1 overflow-x-auto border-b border-border px-4 py-1">
           {TABS.map((tab) => (
-            <button
-              key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
-              className={`whitespace-nowrap rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${activeTab === tab.key ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}`}
-            >{tab.label}</button>
+            <Button
+              key={tab.key} type="button" variant="ghost" size="sm"
+              active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)}
+              className={cn('h-8 text-xs', activeTab !== tab.key && 'text-muted-foreground')}
+            >{tab.label}</Button>
           ))}
         </div>
 
@@ -179,10 +180,10 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
           {saved && <Callout tone="primary" icon={<CheckCircle className="h-4 w-4" />} className="mt-3">{t('saved')}</Callout>}
         </div>
 
-        <div className="flex justify-end gap-2 border-t border-border/60 px-4 py-3">
+        <DialogFooter className="flex flex-row justify-end gap-2 border-t border-border/60 px-4 py-3 sm:space-x-0">
           <Button type="button" variant="outline" onClick={onClose}>{t('close')}</Button>
           <Button type="submit" disabled={loading || saving}>{saving && <Spinner className="h-4 w-4" />}{t('save')}</Button>
-        </div>
+        </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -277,17 +278,11 @@ function LLMTab({ form, setForm, cs }: TabProps) {
           {testing ? t('testing') : t('testConnection')}
         </Button>
         {result && (
-          result.ok ? (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-primary">
-              <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-              <span>{t('testOk')} · {t('testLatency')} {result.latency_ms}ms{result.reply ? ` · ${t('testReply')}: ${result.reply}` : ''}</span>
-            </span>
-          ) : (
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-destructive">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate" title={result.error}>{t('testFailed')}: {result.error}</span>
-            </span>
-          )
+          <ResultLine ok={result.ok} title={result.ok ? undefined : result.error}>
+            {result.ok
+              ? <>{t('testOk')} · {t('testLatency')} {result.latency_ms}ms{result.reply ? ` · ${t('testReply')}: ${result.reply}` : ''}</>
+              : <>{t('testFailed')}: {result.error}</>}
+          </ResultLine>
         )}
       </div>
     </div>
@@ -391,7 +386,7 @@ function AgentTab({ form, setForm }: Omit<TabProps, 'cs'>) {
       </Field>
       <div className="sm:col-span-2">
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input type="checkbox" checked={form.agent.save_session} onChange={(e) => setForm((f) => ({ ...f, agent: { ...f.agent, save_session: e.target.checked } }))} className="rounded border-border" />
+          <Switch checked={form.agent.save_session} onCheckedChange={(v) => setForm((f) => ({ ...f, agent: { ...f.agent, save_session: v } }))} />
           {t('autoSaveSessions')}
         </label>
       </div>
@@ -463,18 +458,12 @@ const CHECK_LABELS: Record<string, string> = {
 function ConnCheckRow({ check }: { check: ConnCheck }) {
   const { t } = useTranslation('config')
   const label = CHECK_LABELS[check.name] ?? check.name
-  return check.ok ? (
-    <span className="flex min-w-0 items-center gap-1.5 text-xs text-primary">
-      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate">
-        {label} · {t('testOk')} · {t('testLatency')} {check.latency_ms}ms{check.detail ? ` · ${check.detail}` : ''}
-      </span>
-    </span>
-  ) : (
-    <span className="flex min-w-0 items-center gap-1.5 text-xs text-destructive">
-      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-      <span className="truncate" title={check.error}>{label} · {t('testFailed')}: {check.error}</span>
-    </span>
+  return (
+    <ResultLine ok={check.ok} title={check.ok ? undefined : check.error}>
+      {check.ok
+        ? <>{label} · {t('testOk')} · {t('testLatency')} {check.latency_ms}ms{check.detail ? ` · ${check.detail}` : ''}</>
+        : <>{label} · {t('testFailed')}: {check.error}</>}
+    </ResultLine>
   )
 }
 

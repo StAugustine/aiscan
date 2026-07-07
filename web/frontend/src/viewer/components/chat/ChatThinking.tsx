@@ -1,5 +1,6 @@
 import { type ReactNode } from 'react'
 import { cn } from '@aspect/theme'
+import { AgentVoiceCard } from './AgentVoiceCard'
 
 export interface ChatThinkingProps {
   actorName?: string | null
@@ -16,10 +17,11 @@ export default function ChatThinking({ actorName, children, className }: ChatThi
       </div>
       {children ? (
         // Streamed reasoning text — a card with the same Cortex-blue left edge as
-        // the agent's response, so thinking reads as the same voice.
-        <div className="rounded-lg border border-border border-l-2 border-l-ai/40 bg-card px-3 py-2 text-sm leading-relaxed text-muted-foreground shadow-soft">
+        // the agent's response (the shared AgentVoiceCard shell), so thinking
+        // reads as the same voice.
+        <AgentVoiceCard className="px-3 py-2 text-sm leading-relaxed text-muted-foreground">
           {children}
-        </div>
+        </AgentVoiceCard>
       ) : (
         // Live "working" pulse — just the dots, no empty card to fill.
         <div className="flex h-7 items-center">

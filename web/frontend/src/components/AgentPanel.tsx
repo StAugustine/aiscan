@@ -7,13 +7,13 @@ import type { AgentInfo } from '../api'
 // Lazy — same @xterm chunk App splits; a static import here would pull it back
 // into the first-paint bundle.
 const AgentTerminal = lazy(() => import('./terminal'))
-import { cn } from '@aspect/theme'
 import {
   Badge,
   Button,
   Callout,
   EmptyState,
   Input,
+  ListRow,
   Sheet,
   SheetContent,
   SheetDescription,
@@ -50,7 +50,7 @@ export default function AgentPanel({ open, focusAgentID, onClose }: AgentPanelPr
             <div className="min-w-0">
               <div className="flex min-w-0 items-center gap-2">
                 <SheetTitle className="text-sm font-medium text-foreground">{t('agentConsole')}</SheetTitle>
-                <Badge variant="secondary" className="rounded px-1.5 py-0 font-mono text-[10px] font-normal">
+                <Badge variant="secondary" size="sm" className="py-0 font-mono font-normal">
                   {agents.length}
                 </Badge>
               </div>
@@ -225,29 +225,22 @@ function AgentList({
       )}
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {filtered.length === 0 ? (
-          <p className="px-2 py-4 text-center text-xs text-muted-foreground/70">{t('noMatchingAgents')}</p>
+          <EmptyState compact title={t('noMatchingAgents')} />
         ) : (
           filtered.map((agent) => (
-            <button
+            <ListRow
               key={agent.id}
-              type="button"
+              active={selectedID === agent.id}
+              leading={<StatusDot status={agent.busy ? 'warning' : 'info'} className="mt-1" />}
               onClick={() => onSelect(agent.id)}
               title={agentDetails(agent)}
-              className={cn(
-                'mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors',
-                selectedID === agent.id
-                  ? 'bg-primary/10 text-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-              )}
+              className="mb-1"
             >
-              <StatusDot status={agent.busy ? 'warning' : 'info'} className="mt-1" />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium">{agent.name}</span>
-                <span className="mt-0.5 block truncate text-xs">
-                  {agent.busy ? t('busy') : t('idle')} · {formatRelativeTime(agent.connected_at, t)}
-                </span>
+              <span className="block truncate text-sm font-medium">{agent.name}</span>
+              <span className="mt-0.5 block truncate text-xs">
+                {agent.busy ? t('busy') : t('idle')} · {formatRelativeTime(agent.connected_at, t)}
               </span>
-            </button>
+            </ListRow>
           ))
         )}
       </div>

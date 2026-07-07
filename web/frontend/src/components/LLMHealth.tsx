@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { StatusDot, type StatusKind } from '@aspect/ui'
+import { Button, StatusDot, Tooltip, TooltipContent, TooltipTrigger, type StatusKind } from '@aspect/ui'
 import { getConfigStatus, testLLM } from '../api'
 
 type Phase = 'checking' | 'ok' | 'error' | 'unconfigured'
@@ -68,15 +68,20 @@ export default function LLMHealth({ onOpenSettings, reloadSignal }: Props) {
   const title = [label, detail, t('llmHealthSettings')].filter(Boolean).join(' · ')
 
   return (
-    <button
-      type="button"
-      onClick={onOpenSettings}
-      title={title}
-      aria-label={title}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-    >
-      <StatusDot status={status} />
-      <span className="hidden sm:inline">{label}</span>
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={onOpenSettings}
+          aria-label={title}
+          className="h-7 shrink-0 gap-1 px-1.5 text-[10px] text-muted-foreground"
+        >
+          <StatusDot status={status} />
+          <span className="hidden sm:inline">{label}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{title}</TooltipContent>
+    </Tooltip>
   )
 }

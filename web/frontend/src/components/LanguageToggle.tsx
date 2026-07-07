@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Button } from '@aspect/ui'
+import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@aspect/ui'
 import { cn } from '@aspect/theme'
 
 interface LanguageToggleProps {
@@ -14,16 +14,20 @@ export default function LanguageToggle({ className }: LanguageToggleProps) {
   const next = isZh ? 'en' : 'zh'
 
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-xs"
-      onClick={() => void i18n.changeLanguage(next)}
-      aria-label={isZh ? 'Switch to English' : '切换到中文'}
-      title={isZh ? 'English' : '中文'}
-      className={cn('text-[11px] font-semibold text-muted-foreground', className)}
-    >
-      {isZh ? 'EN' : '中'}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => void i18n.changeLanguage(next)}
+          aria-label={isZh ? 'Switch to English' : '切换到中文'}
+          className={cn('text-[11px] font-semibold text-muted-foreground', className)}
+        >
+          {isZh ? 'EN' : '中'}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{isZh ? 'English' : '中文'}</TooltipContent>
+    </Tooltip>
   )
 }

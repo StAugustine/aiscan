@@ -20,12 +20,14 @@
     "paths": {
       "@/*": ["./src/*"],
       "@aspect/ui": ["./cyber-ui/packages/ui/src"],
-      "@aspect/theme": ["./cyber-ui/packages/theme/src"]
+      "@aspect/theme": ["./cyber-ui/packages/theme/src"],
+      "@aspect/terminal": ["./cyber-ui/packages/terminal/src"]
     }
   },
   "include": [
     "src",
     "cyber-ui/packages/ui/src",
-    "cyber-ui/packages/theme/src"
+    "cyber-ui/packages/theme/src",
+    "cyber-ui/packages/terminal/src"
   ]
 }

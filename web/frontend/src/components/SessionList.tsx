@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   PanelLeftClose, PanelLeft,
-  MessageSquare, Plus, Trash2, Circle,
+  MessageSquare, Plus, Trash2,
   ChevronDown, ChevronRight, Monitor, Terminal,
   MonitorPlay, Loader2, AlertTriangle, Unplug,
 } from 'lucide-react'
-import { Button, Callout, Tooltip, TooltipTrigger, TooltipContent } from '@aspect/ui'
+import {
+  Button, Callout, Tooltip, TooltipTrigger, TooltipContent,
+  Popover, PopoverTrigger, PopoverContent, EmptyState, StatusDot,
+} from '@aspect/ui'
 import { cn } from '@aspect/theme'
 import { launchLocalAgent, listLocalAgents, stopLocalAgent } from '../api'
 import type { AgentInfo, ChatSession, LocalAgentView } from '../api'
@@ -93,7 +95,7 @@ export default function SessionList({
           {open ? (
             <>
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                {online > 0 && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />}
+                {online > 0 && <StatusDot status="online" className="h-1.5 w-1.5" />}
                 <span className="truncate text-xs font-medium text-muted-foreground">
                   {online > 0 ? t('onlineCount', { count: online }) : t('rosterIdle')}
                 </span>
@@ -106,9 +108,9 @@ export default function SessionList({
           ) : (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button type="button" onClick={onToggle} aria-label={t('expandSidebar')} className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                <Button variant="ghost" size="icon-sm" onClick={onToggle} aria-label={t('expandSidebar')} className="rounded-lg text-muted-foreground">
                   <PanelLeft className="h-4 w-4" />
-                </button>
+                </Button>
               </TooltipTrigger>
               <TooltipContent side="right">{t('expandSidebar')}</TooltipContent>
             </Tooltip>
@@ -119,11 +121,7 @@ export default function SessionList({
         {open ? (
           <div className="flex-1 overflow-auto p-2.5 animate-fade-in">
             {agents.length === 0 && orphanGroups.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Monitor className="h-8 w-8 text-muted-foreground/20" />
-                <p className="mt-2 text-xs text-muted-foreground">{t('noAgentsConnected')}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground/60">{t('startAgentToBegin')}</p>
-              </div>
+              <EmptyState icon={Monitor} title={t('noAgentsConnected')} description={t('startAgentToBegin')} compact />
             ) : (
               <div className="space-y-1">
                 {/* No live agents, but orphaned sessions remain — keep the
@@ -177,20 +175,19 @@ export default function SessionList({
             {agents.map((agent) => (
               <Tooltip key={agent.id}>
                 <TooltipTrigger asChild>
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    active={agent.id === selectedAgentID}
                     onClick={() => { onSelectAgent(agent.id); onToggle() }}
-                    className={cn(
-                      'relative p-1.5 rounded-md transition-colors',
-                      agent.id === selectedAgentID ? 'bg-primary/10' : 'hover:bg-accent',
-                    )}
+                    className="relative"
                   >
                     <Monitor className="w-4 h-4 text-muted-foreground" />
-                    <Circle className={cn(
-                      'absolute -top-0.5 -right-0.5 h-2.5 w-2.5 fill-current',
-                      agent.busy ? 'text-warning' : 'text-primary',
-                    )} />
-                  </button>
+                    <StatusDot
+                      status={agent.busy ? 'warning' : 'online'}
+                      className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5"
+                    />
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent side="right">{agent.name}</TooltipContent>
               </Tooltip>
@@ -242,10 +239,7 @@ function AgentGroup({
           onClick={handleToggle}
           className="flex w-full items-center gap-2 text-left"
         >
-          <Circle className={cn(
-            'h-2.5 w-2.5 shrink-0 fill-current',
-            agent.busy ? 'text-warning' : 'text-primary',
-          )} />
+          <StatusDot status={agent.busy ? 'warning' : 'online'} className="h-2.5 w-2.5" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="min-w-0 truncate text-xs font-semibold text-foreground">{agent.name}</span>
@@ -271,27 +265,25 @@ function AgentGroup({
 
         {/* Action buttons on the agent card */}
         <div className="mt-1.5 flex items-center gap-1">
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="xs"
+            active={terminalActive}
             onClick={(e) => { e.stopPropagation(); onOpenTerminal() }}
-            className={cn(
-              'flex min-h-6 items-center gap-1 rounded px-2 py-1 text-[10px] font-medium transition-colors',
-              terminalActive
-                ? 'bg-primary/15 text-primary'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
+            className={terminalActive ? undefined : 'text-muted-foreground'}
           >
             <Terminal className="h-2.5 w-2.5" />
             {t('terminal')}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            variant="ghost"
+            size="xs"
             onClick={(e) => { e.stopPropagation(); setExpanded(true); onCreateSession() }}
-            className="flex min-h-6 items-center gap-1 rounded px-2 py-1 text-[10px] font-medium text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            className="text-muted-foreground"
           >
             <Plus className="h-2.5 w-2.5" />
             {t('new')}
-          </button>
+          </Button>
           {sessions.length > 0 && (
             <span className="ml-auto text-[9px] font-mono text-muted-foreground">{t('sessionsCount', { count: sessions.length })}</span>
           )}
@@ -342,14 +334,15 @@ function SessionItem({
         </div>
         <div className="mt-0.5 text-[9px] text-muted-foreground">{time}</div>
       </button>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={(e) => { e.stopPropagation(); onDelete() }}
-        className="invisible flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover:visible"
+        className="invisible h-6 w-6 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive group-hover:visible"
         aria-label={t('deleteSession')}
       >
         <Trash2 className="h-3 w-3" />
-      </button>
+      </Button>
     </div>
   )
 }
@@ -383,7 +376,7 @@ function OfflineAgentGroup({
           onClick={() => setExpanded(!expanded)}
           className="flex w-full items-center gap-2 text-left"
         >
-          <Circle className="h-2.5 w-2.5 shrink-0 fill-current text-muted-foreground/40" />
+          <StatusDot status="idle" className="h-2.5 w-2.5 opacity-40" />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">{name}</span>
@@ -426,32 +419,6 @@ function LocalAgentControl() {
   const [items, setItems] = useState<LocalAgentView[]>([])
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
-  const ref = useRef<HTMLDivElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-
-  // The panel is portaled to <body> so it escapes the sidebar's backdrop-blur
-  // stacking context and the app shell's overflow-hidden clip. Anchor its right
-  // edge under the trigger, then clamp into the viewport so it never spills off
-  // the left edge (the sidebar sits flush-left, so a right-anchored panel would
-  // otherwise get cut off there).
-  const POPOVER_W = 256 // matches w-64 below
-  useLayoutEffect(() => {
-    if (!open) return
-    const place = () => {
-      const r = ref.current?.getBoundingClientRect()
-      if (!r) return
-      const left = Math.max(8, Math.min(r.right - POPOVER_W, window.innerWidth - POPOVER_W - 8))
-      setPos({ top: r.bottom + 6, left })
-    }
-    place()
-    window.addEventListener('resize', place)
-    window.addEventListener('scroll', place, true)
-    return () => {
-      window.removeEventListener('resize', place)
-      window.removeEventListener('scroll', place, true)
-    }
-  }, [open])
 
   const refresh = useCallback(async () => {
     try {
@@ -470,18 +437,6 @@ function LocalAgentControl() {
   // Poll for the badge + roster; tighter cadence while the popover is open. The
   // poll pauses while the tab is hidden and catches up on return to foreground.
   usePolling(refresh, open ? 2500 : 8000)
-
-  // Close on outside click (buttons inside `ref` keep it open).
-  useEffect(() => {
-    if (!open) return
-    const onDoc = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (ref.current?.contains(target) || panelRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [open])
 
   const launch = async () => {
     setLaunching(true)
@@ -507,67 +462,49 @@ function LocalAgentControl() {
   }
 
   return (
-    <div ref={ref} className="relative">
+    <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-label={t('launchLocal')}
-            className={cn(
-              'relative flex h-7 w-7 items-center justify-center rounded-md transition-colors',
-              open ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )}
-          >
-            <MonitorPlay className="h-4 w-4" />
-            {items.length > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-primary-foreground">
-                {items.length > 9 ? '9+' : items.length}
-              </span>
-            )}
-          </button>
+          <PopoverTrigger asChild>
+            <Button variant="ghost" size="icon-xs" active={open} aria-label={t('launchLocal')} className="relative">
+              <MonitorPlay className="h-4 w-4" />
+              {items.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[8px] font-bold text-primary-foreground">
+                  {items.length > 9 ? '9+' : items.length}
+                </span>
+              )}
+            </Button>
+          </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom">{t('localAgents')}</TooltipContent>
       </Tooltip>
 
-      {open && pos && createPortal(
-        <div
-          ref={panelRef}
-          style={{ top: pos.top, left: pos.left, width: POPOVER_W }}
-          className="fixed z-[70] rounded-xl border border-border bg-popover p-2 shadow-elevated animate-in fade-in zoom-in-95 duration-150"
-        >
-          <div className="px-1 pb-1.5">
-            <span className="text-xs font-semibold text-foreground">{t('localAgents')}</span>
-          </div>
+      <PopoverContent align="end" sideOffset={6} className="z-[70] w-64 rounded-xl p-2 shadow-elevated">
+        <div className="px-1 pb-1.5">
+          <span className="text-xs font-semibold text-foreground">{t('localAgents')}</span>
+        </div>
 
-          {error && (
-            <Callout tone="destructive" icon={<AlertTriangle className="h-3 w-3" />} className="mb-1.5 gap-1.5 px-2 py-1.5 text-[11px]">
-              {error}
-            </Callout>
+        {error && (
+          <Callout tone="destructive" icon={<AlertTriangle className="h-3 w-3" />} className="mb-1.5 gap-1.5 px-2 py-1.5 text-[11px]">
+            {error}
+          </Callout>
+        )}
+
+        <div className="max-h-56 space-y-0.5 overflow-auto">
+          {items.length === 0 ? (
+            <p className="px-1 py-3 text-center text-[11px] text-muted-foreground/70">{t('noLocalAgents')}</p>
+          ) : (
+            items.map((it) => <LocalAgentRow key={it.name} item={it} onRemove={() => void remove(it.name)} />)
           )}
+        </div>
 
-          <div className="max-h-56 space-y-0.5 overflow-auto">
-            {items.length === 0 ? (
-              <p className="px-1 py-3 text-center text-[11px] text-muted-foreground/70">{t('noLocalAgents')}</p>
-            ) : (
-              items.map((it) => <LocalAgentRow key={it.name} item={it} onRemove={() => void remove(it.name)} />)
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void launch()}
-            disabled={launching}
-            className="mt-1.5 flex w-full items-center justify-center gap-1.5 rounded-md bg-primary/10 px-2 py-1.5 text-xs font-medium text-primary transition-colors hover:bg-primary/20 disabled:opacity-60"
-          >
-            {launching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-            {launching ? t('launching') : t('launchLocal')}
-          </button>
-          <p className="mt-1 px-1 text-[10px] leading-snug text-muted-foreground/70">{t('localHint')}</p>
-        </div>,
-        document.body,
-      )}
-    </div>
+        <Button variant="soft" size="sm" onClick={() => void launch()} disabled={launching} className="mt-1.5 h-8 w-full gap-1.5 text-xs">
+          {launching ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          {launching ? t('launching') : t('launchLocal')}
+        </Button>
+        <p className="mt-1 px-1 text-[10px] leading-snug text-muted-foreground/70">{t('localHint')}</p>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -577,7 +514,7 @@ function LocalAgentRow({ item, onRemove }: { item: LocalAgentView; onRemove: () 
 
   return (
     <div className="group flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-accent/50">
-      <Circle className={cn('h-2 w-2 shrink-0 fill-current', connected ? 'text-primary' : 'text-warning animate-pulse')} />
+      <StatusDot status={connected ? 'online' : 'pending'} className="h-2 w-2" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-medium text-foreground">{item.name}</div>
         <div className="truncate text-[10px] text-muted-foreground">
@@ -586,15 +523,16 @@ function LocalAgentRow({ item, onRemove }: { item: LocalAgentView; onRemove: () 
           {item.pid ? ` · pid ${item.pid}` : ''}
         </div>
       </div>
-      <button
-        type="button"
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={onRemove}
         aria-label={t('stopLocal')}
         title={t('stopLocal')}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+        className="h-6 w-6 shrink-0 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
       >
         <Trash2 className="h-3 w-3" />
-      </button>
+      </Button>
     </div>
   )
 }

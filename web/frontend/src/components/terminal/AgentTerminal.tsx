@@ -19,8 +19,8 @@ import {
   stringPayload,
   upsertSession,
   writeTerminalData,
-} from '@/terminal-view'
-import { TerminalView, TerminalHeader, SessionNavigator, SessionButton, sessionDetails } from '@/terminal-view'
+} from '@aspect/terminal'
+import { TerminalView, TerminalHeader, SessionNavigator, SessionButton, sessionDetails } from '@aspect/terminal'
 import { TerminalDetails } from './TerminalDetails'
 
 const REPL_NAME = 'main-repl'

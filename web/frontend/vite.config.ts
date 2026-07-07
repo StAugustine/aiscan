@@ -2,9 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-// Design-system primitives are consumed from the cyber-ui submodule (single
-// source of truth for the atoms aiscan contributes upstream). Composite views
-// (markdown/viewer/terminal) stay vendored under @/ because aiscan diverges them.
+// Design-system primitives + the terminal view are consumed from the cyber-ui
+// submodule (single source of truth for what aiscan contributes upstream). The
+// remaining composite views (markdown/viewer) stay vendored under @/ because
+// aiscan still diverges them.
 const cyberUI = path.resolve(__dirname, './cyber-ui/packages')
 
 export default defineConfig({
@@ -14,6 +15,7 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
       '@aspect/ui': path.resolve(cyberUI, 'ui/src'),
       '@aspect/theme': path.resolve(cyberUI, 'theme/src'),
+      '@aspect/terminal': path.resolve(cyberUI, 'terminal/src'),
     },
   },
   server: {
