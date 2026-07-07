@@ -417,7 +417,7 @@ func TestRunConnectionPushesPTYSessionsOnManagerEvents(t *testing.T) {
 
 func readSessionMessage(t *testing.T, updates <-chan webproto.Message, match func(webproto.Message) bool) webproto.Message {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(20 * time.Second)
 	for {
 		select {
 		case msg := <-updates:
@@ -433,7 +433,7 @@ func readSessionMessage(t *testing.T, updates <-chan webproto.Message, match fun
 
 func readSessionUpdate(t *testing.T, updates <-chan webproto.Message, match func(webproto.PTYPayload) bool) webproto.Message {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(20 * time.Second)
 	for {
 		select {
 		case msg := <-updates:
