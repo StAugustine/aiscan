@@ -452,8 +452,8 @@ func neutronResultFromExecution(target string, result *sdkneutron.ExecuteResult)
 		record.Tags = cleanTemplateTags(tmpl)
 		record.Fingers = append([]string(nil), tmpl.Fingers...)
 	}
-	if opResult := result.Result(); opResult != nil && opResult.Result != nil {
-		record.Extracts = append([]string(nil), opResult.Result.OutputExtracts()...)
+	if opResult := result.Value(); opResult != nil {
+		record.Extracts = append([]string(nil), opResult.OutputExtracts()...)
 	}
 	if err := result.Error(); err != nil {
 		record.Error = err.Error()

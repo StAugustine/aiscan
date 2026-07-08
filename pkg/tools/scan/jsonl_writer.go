@@ -113,4 +113,4 @@ func capabilityRecordType(source string) output.RecordType {
 type ServiceResult = parsers.GOGOResult
 type SprayResult = parsers.SprayResult
 type ZombieResult = parsers.ZombieResult
-type VulnResult = sdktypes.VulnResult
+type VulnResult = sdktypes.TemplateResult

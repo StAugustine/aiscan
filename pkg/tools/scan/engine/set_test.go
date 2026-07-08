@@ -429,8 +429,8 @@ func TestGogoStatsHandlerSafeAfterCancel(t *testing.T) {
 	var statsCalled atomic.Int32
 	gogoCtx := gogo.NewContext().
 		WithContext(ctx).
-		SetThreads(1).
-		SetStatsHandler(func(s sdktypes.Stats) {
+		WithThreads(1).
+		WithStatsHandler(func(s sdktypes.Stats) {
 			statsCalled.Add(1)
 		})
 
@@ -455,7 +455,7 @@ func TestSprayStatsHandlerSafeAfterCancel(t *testing.T) {
 
 	sprayCtx := spray.NewContext().
 		WithContext(ctx).
-		SetStatsHandler(func(s sdktypes.Stats) {})
+		WithStatsHandler(func(s sdktypes.Stats) {})
 
 	ch, err := eng.Execute(sprayCtx, spray.NewCheckTask([]string{"http://127.0.0.1:1"}))
 	if err != nil {
@@ -477,9 +477,9 @@ func TestZombieStatsHandlerSafeAfterCancel(t *testing.T) {
 
 	zCtx := sdkzombie.NewContext().
 		WithContext(ctx).
-		SetThreads(1).
-		SetTimeout(1).
-		SetStatsHandler(func(s sdktypes.Stats) {})
+		WithThreads(1).
+		WithTimeout(1).
+		WithStatsHandler(func(s sdktypes.Stats) {})
 
 	ch, err := eng.Execute(zCtx, sdkzombie.NewBruteTask([]sdkzombie.Target{{IP: "127.0.0.1", Port: "1", Service: "ssh"}}))
 	if err != nil {

@@ -824,7 +824,7 @@ func TestLootPriorityDefaults(t *testing.T) {
 	if got := wp.Priority; got != string(priorityHigh) {
 		t.Fatalf("weakpass priority = %s, want %s", got, priorityHigh)
 	}
-	vl := vulnLoot(&sdktypes.VulnResult{Target: "http://127.0.0.1", TemplateID: "test", Severity: "high", TemplateName: "test high"})
+	vl := vulnLoot(&sdktypes.TemplateResult{Target: "http://127.0.0.1", TemplateID: "test", Severity: "high", TemplateName: "test high"})
 	if got := vl.Priority; got != string(priorityHigh) {
 		t.Fatalf("vuln priority = %s, want %s", got, priorityHigh)
 	}

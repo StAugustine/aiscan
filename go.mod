@@ -6,7 +6,7 @@ require (
 	github.com/alecthomas/chroma/v2 v2.14.0
 	github.com/carapace-sh/carapace v1.11.6
 	github.com/chainreactors/crtm v0.0.3-0.20260618163257-073207497076
-	github.com/chainreactors/fingers v1.2.2-0.20260703124922-b8ac7e00cf68
+	github.com/chainreactors/fingers v1.2.2-0.20260704073236-3e22b6a528b9
 	github.com/chainreactors/gogo/v2 v2.14.2-0.20260704194421-e5ce938d9b51
 	github.com/chainreactors/ioa v0.1.2-0.20260621175506-35d6a4a11645
 	github.com/chainreactors/logs v0.0.0-20260624034259-9aaea4aa52cc
@@ -14,7 +14,10 @@ require (
 	github.com/chainreactors/proton v0.3.3-0.20260707162538-471f99ea6131
 	github.com/chainreactors/proxyclient v1.1.1-0.20260529172347-2a80e08d5593
 	github.com/chainreactors/proxyclient/extra v0.0.0-20260527160727-36cf133952c3
-	github.com/chainreactors/sdk v0.3.4-0.20260707120839-686d4bfa2b2b
+	github.com/chainreactors/sdk v0.3.4-0.20260708104745-dcad8620f5e9
+	github.com/chainreactors/sdk/gogo v0.0.0-20260708104745-dcad8620f5e9
+	github.com/chainreactors/sdk/spray v0.0.0-20260708104745-dcad8620f5e9
+	github.com/chainreactors/sdk/zombie v0.0.0-20260708104745-dcad8620f5e9
 	github.com/chainreactors/spray v1.3.3-0.20260704194611-7ce7b850d447
 	github.com/chainreactors/tui/console v0.0.0-20260701051656-c5b85e7256a9
 	github.com/chainreactors/tui/readline v0.0.0-20260626181537-7c0eb4b933cd
@@ -88,7 +91,7 @@ require (
 	github.com/carapace-sh/carapace-shlex v1.1.1 // indirect
 	github.com/censys/censys-sdk-go v0.19.1 // indirect
 	github.com/chainreactors/files v0.0.0-20240716182835-7884ee1e77f0 // indirect
-	github.com/chainreactors/neutron/operators/full v0.1.1-0.20260703124839-c4091ad1e02d // indirect
+	github.com/chainreactors/neutron/operators/full v0.1.1-0.20260704194031-f57d0a560e32 // indirect
 	github.com/chainreactors/parsers v0.0.0-20260608085142-3d2c51baa8fe // indirect
 	github.com/chainreactors/utils/cert v0.0.0-20260707181750-8aa6ca296863 // indirect
 	github.com/chainreactors/words v0.0.0-20260520145736-270600e60fb4 // indirect
