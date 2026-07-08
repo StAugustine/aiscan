@@ -9,7 +9,7 @@ import (
 	"github.com/chainreactors/aiscan/skills"
 )
 
-const Version = "0.1.0"
+var Version = "dev"
 
 type Option struct {
 	LLMOptions     `group:"LLM Options" config:"llm"`

@@ -115,6 +115,7 @@ export interface ScanOptions {
 }
 
 export interface ServerStatus {
+  version: string;
   llm_available: boolean;
   llm_provider?: string;
   llm_model?: string;

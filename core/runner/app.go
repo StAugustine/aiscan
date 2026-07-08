@@ -70,7 +70,7 @@ func NewApp(ctx context.Context, rc cfg.RuntimeConfig) (*App, error) {
 
 	a.enginesReady = make(chan struct{})
 	go func() {
-		if ScannerInitFunc != nil {
+		if ScannerInitFunc != nil && !rc.SkipEngines {
 			ScannerInitFunc(ctx, a, rc, logger)
 		}
 		close(a.enginesReady)

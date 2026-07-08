@@ -12,6 +12,7 @@ type RuntimeConfig struct {
 	IOA           *IOAConfig
 	Logger        telemetry.Logger
 	CLISkillPaths []string
+	SkipEngines   bool
 }
 
 type RuntimeProviderConfig struct {

@@ -54,6 +54,7 @@ func (r ScanRequest) AnalysisOptions() (verify, sniper, deep bool) {
 }
 
 type ServiceStatus struct {
+	Version             string `json:"version"`
 	LLMAvailable        bool   `json:"llm_available"`
 	LLMProvider         string `json:"llm_provider,omitempty"`
 	LLMModel            string `json:"llm_model,omitempty"`

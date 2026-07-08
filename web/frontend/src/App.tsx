@@ -152,7 +152,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <AgentsButton count={chat.agents.length} onClick={handleOpenAgentPanel} />
-            <QuickConnect ioaURL={serverStatus?.ioa_url} />
+            <QuickConnect ioaURL={serverStatus?.ioa_url} version={serverStatus?.version} />
             <HeaderIconButton label={t('openSettings')} onClick={() => setConfigOpen(true)}>
               <Settings className="h-3.5 w-3.5" />
             </HeaderIconButton>

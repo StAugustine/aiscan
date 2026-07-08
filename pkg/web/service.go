@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainreactors/aiscan/core/config"
 	"github.com/chainreactors/aiscan/core/output"
 	"github.com/chainreactors/aiscan/core/runner"
 	"github.com/chainreactors/aiscan/pkg/tui"
@@ -109,6 +110,7 @@ func (s *Service) Close() {
 func (s *Service) Status() ServiceStatus {
 	app := s.appSnapshot()
 	status := ServiceStatus{
+		Version:      config.Version,
 		LLMAvailable: app != nil && app.Provider != nil,
 	}
 	if app != nil {

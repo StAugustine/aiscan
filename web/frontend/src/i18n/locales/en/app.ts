@@ -24,6 +24,10 @@ export default {
   // Quick connect
   quickConnect: 'Quick connect an agent',
   quickConnectTitle: 'Download & connect an agent',
+  quickConnectInstall: 'Install + Connect',
+  quickConnectOnly: 'Connect Only',
+  quickConnectGlobal: 'Global',
+  quickConnectChina: 'China',
   quickConnectHint: 'Run this command on a remote machine to connect an agent to this server.',
   // Header LLM health indicator
   llmUnconfigured: 'LLM not configured',

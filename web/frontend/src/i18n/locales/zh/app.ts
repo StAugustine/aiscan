@@ -24,6 +24,10 @@ export default {
   // 快速接入
   quickConnect: '快速接入 Agent',
   quickConnectTitle: '下载并接入 Agent',
+  quickConnectInstall: '安装 + 上线',
+  quickConnectOnly: '仅上线',
+  quickConnectGlobal: '全球',
+  quickConnectChina: '中国',
   quickConnectHint: '在远程机器上执行此命令，即可接入一个 Agent 到本服务器。',
   // 顶栏 LLM 健康指示
   llmUnconfigured: 'LLM 未配置',

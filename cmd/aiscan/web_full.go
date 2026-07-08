@@ -164,6 +164,7 @@ func initWebApp(ctx context.Context, baseOption *cfg.Option, logger telemetry.Lo
 		ToolsEnabled:     true,
 		AIEnabled:        true,
 	}, logger)
+	appCfg.SkipEngines = true
 	appCfg.Scanner.EnableAllAISkills = false
 	appCfg.Scanner.VerifyMode = "off"
 
