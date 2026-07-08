@@ -968,7 +968,7 @@ func agentRegisterPayload(name string, reg *commands.CommandRegistry, rt *runner
 	payload := webproto.RegisterPayload{
 		Name:          name,
 		Commands:      reg.Names(),
-		SlashCommands: agentSlashCatalog(rt),
+		CommandsMenu: agentCommandCatalog(rt),
 		Stats:         stats,
 		Identity:      agentIdentity(rt),
 	}
@@ -978,11 +978,11 @@ func agentRegisterPayload(name string, reg *commands.CommandRegistry, rt *runner
 	return payload
 }
 
-// agentSlashCatalog is the agent's user-facing "/verb" catalog reported to the
+// agentCommandCatalog is the agent's user-facing "/verb" catalog reported to the
 // hub on register: the static agent-scope menu commands plus one per loaded (and
 // non-internal) skill. The hub merges it with its hub-scope commands to build
 // the web "/" menu and /help, so the menu reflects what this agent can run.
-func agentSlashCatalog(rt *runner.AgentRuntime) []webproto.SlashSpec {
+func agentCommandCatalog(rt *runner.AgentRuntime) []webproto.CommandSpec {
 	// Build a zero-value console to extract command metadata without a live session.
 	r := &tui.AgentConsole{}
 	specs := tui.WebMenuSpecs(r.StaticCommands())
@@ -993,7 +993,7 @@ func agentSlashCatalog(rt *runner.AgentRuntime) []webproto.SlashSpec {
 		if strings.TrimSpace(sk.Name) == "" || sk.Internal {
 			continue
 		}
-		specs = append(specs, webproto.SlashSpec{
+		specs = append(specs, webproto.CommandSpec{
 			Name:        "/" + strings.TrimPrefix(strings.TrimSpace(sk.Name), "/"),
 			Description: sk.Description,
 		})

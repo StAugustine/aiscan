@@ -463,7 +463,7 @@ func TestAgentConsoleArgsForLine(t *testing.T) {
 	}
 }
 
-func TestAgentConsoleRegistersSkillsAsSlashCommands(t *testing.T) {
+func TestAgentConsoleRegistersSkillsAsCommands(t *testing.T) {
 	store, diagnostics := skills.LoadEmbeddedStore()
 	if len(diagnostics) != 0 {
 		t.Fatalf("diagnostics = %#v", diagnostics)

@@ -24,7 +24,7 @@ type AgentInfo struct {
 	ID            string                 `json:"id"`
 	Name          string                 `json:"name"`
 	Commands      []string               `json:"commands,omitempty"`
-	SlashCommands []webproto.SlashSpec        `json:"slash_commands,omitempty"`
+	CommandsMenu  []webproto.CommandSpec       `json:"commands_menu,omitempty"`
 	Busy          bool                   `json:"busy"`
 	ConnectAt     time.Time              `json:"connected_at"`
 	Identity      webproto.AgentIdentity `json:"identity,omitempty"`
@@ -42,7 +42,7 @@ type remoteAgent struct {
 	id            string
 	name          string
 	commands      []string
-	slashCommands []webproto.SlashSpec
+	commandsMenu  []webproto.CommandSpec
 	conn          *websocket.Conn
 	sendCh        chan WSMessage
 	connectAt     time.Time
@@ -62,7 +62,7 @@ func (a *remoteAgent) info() AgentInfo {
 		ID:            a.id,
 		Name:          a.name,
 		Commands:      a.commands,
-		SlashCommands: a.slashCommands,
+		CommandsMenu:  a.commandsMenu,
 		Busy:          len(a.tasks) > 0,
 		ConnectAt:     a.connectAt,
 		Identity:      a.identity,
@@ -70,14 +70,14 @@ func (a *remoteAgent) info() AgentInfo {
 	}
 }
 
-// slashSpecs returns the agent's reported "/verb" catalog (its agent-scope
+// commandSpecs returns the agent's reported "/verb" catalog (its agent-scope
 // menu commands plus one per loaded skill). Immutable after register, so it
 // needs no lock. The hub merges it with its hub-scope commands in SessionMenu.
-func (a *remoteAgent) slashSpecs() []webproto.SlashSpec {
+func (a *remoteAgent) commandSpecs() []webproto.CommandSpec {
 	if a == nil {
 		return nil
 	}
-	return a.slashCommands
+	return a.commandsMenu
 }
 
 // SessionLookup resolves a task ID to its owning chat session.
@@ -509,7 +509,7 @@ func (p *AgentPool) HandleWS(w http.ResponseWriter, r *http.Request) {
 		id:            id,
 		name:          info.Name,
 		commands:      info.Commands,
-		slashCommands: info.SlashCommands,
+		commandsMenu:  info.CommandsMenu,
 		conn:          conn,
 		sendCh:        make(chan WSMessage, 32),
 		connectAt:     time.Now(),

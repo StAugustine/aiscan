@@ -12,7 +12,7 @@ import (
 	"github.com/chainreactors/aiscan/pkg/webproto"
 )
 
-func TestParseSlashCommand(t *testing.T) {
+func TestParseCommand(t *testing.T) {
 	cases := []struct {
 		name    string
 		in      string
@@ -33,9 +33,9 @@ func TestParseSlashCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd, arg, ok := parseSlashCommand(tc.in)
+			cmd, arg, ok := parseCommand(tc.in)
 			if ok != tc.wantOK || cmd != tc.wantCmd || arg != tc.wantArg {
-				t.Fatalf("parseSlashCommand(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				t.Fatalf("parseCommand(%q) = (%q, %q, %v), want (%q, %q, %v)",
 					tc.in, cmd, arg, ok, tc.wantCmd, tc.wantArg, tc.wantOK)
 			}
 		})
@@ -108,7 +108,7 @@ func TestClearCommandWipesTranscript(t *testing.T) {
 // fetches, proving the route is wired and returns a JSON slash-command catalog.
 func TestSessionCommandsRoute(t *testing.T) {
 	svc := newMenuTestService(t)
-	srv := httptest.NewServer(NewHandler(svc, nil, nil, nil, nil))
+	srv := httptest.NewServer(NewHandler(svc, nil, nil, nil, nil, ""))
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + "/api/chat/sessions/anything/commands")
@@ -120,7 +120,7 @@ func TestSessionCommandsRoute(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	var specs []webproto.SlashSpec
+	var specs []webproto.CommandSpec
 	if err := json.NewDecoder(resp.Body).Decode(&specs); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

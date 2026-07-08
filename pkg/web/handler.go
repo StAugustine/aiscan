@@ -14,7 +14,7 @@ type Handler struct {
 	handler http.Handler
 }
 
-func NewHandler(service *Service, agents *AgentPool, local *LocalAgents, ioaHandler http.Handler, static http.Handler) *Handler {
+func NewHandler(service *Service, agents *AgentPool, local *LocalAgents, ioaHandler http.Handler, static http.Handler, accessKey string) *Handler {
 	mux := http.NewServeMux()
 
 	h := &handlerImpl{service: service, agents: agents}
@@ -67,13 +67,13 @@ func NewHandler(service *Service, agents *AgentPool, local *LocalAgents, ioaHand
 		mux.Handle("/", static)
 	}
 
-	return &Handler{handler: mux}
+	return &Handler{handler: AccessKeyAuth(accessKey)(mux)}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return

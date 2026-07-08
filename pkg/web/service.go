@@ -1042,7 +1042,7 @@ func (s *Service) dispatchUserMessage(sessionID string, msg *ChatMessage, opts w
 	// /provider, /<skill>, ...) and unknown verbs fall through to the agent,
 	// where the AgentConsole bridge runs the real REPL — so the full REPL
 	// command set and `!bash` work from the browser without a parallel switch.
-	if verb, args, ok := parseSlashCommand(content); ok {
+	if verb, args, ok := parseCommand(content); ok {
 		// /clear is a true "clear conversation" on the web: it must wipe the
 		// visible+persisted transcript, not just reset the agent's model context.
 		// Owned end-to-end by the hub so it does both (see handleClearCommand).
@@ -1090,10 +1090,10 @@ func (s *Service) runHubCommand(sessionID, name, args string) {
 	}
 }
 
-// parseSlashCommand splits a leading "/verb args..." into its lowercased verb
+// parseCommand splits a leading "/verb args..." into its lowercased verb
 // and the trimmed remainder. ok is false when content does not begin with a
 // non-empty "/verb".
-func parseSlashCommand(content string) (cmd, args string, ok bool) {
+func parseCommand(content string) (cmd, args string, ok bool) {
 	if !strings.HasPrefix(content, "/") {
 		return "", "", false
 	}
@@ -1134,13 +1134,13 @@ func (s *Service) handleHelpCommand(sessionID string) {
 // included). It falls back to the static agent-scope menu when no agent is
 // bound, so the menu is populated even before an agent connects. This is the
 // single source both the "/" menu (GET .../commands) and /help render from.
-func (s *Service) SessionMenu(sessionID string) []webproto.SlashSpec {
-	hubSpecs := []webproto.SlashSpec{
+func (s *Service) SessionMenu(sessionID string) []webproto.CommandSpec {
+	hubSpecs := []webproto.CommandSpec{
 		{Name: "/help", Description: "查看命令面板"},
 		{Name: "/scan", Description: "在本会话运行扫描", Usage: "/scan <target> [--mode full] [--verify] [--sniper] [--deep]"},
 		{Name: "/agents", Description: "列出已连接的 agent"},
 	}
-	agentSpecs := s.sessionAgent(sessionID).slashSpecs()
+	agentSpecs := s.sessionAgent(sessionID).commandSpecs()
 	if len(agentSpecs) == 0 {
 		// Fall back to the static agent-scope menu when no agent is bound.
 		r := &tui.AgentConsole{}

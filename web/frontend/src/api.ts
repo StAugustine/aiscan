@@ -422,7 +422,7 @@ export function subscribeScanEvents(
   id: string,
   onEvent: (event: ScanEvent) => void,
 ): () => void {
-  const es = new EventSource(`/api/scans/${encodeURIComponent(id)}/events`);
+  const es = new EventSource(authURL(`/api/scans/${encodeURIComponent(id)}/events`));
   const handler = (type: RawScanEventType) => (e: Event) => {
     const data = 'data' in e ? (e as MessageEvent).data : undefined;
     if (typeof data !== 'string' || data === '') {
@@ -611,8 +611,12 @@ export interface FileUploadResult {
 export async function uploadChatFile(sessionID: string, file: File): Promise<FileUploadResult> {
   const form = new FormData()
   form.append('file', file)
+  const headers: Record<string, string> = {}
+  const key = getAccessKey()
+  if (key) headers['Authorization'] = `Bearer ${key}`
   const resp = await fetch(`/api/chat/sessions/${encodeURIComponent(sessionID)}/upload`, {
     method: 'POST',
+    headers,
     body: form,
   })
   if (!resp.ok) {
@@ -630,7 +634,10 @@ export async function listChatMessages(sessionID: string): Promise<ChatMessage[]
 // ('en' | 'zh'). Returns '' when the report isn't ready yet (404) so callers can
 // just show a placeholder.
 export async function fetchScanReport(scanID: string, lang: string): Promise<string> {
-  const res = await fetch(`/api/scans/${encodeURIComponent(scanID)}/report?lang=${encodeURIComponent(lang)}`)
+  const headers: Record<string, string> = {}
+  const key = getAccessKey()
+  if (key) headers['Authorization'] = `Bearer ${key}`
+  const res = await fetch(`/api/scans/${encodeURIComponent(scanID)}/report?lang=${encodeURIComponent(lang)}`, { headers })
   if (!res.ok) return ''
   return res.text()
 }
@@ -640,7 +647,7 @@ export function subscribeChatEvents(
   onEvent: (event: ChatEvent) => void,
   onReconnect?: () => void,
 ): () => void {
-  const url = `/api/chat/sessions/${encodeURIComponent(sessionID)}/events`
+  const url = authURL(`/api/chat/sessions/${encodeURIComponent(sessionID)}/events`)
   const es = new EventSource(url)
 
   const eventTypes: ChatEventType[] = [
@@ -677,11 +684,29 @@ export function subscribeChatEvents(
 
 export function agentTerminalWebSocketURL(agentID: string): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/api/agents/${encodeURIComponent(agentID)}/terminal/ws`;
+  const base = `${protocol}//${window.location.host}/api/agents/${encodeURIComponent(agentID)}/terminal/ws`;
+  return authURL(base);
+}
+
+function getAccessKey(): string {
+  return (window as any).__AISCAN_ACCESS_KEY__ || ''
+}
+
+// For SSE/WebSocket, append access_key as query param since EventSource/WebSocket can't set headers.
+function authURL(path: string): string {
+  const key = getAccessKey()
+  if (!key) return path
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}access_key=${encodeURIComponent(key)}`
 }
 
 async function apiJSON<T>(path: string, fallbackMessage: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const key = getAccessKey()
+  const headers = new Headers(init?.headers)
+  if (key) {
+    headers.set('Authorization', `Bearer ${key}`)
+  }
+  const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     throw new Error(await errorMessage(res, fallbackMessage));
   }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
@@ -92,7 +93,7 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 		localAgents.StopAll()
 	}()
 
-	handler := web.NewHandler(service, pool, localAgents, ioaHandler, newSPAFileServer(staticSub))
+	handler := web.NewHandler(service, pool, localAgents, ioaHandler, newSPAFileServer(staticSub, accessKey), accessKey)
 
 	srv := &http.Server{
 		Addr:    opts.Addr,
@@ -106,7 +107,7 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	logger.Infof("aiscan web server listening on http://%s", opts.Addr)
+	logger.Infof("aiscan web server listening on http://%s?access_key=%s", opts.Addr, accessKey)
 	logger.Infof("IOA server embedded at http://%s/ioa (token=%s)", opts.Addr, accessKey)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
@@ -114,7 +115,13 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 	return nil
 }
 
-func newSPAFileServer(fsys fs.FS) http.HandlerFunc {
+func newSPAFileServer(fsys fs.FS, accessKey string) http.HandlerFunc {
+	// Read index.html and inject the access key so the frontend can authenticate API calls.
+	indexBytes, _ := fs.ReadFile(fsys, "index.html")
+	if accessKey != "" && len(indexBytes) > 0 {
+		injection := []byte(`<script>window.__AISCAN_ACCESS_KEY__="` + accessKey + `";</script>`)
+		indexBytes = bytes.Replace(indexBytes, []byte("</head>"), append(injection, []byte("</head>")...), 1)
+	}
 	fileServer := http.FileServer(http.FS(fsys))
 	return func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
@@ -124,6 +131,13 @@ func newSPAFileServer(fsys fs.FS) http.HandlerFunc {
 				fileServer.ServeHTTP(w, r)
 				return
 			}
+		}
+		// Serve injected index.html for SPA routes
+		if len(indexBytes) > 0 {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(indexBytes)
+			return
 		}
 		r = r.Clone(r.Context())
 		r.URL.Path = "/"

@@ -20,8 +20,8 @@ type Message struct {
 	Payload  json.RawMessage `json:"payload,omitempty"`
 }
 
-// SlashSpec is the surface-neutral description of one user-facing "/verb" command.
-type SlashSpec struct {
+// CommandSpec is the surface-neutral description of one user-facing "/verb" command.
+type CommandSpec struct {
 	Name        string   `json:"name"`
 	Aliases     []string `json:"aliases,omitempty"`
 	Usage       string   `json:"usage,omitempty"`
@@ -31,13 +31,13 @@ type SlashSpec struct {
 type RegisterPayload struct {
 	Name string `json:"name"`
 	// Commands is the LLM tool/pseudo-command registry (pkg/commands) the agent
-	// exposes to the model — distinct from SlashCommands.
+	// exposes to the model — distinct from CommandsMenu.
 	Commands []string `json:"commands,omitempty"`
-	// SlashCommands is the agent's user-facing "/verb" catalog: the agent-scope,
+	// CommandsMenu is the agent's user-facing "/verb" catalog: the agent-scope,
 	// menu-visible commands it can run, plus one per loaded skill. The hub merges
 	// these with its own hub-scope commands to drive the web "/" menu and /help,
 	// so the surfaces never drift.
-	SlashCommands []SlashSpec    `json:"slash_commands,omitempty"`
+	CommandsMenu []CommandSpec  `json:"commands_menu,omitempty"`
 	Identity      AgentIdentity `json:"identity,omitempty"`
 	Stats         AgentStats    `json:"stats,omitempty"`
 }
