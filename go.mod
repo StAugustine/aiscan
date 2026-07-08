@@ -18,10 +18,10 @@ require (
 	github.com/chainreactors/spray v1.3.3-0.20260704194611-7ce7b850d447
 	github.com/chainreactors/tui/console v0.0.0-20260701051656-c5b85e7256a9
 	github.com/chainreactors/tui/readline v0.0.0-20260626181537-7c0eb4b933cd
-	github.com/chainreactors/utils v0.0.0-20260704063748-6f849f173481
-	github.com/chainreactors/utils/mitmproxy v0.0.0-20260630095004-c4fb7a13ed39
-	github.com/chainreactors/utils/parsers v0.0.2
-	github.com/chainreactors/utils/pty v0.0.0-20260630095004-c4fb7a13ed39
+	github.com/chainreactors/utils v0.0.0-20260707181750-8aa6ca296863
+	github.com/chainreactors/utils/mitmproxy v0.0.0-20260707181750-8aa6ca296863
+	github.com/chainreactors/utils/parsers v0.0.3-0.20260707181750-8aa6ca296863
+	github.com/chainreactors/utils/pty v0.0.0-20260707181750-8aa6ca296863
 	github.com/chainreactors/zombie v1.3.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/glamour v0.8.0
@@ -90,7 +90,7 @@ require (
 	github.com/chainreactors/files v0.0.0-20240716182835-7884ee1e77f0 // indirect
 	github.com/chainreactors/neutron/operators/full v0.1.1-0.20260703124839-c4091ad1e02d // indirect
 	github.com/chainreactors/parsers v0.0.0-20260608085142-3d2c51baa8fe // indirect
-	github.com/chainreactors/utils/cert v0.0.0-20260624181253-2b3d0b35862f // indirect
+	github.com/chainreactors/utils/cert v0.0.0-20260707181750-8aa6ca296863 // indirect
 	github.com/chainreactors/words v0.0.0-20260520145736-270600e60fb4 // indirect
 	github.com/charlievieth/fastwalk v1.0.14 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect
