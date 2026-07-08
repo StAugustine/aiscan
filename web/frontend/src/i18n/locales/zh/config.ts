@@ -39,7 +39,7 @@ export default {
   defaultVerifyMode: '默认验证模式',
   verifyTimeout: '验证超时（秒）',
   tavilyKeys: 'Tavily API Key',
-  ioaServerUrl: 'IOA 服务地址',
+  ioaServerUrl: '服务地址',
   accessToken: '访问令牌',
   nodeName: '节点名称',
   space: '空间',
@@ -57,7 +57,7 @@ export default {
   unlimited: '0 = 不限制',
   tavilyHint: '逗号分隔的 Key（回退：DuckDuckGo）',
   autoRegisterNode: '自动注册节点名',
-  ioaAccessKey: 'IOA 访问 Key',
+  ioaAccessKey: '服务访问 Key',
   // connectivity test (shared across LLM, Cyberhub, Recon, Search, IOA)
   testConnection: '测试连接',
   testing: '测试中…',

@@ -39,7 +39,7 @@ export default {
   defaultVerifyMode: 'Default Verify Mode',
   verifyTimeout: 'Verify Timeout (seconds)',
   tavilyKeys: 'Tavily API Keys',
-  ioaServerUrl: 'IOA Server URL',
+  ioaServerUrl: 'Server URL',
   accessToken: 'Access Token',
   nodeName: 'Node Name',
   space: 'Space',
@@ -57,7 +57,7 @@ export default {
   unlimited: '0 = unlimited',
   tavilyHint: 'comma-separated keys (fallback: DuckDuckGo)',
   autoRegisterNode: 'auto-register node name',
-  ioaAccessKey: 'IOA access key',
+  ioaAccessKey: 'server access key',
   // connectivity test (shared across LLM, Cyberhub, Recon, Search, IOA)
   testConnection: 'Test connection',
   testing: 'Testing…',

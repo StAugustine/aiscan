@@ -8,6 +8,7 @@ import DetailPanel from './components/DetailPanel'
 import ConfigPanel from './components/ConfigPanel'
 import AgentPanel from './components/AgentPanel'
 import LLMHealth from './components/LLMHealth'
+import QuickConnect from './components/QuickConnect'
 import BrandLogo from './components/brand/BrandLogo'
 // Lazy: the agent terminal drags in @xterm (~its own chunk) but only renders
 // when a node's console is opened — keep it out of the first-paint bundle.
@@ -151,6 +152,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <AgentsButton count={chat.agents.length} onClick={handleOpenAgentPanel} />
+            <QuickConnect ioaURL={serverStatus?.ioa_url} />
             <HeaderIconButton label={t('openSettings')} onClick={() => setConfigOpen(true)}>
               <Settings className="h-3.5 w-3.5" />
             </HeaderIconButton>

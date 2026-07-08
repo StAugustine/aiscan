@@ -22,7 +22,7 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: 'recon', label: 'Recon' },
   { key: 'scan', label: 'Scan' },
   { key: 'search', label: 'Search' },
-  { key: 'ioa', label: 'IOA' },
+  { key: 'ioa', label: 'Server' },
   { key: 'agent', label: 'Agent' },
 ]
 
@@ -78,7 +78,7 @@ function sectionStatus(
     case 'search':
       return [tag('Tavily', !!cs?.search.tavily_keys_configured)]
     case 'ioa':
-      return [tag('IOA', !!(cs?.ioa.url && cs?.ioa.token_configured))]
+      return [tag('Server', !!(cs?.ioa.url && cs?.ioa.token_configured))]
     default:
       return [] // scan, agent — local only
   }
@@ -456,7 +456,7 @@ function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' 
 }
 
 const CHECK_LABELS: Record<string, string> = {
-  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'IOA',
+  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'Server',
 }
 
 function ConnCheckRow({ check }: { check: ConnCheck }) {

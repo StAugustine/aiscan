@@ -15,7 +15,7 @@ type Option struct {
 	LLMOptions     `group:"LLM Options" config:"llm"`
 	ScannerOptions `group:"Scanner Options" config:"cyberhub"`
 	AgentOptions   `group:"Agent Options" config:"agent"`
-	IOAOptions     `group:"IOA Options" config:"ioa"`
+	IOAOptions     `group:"Server Options" config:"ioa"`
 	ReconOptions   `group:"Recon Options" config:"recon"`
 	MiscOptions    `group:"Miscellaneous Options" config:"misc"`
 	ScanConfig     ScanConfigOptions `no-flag:"true" config:"scan"`
@@ -70,12 +70,25 @@ type AgentOptions struct {
 }
 
 type IOAOptions struct {
-	IOAURL      string `long:"ioa-url" config:"url" description:"IOA server URL (supports http://token@host:port for auth)"`
-	IOAToken    string `long:"ioa-token" config:"token" description:"IOA server access key (for 'ioa serve'; auto-generated if empty)"`
-	IOANodeID   string `long:"ioa-node-id" description:"Existing IOA node id for agent tools"`
-	IOANodeName string `long:"ioa-node-name" config:"node_name" description:"IOA node name when auto-registering"`
-	Space       string `long:"space" config:"space" description:"IOA space name" default:"default"`
-	IOAJSON     bool   `long:"json" description:"Output IOA query results in JSON format"`
+	IOAURL      string `long:"server-url" config:"url" description:"Server URL for agent connection (supports http://token@host:port)"`
+	IOAToken    string `long:"server-token" config:"token" description:"Server access key (auto-generated if empty)"`
+	IOANodeID   string `long:"node-id" description:"Existing node id for agent tools"`
+	IOANodeName string `long:"node-name" config:"node_name" description:"Node name when auto-registering"`
+	Space       string `long:"space" config:"space" description:"Space name" default:"default"`
+	IOAJSON     bool   `long:"json" description:"Output query results in JSON format"`
+
+	// Deprecated aliases (hidden from --help, still accepted for backward compatibility)
+	DeprecatedIOAURL      string `long:"ioa-url" hidden:"true"`
+	DeprecatedIOAToken    string `long:"ioa-token" hidden:"true"`
+	DeprecatedIOANodeID   string `long:"ioa-node-id" hidden:"true"`
+	DeprecatedIOANodeName string `long:"ioa-node-name" hidden:"true"`
+}
+
+func (o *IOAOptions) ApplyDeprecatedAliases() {
+	o.IOAURL = ResolveString(o.IOAURL, o.DeprecatedIOAURL)
+	o.IOAToken = ResolveString(o.IOAToken, o.DeprecatedIOAToken)
+	o.IOANodeID = ResolveString(o.IOANodeID, o.DeprecatedIOANodeID)
+	o.IOANodeName = ResolveString(o.IOANodeName, o.DeprecatedIOANodeName)
 }
 
 type MiscOptions struct {

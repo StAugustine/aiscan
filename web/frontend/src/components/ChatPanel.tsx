@@ -815,7 +815,7 @@ function describeIOAThreadItem(item: TimelineItem, t: (key: string) => string): 
     const ioaTool = item.assistantResponse.tools.find((tool) => isIOATool(tool.toolName, tool.toolArgs))
     if (ioaTool) {
       return {
-        label: ioaTool.toolName || 'ioa',
+        label: ioaTool.toolName || 'server',
         detail: previewText(summarizeArgs(ioaTool.toolArgs) || ioaTool.result || '', 140),
       }
     }
@@ -823,7 +823,7 @@ function describeIOAThreadItem(item: TimelineItem, t: (key: string) => string): 
 
   if (item.kind === 'tool_call' && item.toolCall && isIOATool(item.toolCall.toolName, item.toolCall.toolArgs)) {
     return {
-      label: item.toolCall.toolName || 'ioa',
+      label: item.toolCall.toolName || 'server',
       detail: previewText(summarizeArgs(item.toolCall.toolArgs) || item.toolCall.result || '', 140),
     }
   }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/chainreactors/aiscan/pkg/tui"
 	"github.com/chainreactors/aiscan/skills"
 	ioaclient "github.com/chainreactors/ioa/client"
+	"github.com/chainreactors/ioa/protocols"
 	ioaserver "github.com/chainreactors/ioa/server"
 )
 
@@ -191,11 +193,24 @@ func resolveScannerIntent(option *cfg.Option, store *skills.Store, command strin
 
 func ioaServe(ctx context.Context, option *cfg.Option, logger telemetry.Logger) error {
 	store := ioaserver.NewMemoryStore()
-	logger.Importantf("ioa_server store=memory")
+	logger.Importantf("aiscan server store=memory")
 	defer func() { _ = store.Close() }()
+
+	accessKey := option.IOAToken
+	if accessKey == "" {
+		accessKey = protocols.NewToken()
+	}
+	listenURL := option.IOAURL
+	if listenURL == "" {
+		listenURL = "http://127.0.0.1:8765"
+	}
+	if u, err := url.Parse(listenURL); err == nil {
+		logger.Infof("  agent connect: aiscan agent --server-url http://%s@%s", accessKey, u.Host)
+	}
+
 	return ioaserver.RunServer(ctx, ioaserver.ServerOptions{
-		URL:       option.IOAURL,
-		AccessKey: option.IOAToken,
+		URL:       listenURL,
+		AccessKey: accessKey,
 		Store:     store,
 	})
 }
@@ -207,11 +222,11 @@ func ioaClientCommand(ctx context.Context, mode cfg.RunMode, option *cfg.Option,
 	}
 	client, err := ioaclient.NewClient(ioaURL, "")
 	if err != nil {
-		return fmt.Errorf("connect to IOA server: %w", err)
+		return fmt.Errorf("connect to server: %w", err)
 	}
 	if client.AccessKey() != "" {
 		if err := client.EnsureRegistered(ctx, "aiscan-cli", "", nil); err != nil {
-			return fmt.Errorf("IOA auth register: %w", err)
+			return fmt.Errorf("server auth register: %w", err)
 		}
 	}
 
@@ -225,7 +240,7 @@ func ioaClientCommand(ctx context.Context, mode cfg.RunMode, option *cfg.Option,
 	case cfg.RunModeIOANodes:
 		return tui.RunIOANodes(ctx, client, option, args, os.Stdout, os.Stderr)
 	default:
-		return fmt.Errorf("unknown ioa mode: %s", mode)
+		return fmt.Errorf("unknown server mode: %s", mode)
 	}
 }
 

@@ -21,6 +21,10 @@ export default {
   projectDeleteConfirm: 'Confirm delete? Also removes the {{n}} assets in this project',
   projectDeleteCancel: 'Cancel',
   projectDeleteFailed: 'Could not delete project',
+  // Quick connect
+  quickConnect: 'Quick connect an agent',
+  quickConnectTitle: 'Download & connect an agent',
+  quickConnectHint: 'Run this command on a remote machine to connect an agent to this server.',
   // Header LLM health indicator
   llmUnconfigured: 'LLM not configured',
   llmChecking: 'Checking…',

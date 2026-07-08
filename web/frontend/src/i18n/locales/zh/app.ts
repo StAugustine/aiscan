@@ -21,6 +21,10 @@ export default {
   projectDeleteConfirm: '确认删除?将一并移除该项目下的 {{n}} 个资产',
   projectDeleteCancel: '取消',
   projectDeleteFailed: '删除项目失败',
+  // 快速接入
+  quickConnect: '快速接入 Agent',
+  quickConnectTitle: '下载并接入 Agent',
+  quickConnectHint: '在远程机器上执行此命令，即可接入一个 Agent 到本服务器。',
   // 顶栏 LLM 健康指示
   llmUnconfigured: 'LLM 未配置',
   llmChecking: '检测中…',

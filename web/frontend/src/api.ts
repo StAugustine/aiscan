@@ -122,6 +122,7 @@ export interface ServerStatus {
   config_path?: string;
   config_loaded: boolean;
   agents: number;
+  ioa_url?: string;
 }
 
 export interface AgentInfo {

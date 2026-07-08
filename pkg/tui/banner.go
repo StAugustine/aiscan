@@ -327,7 +327,7 @@ func (r *AgentConsole) renderStatus() string {
 		{Command: "model", Detail: info.Provider + " / " + info.Model},
 		{Command: "render", Detail: info.Mode},
 		{Command: "task", Detail: info.Task},
-		{Command: "ioa", Detail: info.IOA},
+		{Command: "server", Detail: info.IOA},
 		{Command: "history", Detail: truncMiddle(info.History, detailBudget)},
 	}
 	if info.Skills != "" {

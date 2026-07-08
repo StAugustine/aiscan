@@ -450,7 +450,7 @@ func (r *AgentConsole) builtinCommands() []Command {
 			},
 		},
 		{
-			Name: "/status", Description: "查看模型、渲染模式、IOA 和 skills",
+			Name: "/status", Description: "查看模型、渲染模式、Server 和 skills",
 			Args: ArgsNone,
 			Run: func(_ context.Context, _ *Session, _ []string) error {
 				fmt.Fprint(r.stdout, r.renderStatus())
@@ -565,7 +565,7 @@ func (r *AgentConsole) providerCommands() []Command {
 func (r *AgentConsole) ioaCommands() []Command {
 	return []Command{
 		{
-			Name: "/spaces", Description: "List all IOA spaces",
+			Name: "/spaces", Description: "List all spaces",
 			Args: ArgsNone,
 			Run: func(ctx context.Context, _ *Session, _ []string) error {
 				client, err := r.ioaClient()
@@ -741,7 +741,7 @@ func (r *AgentConsole) stopController() {
 func (r *AgentConsole) ioaClient() (*ioaclient.Client, error) {
 	ioaURL := r.option.IOAURL
 	if ioaURL == "" {
-		return nil, fmt.Errorf("IOA not configured: use --ioa-url")
+		return nil, fmt.Errorf("server not configured: use --server-url")
 	}
 	client, err := ioaclient.NewClient(ioaURL, "")
 	if err != nil {
@@ -749,7 +749,7 @@ func (r *AgentConsole) ioaClient() (*ioaclient.Client, error) {
 	}
 	if client.AccessKey() != "" {
 		if err := client.EnsureRegistered(context.Background(), "aiscan-tui", "", nil); err != nil {
-			return nil, fmt.Errorf("IOA auth: %w", err)
+			return nil, fmt.Errorf("server auth: %w", err)
 		}
 	}
 	return client, nil

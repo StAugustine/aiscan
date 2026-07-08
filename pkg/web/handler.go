@@ -17,7 +17,7 @@ type Handler struct {
 func NewHandler(service *Service, agents *AgentPool, local *LocalAgents, ioaHandler http.Handler, static http.Handler, accessKey string) *Handler {
 	mux := http.NewServeMux()
 
-	h := &handlerImpl{service: service, agents: agents}
+	h := &handlerImpl{service: service, agents: agents, accessKey: accessKey}
 
 	mux.HandleFunc("POST /api/scans", h.createScan)
 	mux.HandleFunc("GET /api/scans", h.listScans)
@@ -82,14 +82,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type handlerImpl struct {
-	service *Service
-	agents  *AgentPool
+	service   *Service
+	agents    *AgentPool
+	accessKey string
 }
 
 func (h *handlerImpl) serviceStatus(w http.ResponseWriter, r *http.Request) {
 	status := h.service.Status()
 	if h.agents != nil {
 		status.Agents = h.agents.Count()
+	}
+	if h.accessKey != "" {
+		host := r.Host
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		if fwd := r.Header.Get("X-Forwarded-Proto"); fwd != "" {
+			scheme = fwd
+		}
+		status.IOAURL = scheme + "://" + h.accessKey + "@" + host + "/ioa"
 	}
 	writeJSON(w, http.StatusOK, status)
 }

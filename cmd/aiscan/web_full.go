@@ -75,7 +75,7 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 		return fmt.Errorf("load static assets: %s", err)
 	}
 
-	accessKey := opts.IOAToken
+	accessKey := opts.Token
 	if accessKey == "" {
 		accessKey = protocols.NewToken()
 	}
@@ -107,8 +107,8 @@ func runWeb(ctx context.Context, option *cfg.Option, opts webCommand, logger tel
 		_ = srv.Shutdown(shutCtx)
 	}()
 
-	logger.Infof("aiscan web server listening on http://%s?access_key=%s", opts.Addr, accessKey)
-	logger.Infof("IOA server embedded at http://%s/ioa (token=%s)", opts.Addr, accessKey)
+	logger.Infof("aiscan server listening on http://%s?access_key=%s", opts.Addr, accessKey)
+	logger.Infof("  agent connect: aiscan agent --server-url http://%s@%s/ioa", accessKey, opts.Addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

@@ -61,6 +61,7 @@ type ServiceStatus struct {
 	ConfigPath          string `json:"config_path,omitempty"`
 	ConfigLoaded        bool   `json:"config_loaded"`
 	Agents              int    `json:"agents"`
+	IOAURL              string `json:"ioa_url,omitempty"`
 }
 
 // ConfigStatus is the response for GET /api/config — secrets masked,

@@ -30,20 +30,26 @@ type webCommand struct {
 	DB          string `long:"db" default:"aiscan-web.db" description:"SQLite database path"`
 	MaxScans    int    `long:"max-scans" default:"3" description:"Maximum concurrent scans"`
 	ScanTimeout int    `long:"scan-timeout" default:"600" description:"Maximum scan runtime in seconds"`
-	IOAToken    string `long:"ioa-token" description:"IOA access key (auto-generated if empty)"`
+	Token       string `long:"token" description:"Access key for the server (auto-generated if empty)"`
 }
 
 type cliOptions struct {
 	cfg.Option
-	Agent struct{}   `command:"agent" description:"Run the LLM agent"`
-	Web   webCommand `command:"web" description:"Start the web UI server"`
-	IOA   ioaCommand `command:"ioa" description:"IOA server commands"`
+	Agent struct{}       `command:"agent" description:"Run the LLM agent"`
+	Serve serveCommand   `command:"serve" description:"Run the standalone agent server"`
+	Web   webCommand     `command:"web" description:"Start the web UI server (includes agent server)"`
+	IOA   ioaCommand     `command:"ioa" description:"Server management commands" hidden:"true"`
 	cfg.ScannerCommands
 }
 
+type serveCommand struct {
+	Token string `long:"token" description:"Access key for the server (auto-generated if empty)"`
+	Addr  string `long:"addr" default:"127.0.0.1:8765" description:"HTTP listen address"`
+}
+
 type ioaCommand struct {
-	Serve    struct{}       `command:"serve" description:"Run the IOA HTTP server"`
-	Spaces   struct{}       `command:"spaces" description:"List all IOA spaces"`
+	Serve    struct{}       `command:"serve" description:"Run the standalone agent server"`
+	Spaces   struct{}       `command:"spaces" description:"List all spaces"`
 	Messages ioaMessagesCmd `command:"messages" description:"List start messages in a space"`
 	Context  ioaContextCmd  `command:"context" description:"View message thread/context"`
 	Nodes    ioaNodesCmd    `command:"nodes" description:"List nodes"`
@@ -74,6 +80,7 @@ type parsedCLI struct {
 	ScannerArgs []string
 	IOAArgs     cfg.IOAClientArgs
 	WebOpts     webCommand
+	ServeOpts   serveCommand
 	Help        bool
 }
 
@@ -162,12 +169,12 @@ func aiscan() {
 		}
 	case cfg.RunModeIOAServe:
 		if err := runner.RunIOAServe(ctx, &option, logger); err != nil {
-			logger.Errorf("ioa server failed: %s", err)
+			logger.Errorf("server failed: %s", err)
 			os.Exit(1)
 		}
 	case cfg.RunModeIOASpaces, cfg.RunModeIOAMessages, cfg.RunModeIOAContext, cfg.RunModeIOANodes:
 		if err := runner.RunIOAClientCommand(ctx, parsed.Mode, &option, parsed.IOAArgs, logger); err != nil {
-			logger.Errorf("ioa command failed: %s", err)
+			logger.Errorf("server command failed: %s", err)
 			os.Exit(1)
 		}
 	case cfg.RunModeScanner:
@@ -201,6 +208,7 @@ func parseCLI(args []string) (parsedCLI, error) {
 	}
 
 	option := cli.Option
+	option.IOAOptions.ApplyDeprecatedAliases()
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: cfg.RunModeNoCommand}, nil
 	}
@@ -223,6 +231,17 @@ func parseCLI(args []string) (parsedCLI, error) {
 
 	if mode == runModeWeb {
 		return parsedCLI{Option: option, Mode: runModeWeb, WebOpts: cli.Web}, nil
+	}
+
+	if mode == cfg.RunModeIOAServe && parser.Active != nil && parser.Active.Name == "serve" {
+		serveOpts := cli.Serve
+		if serveOpts.Token != "" {
+			option.IOAToken = serveOpts.Token
+		}
+		if option.IOAURL == "" && serveOpts.Addr != "" {
+			option.IOAURL = "http://" + serveOpts.Addr
+		}
+		return parsedCLI{Option: option, Mode: cfg.RunModeIOAServe, ServeOpts: serveOpts}, nil
 	}
 
 	ioaArgs := extractIOAArgs(&cli, mode)
@@ -314,14 +333,14 @@ aiscan - AI-assisted security scanner
 Commands:
   scan           Scan a target, with optional AI skills (--verify, --sniper, --deep)
   agent          Run the natural-language agent
-  web            Start the web UI server
+  web            Start the web UI server (includes embedded agent server)
+  serve          Run the standalone agent server
 
 Advanced scanners:
 %s
 
-Infrastructure:
-  ioa serve      Run the IOA HTTP server
-  ioa spaces     List all IOA spaces
+Server management:
+  ioa spaces     List all spaces
   ioa messages   List start messages in a space
   ioa context    View message thread/context
   ioa nodes      List nodes
@@ -330,7 +349,8 @@ Examples:
   aiscan scan -i 127.0.0.1
   aiscan scan -i http://target.com --verify=high --sniper --model gpt-4o
   aiscan agent -p "find web services and check vulnerabilities" -i 192.168.1.0/24
-  aiscan web --addr 0.0.0.0:8080`, cfg.ScannerUsageLines())
+  aiscan web --addr 0.0.0.0:8080
+  aiscan serve --token mykey --addr 0.0.0.0:8765`, cfg.ScannerUsageLines())
 	return parser
 }
 

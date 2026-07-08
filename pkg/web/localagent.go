@@ -92,9 +92,9 @@ func (l *LocalAgents) Launch(ctx context.Context) (*LocalAgentView, error) {
 
 	cmd := exec.Command(bin, "agent",
 		"--web-url", l.webURL,
-		"--ioa-url", l.ioaURL,
+		"--server-url", l.ioaURL,
 		"--space", "default",
-		"--ioa-node-name", name,
+		"--node-name", name,
 	)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start local agent: %w", err)
