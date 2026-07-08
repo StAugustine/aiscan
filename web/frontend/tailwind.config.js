@@ -28,14 +28,9 @@ export default {
         },
       },
       fontFamily: {
-        // Latin → Inter; Chinese → MiSans (refined) → Noto Sans SC (system deep fallback) → local PingFang.
-        sans: ['Inter Variable', 'Inter', 'MiSans', 'Noto Sans SC', 'PingFang SC', 'system-ui', '-apple-system', 'sans-serif'],
-        // Mono stack carries a CJK fallback too, so Chinese in eyebrows / breadcrumbs
-        // renders MiSans instead of leaking to a random system CJK face.
-        mono: ['JetBrains Mono Variable', 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'MiSans', 'PingFang SC', 'monospace'],
-        // Space Grotesk — the characterful Latin display face (wordmark, headings, numerals).
-        // Chinese headings fall through to MiSans (Space Grotesk has no CJK glyphs).
-        display: ['Space Grotesk Variable', 'Space Grotesk', 'Inter Variable', 'Inter', 'MiSans', 'PingFang SC', 'system-ui', 'sans-serif'],
+        sans: ['Inter Variable', 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'system-ui', '-apple-system', 'sans-serif'],
+        mono: ['JetBrains Mono Variable', 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'PingFang SC', 'monospace'],
+        display: ['Space Grotesk Variable', 'Space Grotesk', 'Inter Variable', 'Inter', 'PingFang SC', 'Microsoft YaHei', 'system-ui', 'sans-serif'],
       },
       boxShadow: {
         ...preset.theme?.extend?.boxShadow,

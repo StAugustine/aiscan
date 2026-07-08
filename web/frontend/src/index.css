@@ -233,7 +233,7 @@
 
 @layer utilities {
   /* ── Chinese (CJK) refinement ──────────────────────────────────────────
-     MiSans is the active CJK face (tailwind.config fontFamily). CJK runs have
+     CJK uses system fonts (PingFang SC / Microsoft YaHei / Noto Sans SC). CJK runs have
      no inter-word spaces, so the wide Latin letter-spacing used on mono / eyebrow
      labels (.mono-label = 0.14em, inline tracking-* = 0.08em) opens ugly gaps
      between characters. Pull it back to a hairline when <html lang="zh">
@@ -249,9 +249,9 @@
      These mono eyebrow / chip / timeline labels routinely mix Latin tokens
      (AI · POC · Web · model ids) with CJK — e.g. "发现 · Web 探测 · POC 检测".
      In the mono stack the Latin renders in JetBrains Mono, a typewriter face,
-     while the CJK falls through to MiSans (humanist). Side by side the row
+     while the CJK falls through to a system CJK face. Side by side the row
      reads as two different fonts. Route the Latin companion to Inter instead —
-     the very face MiSans is paired with in body text — so Latin + CJK read as
+     the same face used for body text — so Latin + CJK read as
      one label. tabular-nums keeps live timers / counters from jittering now
      that digits are proportional. Gated to :lang(zh); Latin locales keep the
      mono "terminal readout" treatment, which has no such clash. Same utilities
