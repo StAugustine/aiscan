@@ -28,9 +28,9 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter Variable', 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'system-ui', '-apple-system', 'sans-serif'],
-        mono: ['JetBrains Mono Variable', 'JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'PingFang SC', 'monospace'],
-        display: ['Space Grotesk Variable', 'Space Grotesk', 'Inter Variable', 'Inter', 'PingFang SC', 'Microsoft YaHei', 'system-ui', 'sans-serif'],
+        sans: ['system-ui', '-apple-system', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', 'sans-serif'],
+        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+        display: ['system-ui', '-apple-system', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
       },
       boxShadow: {
         ...preset.theme?.extend?.boxShadow,

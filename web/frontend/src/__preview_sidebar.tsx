@@ -3,8 +3,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import i18n from './i18n'
-import '@fontsource-variable/inter'
-import '@fontsource-variable/jetbrains-mono'
 import './index.css'
 import { ThemeProvider } from '@aspect/theme'
 import { TooltipProvider } from '@aspect/ui'
