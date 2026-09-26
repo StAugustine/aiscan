@@ -4,6 +4,8 @@ package guardrail
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -25,21 +27,37 @@ import (
 type CheckFunc = func(context.Context, toolhooks.CallEvent) (*Decision, error)
 
 // Mode controls how a valid policy interception is handled, independently of
-// the provider's risk classification. It is immutable for a runtime.
+// the provider's risk classification. Each invocation snapshots the mode.
 type Mode string
 
 const (
 	ModeSafe Mode = "safe"
 	ModeAuto Mode = "auto"
+	// ModeOff is a legacy value. It now selects automatic review, never bypasses checks.
+	ModeOff Mode = "off"
 )
 
-var checks = hooks.NewPoint[toolhooks.CallEvent, *Decision]("guardrail.check").
+// These are private dispatch state, not protocol DTOs. Each provider confirms
+// only risks it identified; an allow from another provider cannot erase a denial.
+type checkInput struct {
+	call toolhooks.CallEvent
+	mode Mode
+}
+type checkResult struct {
+	risk, decision *Decision
+}
+
+var checks = hooks.NewPoint[checkInput, checkResult]("guardrail.check").
 	WithErrorPolicy(hooks.FailClosed).
-	WithReducer(func(acc **Decision, _ *toolhooks.CallEvent, next *Decision) bool {
-		if *acc == nil || next.Action > (*acc).Action {
-			*acc = next
+	WithReducer(func(acc *checkResult, _ *checkInput, next checkResult) bool {
+		if acc.risk == nil || next.risk.Action > acc.risk.Action {
+			acc.risk = next.risk
 		}
-		return next.Action == Action_ACTION_BLOCK
+		if acc.decision == nil || next.decision.Action > acc.decision.Action ||
+			(next.risk.Action > Action_ACTION_RECORD && next.decision.Action == Action_ACTION_RECORD && acc.decision.Action == Action_ACTION_RECORD) {
+			acc.decision = next.decision
+		}
+		return next.decision.Action == Action_ACTION_BLOCK
 	})
 
 type pending struct {
@@ -60,20 +78,24 @@ type Runtime struct {
 	subscriptions []*hooks.Subscription
 	pending       map[string]*pending
 	active        sync.WaitGroup
+	rejections    map[[32]byte]int
 }
 
 func New(stream *events.Stream, timeout time.Duration, mode Mode) *Runtime {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
-	if mode == "" {
-		mode = ModeSafe
+	if mode == "" || mode == ModeOff {
+		mode = ModeAuto
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Runtime{stream: stream, timeout: timeout, mode: mode, registry: hooks.New(), ctx: ctx, cancel: cancel, pending: make(map[string]*pending)}
+	return &Runtime{stream: stream, timeout: timeout, mode: mode, registry: hooks.New(), ctx: ctx, cancel: cancel, pending: make(map[string]*pending), rejections: make(map[[32]byte]int)}
 }
 
-func (r *Runtime) Register(source string, check CheckFunc) (*hooks.Subscription, error) {
+// Register installs a risk screen and an optional consequence assessment.
+// In auto mode, only RECORD from confirm releases a flagged invocation.
+// A missing confirm retains the screening decision and cannot grant a bypass.
+func (r *Runtime) Register(source string, check, confirm CheckFunc) (*hooks.Subscription, error) {
 	if strings.TrimSpace(source) == "" || check == nil {
 		return nil, errors.New("guardrail source and check are required")
 	}
@@ -82,18 +104,31 @@ func (r *Runtime) Register(source string, check CheckFunc) (*hooks.Subscription,
 	if r.closed {
 		return nil, errors.New("guardrail is closed")
 	}
-	sub := checks.On(r.registry, source, func(ctx context.Context, ev toolhooks.CallEvent) (*Decision, error) {
+	judge := func(ctx context.Context, fn CheckFunc, ev toolhooks.CallEvent) (*Decision, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		d, err := check(ctx, cloneCall(ev))
+		d, err := fn(ctx, cloneCall(ev))
 		if err != nil {
 			return nil, errors.New("guardrail check failed")
 		}
 		if d == nil || d.Action < Action_ACTION_RECORD || d.Action > Action_ACTION_BLOCK {
 			return nil, errors.New("guardrail check returned an invalid decision")
 		}
-		return proto.Clone(d).(*Decision), nil
+		d = proto.Clone(d).(*Decision)
+		d.Reason = RedactText(d.Reason)
+		return d, nil
+	}
+	sub := checks.On(r.registry, source, func(ctx context.Context, input checkInput) (checkResult, error) {
+		risk, err := judge(ctx, check, input.call)
+		if err != nil {
+			return checkResult{}, err
+		}
+		result := checkResult{risk: risk, decision: risk}
+		if risk.Action != Action_ACTION_RECORD && input.mode == ModeAuto && confirm != nil {
+			result.decision, err = judge(ctx, confirm, input.call)
+		}
+		return result, err
 	})
 	r.subscriptions = append(r.subscriptions, sub)
 	return sub, nil
@@ -111,7 +146,7 @@ func cloneCall(ev toolhooks.CallEvent) toolhooks.CallEvent {
 
 func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.Admission, error) {
 	r.mu.Lock()
-	closed, installed := r.closed, len(r.subscriptions)
+	closed, installed, mode := r.closed, len(r.subscriptions), r.mode
 	if !closed {
 		r.active.Add(1)
 	}
@@ -135,11 +170,13 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 	}
 	ev = cloneCall(ev)
 	var d *Decision
+	var result checkResult
 	var err error
 	if !r.available(installed) {
 		err = errors.New("guardrail policy was removed")
 	} else {
-		d, err = checks.Emit(ctx, r.registry, ev)
+		result, err = checks.Emit(ctx, r.registry, checkInput{call: ev, mode: mode})
+		d = result.decision
 	}
 	invalid := err != nil || d == nil || !r.available(installed)
 	if invalid {
@@ -149,22 +186,49 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 		d = &Decision{Action: Action_ACTION_BLOCK, Reason: "Invocation canceled"}
 	}
 	d.Reason = RedactText(d.Reason)
-	r.emit(ctx, d, ev)
+	if !invalid && result.risk != nil && ctx.Err() == nil {
+		r.emit(ctx, result.risk, ev)
+	} else {
+		r.emit(ctx, d, ev)
+	}
 	// Broken policy registration and cancellation cannot be overridden by a
 	// human decision; only a valid provider judgment can enter review.
 	if invalid || ctx.Err() != nil {
 		return denied(d.Reason), nil
 	}
 	var admission toolhooks.Admission
-	if r.mode != ModeSafe && r.mode != ModeAuto {
+	if mode != ModeSafe && mode != ModeAuto {
 		return denied("invalid guardrail mode"), nil
 	}
+	if mode == ModeAuto && result.risk.Action != Action_ACTION_RECORD {
+		state := ReviewState_REVIEW_STATE_REJECTED
+		if d.Action == Action_ACTION_RECORD {
+			state = ReviewState_REVIEW_STATE_APPROVED
+		}
+		audit := proto.Clone(result.risk).(*Decision)
+		if d != result.risk {
+			audit.Reason += "\nConsequence assessment: " + d.Reason
+		}
+		r.emit(ctx, &Review{Call: SanitizeCall(ev.Call), Operation: ev.Operation,
+			SessionId: operation.InvocationFromContext(ctx).SessionID, Decision: audit,
+			State: state, ResolutionSource: "auto"}, ev)
+	}
 	if d.Action != Action_ACTION_RECORD {
-		if r.mode == ModeAuto {
+		if mode == ModeAuto {
 			// The executor returns a normal error ToolResult. It does not cancel
 			// the session or terminate the agent loop, which can choose its next step.
-			return denied("Guardrail intercepted this tool invocation; the tool was not executed. Reason: " + d.Reason +
-				" Reassess the risk and choose a safer next action or explain the limitation. Every new tool call is checked again."), nil
+			repeat := r.repeatedRejection(ctx, ev)
+			if repeat > 1 {
+				timer := time.NewTimer(time.Duration(min(repeat-1, 8)) * 250 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-ctx.Done():
+					return denied("guardrail invocation canceled"), nil
+				case <-timer.C:
+				}
+			}
+			return denied(fmt.Sprintf("Guardrail intercepted this tool invocation (%d identical attempts in this turn); the tool was not executed. Reason: ", repeat) + d.Reason +
+				" Do not repeat the same invocation. Reassess the risk and choose a safer next action or explain the limitation. Every new tool call is checked again."), nil
 		}
 		admission = r.review(ctx, ev, d)
 	}
@@ -173,6 +237,50 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 		return denied("guardrail invocation canceled or policy removed"), nil
 	}
 	return admission, nil
+}
+
+// SetMode affects future invocations only. It never releases existing reviews.
+func (r *Runtime) SetMode(mode Mode) error {
+	if mode == "" || mode == ModeOff {
+		mode = ModeAuto
+	}
+	if mode != ModeSafe && mode != ModeAuto {
+		return errors.New("invalid guardrail mode")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return errors.New("guardrail is closed")
+	}
+	r.mode = mode
+	return nil
+}
+
+// Keep only bounded diagnostic counters, never cached admission decisions.
+func (r *Runtime) repeatedRejection(ctx context.Context, ev toolhooks.CallEvent) int {
+	inv := operation.InvocationFromContext(ctx)
+	if inv.SessionID == "" || inv.TurnID == "" {
+		return 1
+	}
+	args := string(ev.Call.GetArguments().GetData())
+	var value any
+	if json.Unmarshal([]byte(args), &value) == nil {
+		if canonical, err := json.Marshal(value); err == nil {
+			args = string(canonical)
+		}
+	}
+	key, _ := json.Marshal([]string{inv.SessionID, inv.TurnID, ev.Call.GetName(), ev.Call.GetWorkingDirectory(), args})
+	hash := sha256.Sum256(key)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.rejections[hash]; !exists && len(r.rejections) >= 1024 {
+		for old := range r.rejections {
+			delete(r.rejections, old)
+			break
+		}
+	}
+	r.rejections[hash]++
+	return r.rejections[hash]
 }
 
 func denied(reason string) toolhooks.Admission {
@@ -281,6 +389,9 @@ func (r *Runtime) Resolve(ctx context.Context, operationID string, approve bool)
 	if p.review.State != state {
 		return errors.New("review is no longer pending")
 	}
+	if source := operation.InvocationFromContext(ctx).Emitter; source == "cli" || source == "control" {
+		p.review.ResolutionSource = source
+	}
 	return nil
 }
 
@@ -313,8 +424,14 @@ func (r *Runtime) Close(ctx context.Context) error {
 
 func (r *Runtime) emit(ctx context.Context, payload proto.Message, ev toolhooks.CallEvent) {
 	invocation := operation.InvocationFromContext(ctx)
-	event := &aop.Event{SessionId: invocation.SessionID, TurnId: invocation.TurnID, Emitter: "guardrail"}
-	_ = aop.SetTypedExtension(event, payload)
+	encoded, err := anypb.New(payload)
+	if err != nil {
+		return
+	}
+	event := &aop.Event{
+		SessionId: invocation.SessionID, TurnId: invocation.TurnID, Emitter: "guardrail",
+		Payload: &aop.Event_Extension{Extension: encoded},
+	}
 	if ev.Operation != nil {
 		ref, _ := anypb.New(ev.Operation)
 		event.Extensions = append(event.Extensions, ref)

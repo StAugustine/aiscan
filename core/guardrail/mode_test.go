@@ -14,7 +14,7 @@ import (
 )
 
 func TestSafeModeAuthorizesInterceptedInvocation(t *testing.T) {
-	for _, mode := range []Mode{"", ModeSafe} {
+	for _, mode := range []Mode{ModeSafe} {
 		for _, action := range []Action{Action_ACTION_REVIEW, Action_ACTION_BLOCK} {
 			for _, approve := range []bool{true, false} {
 				t.Run(string(mode)+action.String()+map[bool]string{true: "approve", false: "reject"}[approve], func(t *testing.T) {
@@ -72,8 +72,12 @@ func TestAutoModeReturnsInterceptionWithoutReviewOrTermination(t *testing.T) {
 			if !strings.Contains(err.Error(), "was not executed") || !strings.Contains(err.Error(), "policy") {
 				t.Fatal("LLM feedback missing risk or execution status")
 			}
-			if len(r.Pending("session")) != 0 || len(reviews) != 0 {
-				t.Fatal("automatic mode created a human review")
+			if len(r.Pending("session")) != 0 {
+				t.Fatal("automatic mode created a pending human review")
+			}
+			audit := nextReview(t, reviews)
+			if audit.State != ReviewState_REVIEW_STATE_REJECTED || audit.ResolutionSource != "auto" {
+				t.Fatal("automatic rejection audit missing")
 			}
 		})
 	}
@@ -81,7 +85,7 @@ func TestAutoModeReturnsInterceptionWithoutReviewOrTermination(t *testing.T) {
 
 func TestSafeModeCannotAuthorizeBrokenPolicy(t *testing.T) {
 	r, registry, reviews := fixture(t, time.Second, ModeSafe)
-	_, _ = r.Register("invalid", func(context.Context, toolhooks.CallEvent) (*Decision, error) { return nil, errors.New("broken policy") })
+	_, _ = r.Register("invalid", func(context.Context, toolhooks.CallEvent) (*Decision, error) { return nil, errors.New("broken policy") }, nil)
 	_, err := toolhooks.Execute(callContext(), registry, "echo", "{}", func(context.Context, string) (*aop.ToolResult, error) {
 		t.Fatal("broken policy executed")
 		return nil, nil

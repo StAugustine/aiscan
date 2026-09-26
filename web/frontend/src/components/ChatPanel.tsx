@@ -17,6 +17,7 @@ import {
   Loader2,
   MessageSquare,
   Network,
+  Shield,
   Sparkles,
   Target,
   User,
@@ -54,6 +55,9 @@ import type { AgentListMetadata, CommandSpec, SCONode } from '../api'
 import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
 import ScannerToolCall from './chat/ScannerToolCall'
 import SubagentRunCard from './chat/SubagentRunCard'
+import { GuardrailReviewCard } from './GuardrailReviews'
+import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, withGuardrailReviews } from '../lib/guardrail-view'
+import { ReviewState, type Review } from '../cyber-proto'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
 const webUserAgent = 'cyber.web'
@@ -294,8 +298,8 @@ function reduceConversationAOP(
   const topLevelSplit = splitCommandResults(topLevelEvents)
   const topLevel = collapseRepeatedDividers(mergeTimelineItems(
     reduceAOPToTimeline(
-      topLevelSplit.messages.map(presentAOPEvent),
-      { streaming, lifecycle: 'errors' },
+      guardrailTimelineEvents(topLevelSplit.messages.map(presentAOPEvent)),
+      { streaming, lifecycle: 'errors', responseBoundary: isGuardrailBoundary },
     ) as ViewerTimelineItem[],
     orderedTimelineItems(statusTimelineItems(topLevelSplit.messages), topLevelSplit.commands),
   ))
@@ -323,9 +327,10 @@ function reduceConversationAOP(
     const timestamp = eventTimestamp(start)
     const childSplit = splitCommandResults(childEvents)
     const items = collapseRepeatedDividers(mergeTimelineItems(
-      reduceAOPToTimeline(childSplit.messages.map(presentAOPEvent), {
+      reduceAOPToTimeline(guardrailTimelineEvents(childSplit.messages.map(presentAOPEvent)), {
         streaming: streaming && !end,
         lifecycle: 'errors',
+        responseBoundary: isGuardrailBoundary,
       }).filter((item) => item.kind !== 'divider' || item.variant === 'warning') as ViewerTimelineItem[],
       orderedTimelineItems(statusTimelineItems(childSplit.messages), childSplit.commands),
     ))
@@ -401,6 +406,9 @@ const threadOffsetClass = 'lg:mr-[10.75rem] xl:mr-[11.75rem] 2xl:mr-[14.75rem]'
 interface Props {
   timeline: TimelineItem[]
   aopEvents?: AOPEvent[]
+  guardrailUnavailable?: boolean
+  guardrailReviews: Review[]
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
   scanResults: Map<string, SCONode[]>
   isThinking: boolean
   isBusy: boolean
@@ -426,6 +434,9 @@ interface Props {
 export default function ChatPanel({
   timeline,
   aopEvents = [],
+  guardrailReviews,
+  guardrailUnavailable = false,
+  onResolveGuardrail,
   scanResults,
   isThinking,
   isBusy,
@@ -492,10 +503,10 @@ export default function ChatPanel({
     }
     const visibleAopItems = aopItems.filter((item) => !matchedEchoes.has(item))
 
-    return [...platformItems, ...visibleAopItems].sort(
+    return groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
-    )
-  }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline])
+    ), guardrailReviews, aopEvents, !guardrailUnavailable))
+  }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
   // activity, so the conversation and composer never jump horizontally.
@@ -636,8 +647,14 @@ export default function ChatPanel({
   }
 
   const renderViewerItem = useCallback(
-    (item: ViewerTimelineItem) => timelineContent(item, scanResults, activeThinkingResponseID),
-    [activeThinkingResponseID, scanResults],
+    (item: ViewerTimelineItem) => item.kind === 'extension' && item.extensionType === 'guardrail'
+      ? <div className="flex w-full gap-3" data-guardrail-timeline-entry>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground" aria-hidden="true"><Shield className="h-3.5 w-3.5" /></div>
+          <div className="min-w-0 flex-1"><GuardrailReviewCard review={item.data.review as Review} unavailable={item.data.unavailable === true} intercepted={item.data.intercepted === true} outcome={item.data.outcome as string | undefined} actionable={item.data.actionable === true}
+            reviewedAt={item.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} /></div>
+        </div>
+      : timelineContent(item, scanResults, activeThinkingResponseID, onResolveGuardrail),
+    [activeThinkingResponseID, scanResults, onResolveGuardrail],
   )
   const renderViewerMark = useCallback(
     (item: ViewerTimelineItem) => <TimelineMark item={item} />,
@@ -719,6 +736,7 @@ export default function ChatPanel({
         {livePhase ? t(livePhase === 'thinking' ? 'a11yThinking' : 'a11yTurnDone') : ''}
       </div>
       <ViewerChatPanel.Timeline
+        data-testid="conversation-timeline"
         className="overscroll-contain !px-0 !py-0"
         contentClassName={cn(workspaceClass, 'py-4')}
         railLayoutClassName={hasIOARail
@@ -730,6 +748,7 @@ export default function ChatPanel({
         renderSideNote={renderViewerSideNote}
         stickyScroll
         memoItems
+        scrollBehavior="instant"
         scrollResetKey={activeSessionID}
       />
 
@@ -807,6 +826,7 @@ function timelineContent(
   item: ViewerTimelineItem,
   scanResults: Map<string, SCONode[]>,
   activeThinkingResponseID: string | null,
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>,
 ): ReactNode {
   switch (item.kind) {
     case 'message': {
@@ -837,7 +857,7 @@ function timelineContent(
     }
 
     case 'assistant_response':
-      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} />
+      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} onResolveGuardrail={onResolveGuardrail} />
 
     case 'tool_call':
       return (
@@ -855,7 +875,7 @@ function timelineContent(
       return (
         <SubagentRunCard run={item}>
           {item.items.map((child) => (
-            <div key={child.id}>{timelineContent(child, scanResults, activeThinkingResponseID)}</div>
+            <div key={child.id}>{timelineContent(child, scanResults, activeThinkingResponseID, onResolveGuardrail)}</div>
           ))}
         </SubagentRunCard>
       )
@@ -1037,12 +1057,19 @@ function TokenBudgetNote({ context, budget }: { context?: number; budget?: numbe
 function AssistantResponseEntry({
   response,
   activeThinking,
+  embedded = false,
+  onResolveGuardrail,
 }: {
   response: Extract<ViewerTimelineItem, { kind: 'assistant_response' }>
   activeThinking: boolean
+  embedded?: boolean
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
 }) {
   const { t } = useTranslation('chat')
   const message = response.response
+  const { t: ta } = useTranslation('app')
+  const reviews = response.steps?.filter(step => step.kind === 'extension' && step.extensionType === 'guardrail') ?? []
+  const pendingReviews = reviews.filter(step => step.kind === 'extension' && (step.data.awaiting === true || step.data.actionable === true)).length
   const hasThinking = !!response.thinking?.trim()
   const hasResponse = !!message?.content.trim()
   const [thinkingExpanded, setThinkingExpanded] = useState(activeThinking && hasThinking)
@@ -1066,6 +1093,7 @@ function AssistantResponseEntry({
 
   return (
     <AssistantResponse
+      embedded={embedded}
       actorName={response.actorName}
       timestamp={new Date(response.timestamp).toISOString()}
       streaming={response.streaming}
@@ -1092,7 +1120,37 @@ function AssistantResponseEntry({
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}
       showResponseLabel={false}
-    />
+    >
+      {response.steps && <div data-guardrail-turn={response.id}>
+        <div className="flex justify-end border-b border-border px-3 py-2">
+          <button type="button" data-guardrail-turn-summary
+            aria-label={ta(pendingReviews ? 'guardrailGoToPending' : 'guardrailGoToRecord')}
+            onClick={event => {
+              const turn = event.currentTarget.closest('[data-guardrail-turn]')
+              const target = turn?.querySelector<HTMLElement>(pendingReviews ? '[data-guardrail-state="pending"]' : '[data-guardrail-review]')
+              target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              target?.focus({ preventScroll: true })
+            }} data-guardrail-count={reviews.length} data-guardrail-pending-count={pendingReviews}
+            aria-live="polite" aria-atomic="true"
+            className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]', pendingReviews ? 'bg-warning/10 text-warning' : 'bg-muted/60 text-muted-foreground')}>
+            <Shield className="h-3 w-3 shrink-0" aria-hidden="true" />
+            {ta('guardrailTurnCount', { count: reviews.length })}
+            {pendingReviews > 0 && <span>· {ta('guardrailTurnPending', { count: pendingReviews })}</span>}
+          </button>
+        </div>
+        <div data-guardrail-turn-steps className="divide-y divide-border">
+        {response.steps.map(step => step.kind === 'assistant_response'
+          ? <AssistantResponseEntry key={step.id} response={step} embedded
+              activeThinking={activeThinking && step.id === latestStreamingResponseID(response.steps!)} onResolveGuardrail={onResolveGuardrail} />
+          : step.kind === 'extension' && step.extensionType === 'guardrail'
+            ? <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                <GuardrailReviewCard review={step.data.review as Review} unavailable={step.data.unavailable === true} intercepted={step.data.intercepted === true} outcome={step.data.outcome as string | undefined} actionable={step.data.actionable === true}
+                  reviewedAt={step.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} embedded />
+              </div>
+            : null)}
+        </div>
+      </div>}
+    </AssistantResponse>
   )
 }
 
@@ -1119,7 +1177,7 @@ function TimelineMark({ item }: { item: ViewerTimelineItem }) {
   if (!descriptor) return <div className="hidden w-full xl:block" />
 
   return (
-    <div className="hidden w-full pr-2 pt-1 xl:block">
+    <div className="hidden w-full pr-2 pt-1 xl:block" data-guardrail-timeline-mark={item.kind === 'extension' && item.extensionType === 'guardrail' ? item.id : undefined}>
       <div className="relative min-h-8 border-r border-border/70 pr-3 text-right">
         <span
           className={cn(
@@ -1456,6 +1514,18 @@ function describeTimelineItem(item: ViewerTimelineItem, t: (key: string) => stri
       }
 
     case 'extension': {
+      if (item.extensionType === 'guardrail') {
+        const state = (item.data.review as Review).state
+        return {
+          label: i18n.t('app:guardrailTimelineLabel'),
+          time,
+          icon: <Shield className="h-3 w-3 text-muted-foreground" />,
+          dotClass: item.data.actionable === true ? 'border-warning bg-warning'
+            : state === ReviewState.APPROVED ? 'border-success bg-success'
+              : state === ReviewState.REJECTED ? 'border-destructive bg-destructive'
+                : 'border-border bg-muted-foreground/60',
+        }
+      }
       if (item.extensionType === 'eval') {
         return {
           label: t('evalLabel'),

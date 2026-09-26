@@ -28,7 +28,7 @@ func TestExtensionInstallsBoundaryAndDirectApprovalAdapters(t *testing.T) {
 			stream := events.New()
 			registry := hooks.New()
 			var runtime *core.Runtime
-			set, err := extension.New(extension.Provided[*events.Stream](stream), extension.Provided[*hooks.Registry](registry), New(Config{ReviewTimeout: "1s"}), extension.Func{LoadFunc: func(scope *extension.Scope) error {
+			set, err := extension.New(extension.Provided[*events.Stream](stream), extension.Provided[*hooks.Registry](registry), New(Config{Mode: core.ModeSafe, ReviewTimeout: "1s"}), extension.Func{LoadFunc: func(scope *extension.Scope) error {
 				var err error
 				runtime, err = extension.Use[*core.Runtime](scope)
 				return err
@@ -42,14 +42,14 @@ func TestExtensionInstallsBoundaryAndDirectApprovalAdapters(t *testing.T) {
 			defer set.Close(t.Context())
 			_, err = runtime.Register("test", func(context.Context, toolhooks.CallEvent) (*core.Decision, error) {
 				return &core.Decision{Action: core.Action_ACTION_REVIEW}, nil
-			})
+			}, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			pending := make(chan *core.Review, 1)
 			stream.Observe(testObserver(func(event *aop.Event) {
 				var review core.Review
-				if ok, _ := aop.FindTypedExtension(event, &review); ok && review.State == core.ReviewState_REVIEW_STATE_PENDING {
+				if payload := event.GetExtension(); payload != nil && payload.MessageIs(&review) && payload.UnmarshalTo(&review) == nil && review.State == core.ReviewState_REVIEW_STATE_PENDING {
 					pending <- &review
 				}
 			}))
@@ -107,18 +107,18 @@ func TestExtensionInstallsBoundaryAndDirectApprovalAdapters(t *testing.T) {
 func TestCloseCancelsPendingReview(t *testing.T) {
 	stream := events.New()
 	registry := hooks.New()
-	e := New(Config{})
+	e := New(Config{Mode: core.ModeSafe})
 	set, _ := extension.New(extension.Provided[*events.Stream](stream), extension.Provided[*hooks.Registry](registry), e)
 	if err := set.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = e.runtime.Register("review", func(context.Context, toolhooks.CallEvent) (*core.Decision, error) {
 		return &core.Decision{Action: core.Action_ACTION_REVIEW}, nil
-	})
+	}, nil)
 	entered := make(chan struct{})
 	stream.Observe(testObserver(func(event *aop.Event) {
 		var r core.Review
-		if ok, _ := aop.FindTypedExtension(event, &r); ok && r.State == core.ReviewState_REVIEW_STATE_PENDING {
+		if payload := event.GetExtension(); payload != nil && payload.MessageIs(&r) && payload.UnmarshalTo(&r) == nil && r.State == core.ReviewState_REVIEW_STATE_PENDING {
 			close(entered)
 		}
 	}))

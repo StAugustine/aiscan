@@ -15,6 +15,7 @@ import (
 	"github.com/chainreactors/cyber/core/eventbus"
 	"github.com/chainreactors/cyber/core/events"
 	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/guardrail"
 	"github.com/chainreactors/cyber/core/namespaces"
 	"github.com/chainreactors/cyber/core/proc"
 	"github.com/chainreactors/cyber/core/telemetry"
@@ -77,6 +78,7 @@ func parseObserve(value string) []observeext.Kind {
 
 // aiscanProfile owns one reference-distribution extension graph.
 type aiscanProfile struct {
+	guardrail  *guardrail.Runtime
 	extensions *extension.Set
 	providers  *provider.State
 	events     *events.Stream
@@ -210,6 +212,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 			p.ioa = ioa.Service()
 		}
 		if p.providers, err = extension.Use[*provider.State](scope); err != nil {
+			return err
+		}
+		if p.guardrail, err = extension.Use[*guardrail.Runtime](scope); err != nil {
 			return err
 		}
 		if p.events, err = extension.Use[*events.Stream](scope); err != nil {
@@ -387,4 +392,12 @@ func (p *aiscanProfile) Processes() (*proc.Manager, error) {
 
 func (p *aiscanProfile) Active() bool {
 	return p != nil && p.extensions != nil && p.extensions.Active()
+}
+
+// SetGuardrailMode preserves all running sessions and pending invocations.
+func (p *aiscanProfile) SetGuardrailMode(mode string) error {
+	if !p.Active() || p.guardrail == nil {
+		return fmt.Errorf("guardrail runtime is unavailable")
+	}
+	return p.guardrail.SetMode(guardrail.Mode(mode))
 }

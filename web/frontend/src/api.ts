@@ -235,17 +235,13 @@ export async function activateLLMProfile(id: string): Promise<ConfigView> {
   }
 }
 
-export async function setGuardrailEnabled(enabled: boolean): Promise<ConfigView> {
-  const current = await getConfigStatus()
-  return saveConfig(create(DistributeConfigSchema, {
-    extensions: { jev: { ...current.extensions.jev?.values, enabled } },
-  }))
-}
-
+// Keep the installed policy warm: interaction-mode edits do not reload agents.
 export async function setGuardrailMode(mode: 'safe' | 'auto'): Promise<ConfigView> {
   const current = await getConfigStatus()
   return saveConfig(create(DistributeConfigSchema, {
-    extensions: { guardrail: { ...current.extensions.guardrail?.values, mode } },
+    extensions: {
+      guardrail: { ...current.extensions.guardrail?.values, mode },
+    },
   }))
 }
 
@@ -402,7 +398,7 @@ export async function executeChatCommand(sessionID: string, line: string, reques
 }
 
 async function requestGuardrail(request: GuardrailProtocolMessage): Promise<GuardrailProtocolMessage> {
-  const response = await aopClient.request(GuardrailProtocolMessageSchema, request)
+  const response = await aopClient.request(GuardrailProtocolMessageSchema, request, { timeoutMs: 12_000, requireConnected: request.message.case === 'resolve' })
   if (response.$typeName === 'aop.ProtocolMessage') {
     const core = response as AOPProtocolMessage
     if (core.message.case === 'protocolError') throw new Error(core.message.value.message)

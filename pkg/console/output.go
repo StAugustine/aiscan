@@ -345,7 +345,7 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 	switch payload := event.Payload.(type) {
 	case *aop.Event_Extension:
 		var review guardrail.Review
-		if ok, err := aop.FindTypedExtension(event, &review); !ok || err != nil || review.State != guardrail.ReviewState_REVIEW_STATE_PENDING {
+		if payload.Extension == nil || !payload.Extension.MessageIs(&review) || payload.Extension.UnmarshalTo(&review) != nil || review.State != guardrail.ReviewState_REVIEW_STATE_PENDING {
 			return
 		}
 		// Approval is a control command and remains usable while the turn waits.

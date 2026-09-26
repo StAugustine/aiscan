@@ -9,6 +9,7 @@ import (
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
 	ioaserver "github.com/chainreactors/cyber/pkg/exts/ioa/server"
+	"github.com/chainreactors/cyber/pkg/exts/jev"
 	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -292,6 +293,7 @@ func configAPI() managementapi.ConfigOptions {
 	sections := defaultSections()
 	return managementapi.ConfigOptions{Sections: sections, Project: func(config *types.DistributeConfig, view *types.ConfigView) {
 		ioaclient.RedactView(view)
+		jev.ProjectView(view)
 		if ext := view.Extensions[ioaserver.ConfigKey]; ext != nil && ext.Values != nil {
 			value := ext.Values.Fields["url"].GetStringValue()
 			if u, err := url.Parse(value); err == nil {

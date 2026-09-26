@@ -19,13 +19,13 @@ import (
 const ConfigKey = "guardrail"
 
 type Config struct {
-	Mode          core.Mode `config:"mode" json:"mode" description:"safe waits for human authorization; auto returns intercepted calls to the LLM (default safe)"`
+	Mode          core.Mode `config:"mode" json:"mode" description:"auto asks the policy provider to assess consequences (default); safe asks a human; screening always applies"`
 	ReviewTimeout string    `config:"review_timeout" json:"review_timeout" description:"Maximum wait for tool approval (default 5m)"`
 }
 
 func (c Config) timeout() (time.Duration, error) {
-	if c.Mode != "" && c.Mode != core.ModeSafe && c.Mode != core.ModeAuto {
-		return 0, fmt.Errorf("guardrail mode must be safe or auto")
+	if c.Mode != "" && c.Mode != core.ModeSafe && c.Mode != core.ModeAuto && c.Mode != core.ModeOff {
+		return 0, fmt.Errorf("guardrail mode must be safe, auto or off")
 	}
 	if c.ReviewTimeout == "" {
 		return 5 * time.Minute, nil
@@ -38,7 +38,7 @@ func (c Config) timeout() (time.Duration, error) {
 }
 
 func Declare(resources *resource.Registry) error {
-	_, err := resource.Add[cfg.Section](resources, cfg.Section{Key: ConfigKey, New: func() any { return &Config{Mode: core.ModeSafe, ReviewTimeout: "5m"} }, Validate: func(v any) error { _, err := v.(*Config).timeout(); return err }})
+	_, err := resource.Add[cfg.Section](resources, cfg.Section{Key: ConfigKey, New: func() any { return &Config{Mode: core.ModeAuto, ReviewTimeout: "5m"} }, Validate: func(v any) error { _, err := v.(*Config).timeout(); return err }})
 	return err
 }
 

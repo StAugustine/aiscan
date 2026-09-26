@@ -98,6 +98,15 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 				if applied != nil && proto.Equal(applied, distributed) {
 					return reloadStatus(current)
 				}
+				if mode, onlyMode := cfg.GuardrailModeChange(applied, distributed); onlyMode {
+					if target, ok := current.(interface{ SetGuardrailMode(string) error }); ok {
+						if err := target.SetGuardrailMode(mode); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						applied = proto.CloneOf(distributed)
+						return reloadStatus(current)
+					}
+				}
 				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
 				var next profile.Profile
 				if err == nil {

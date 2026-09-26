@@ -16,13 +16,13 @@ const endpoint = "https://api.typesafe.ai/v1/systemone"
 const defaultModel = "jev-1.13.0"
 
 type Config struct {
-	Enabled  bool              `config:"enabled" json:"enabled" description:"Enable JEV tool admission checks"`
+	Enabled  bool              `config:"enabled" json:"enabled" description:"Legacy activation flag; configuring an API key always enables JEV"`
 	APIKey   string            `config:"api_key" json:"api_key" description:"TypeSafe API key (or TYPESAFE_API_KEY)"`
 	Model    string            `config:"model" json:"model"`
 	Level    string            `config:"level" json:"level" description:"permissive, standard, or strict"`
 	Timeout  string            `config:"timeout" json:"timeout" description:"Total request budget including retries"`
-	OnError  string            `config:"on_error" json:"on_error" description:"record, review, or block on provider failure"`
-	Criteria map[string]string `config:"criteria" json:"criteria" description:"Operator overrides for record/review/block criteria"`
+	OnError  string            `config:"on_error" json:"on_error" description:"review or block on screening failure; automatic consequence assessment always fails closed"`
+	Criteria map[string]string `config:"criteria" json:"criteria" description:"Stage 1 risk-screen overrides for record/review/block criteria"`
 }
 
 func defaults(c Config) Config {
@@ -94,18 +94,26 @@ func action(value string) guardrail.Action {
 
 var presets = map[string]map[string]string{
 	"permissive": {
-		"record": "Low-risk or reversible work within clearly established authorization.",
-		"review": "Possible business impact, intensive activity, or uncertain effects or authorization.",
+		"record": "Read-only work or low-rate authorized observation with no writes, state changes, destructive effects or disclosure.",
+		"review": "Any local or remote write, state change or other side effect, even if bounded or reversible; possible business impact, intensive activity, or uncertain effects or authorization.",
 		"block":  "Destructive activity, actions outside authorized scope, credential/data exfiltration, or explicit harm.",
 	},
 	"standard": {
-		"record": "Local analysis and reporting, passive inspection, or low-rate probes of explicitly authorized targets with no target changes.",
-		"review": "Target changes, high intensity scans, exploit execution, possible service impact, or uncertain effects or authorization.",
+		"record": "Read-only local analysis, output to stdout, passive inspection, or low-rate probes of explicitly authorized targets with no writes or state changes.",
+		"review": "Any local or remote write or state change, even if reversible; high intensity scans, exploit execution, possible service impact, or uncertain effects or authorization.",
 		"block":  "Destruction, persistence, denial of service, actions outside authorized scope, data leakage, or explicit harm.",
 	},
 	"strict": {
-		"record": "Passive inspection and low-risk local analysis or reporting only.",
-		"review": "Active probes of explicitly authorized targets without target changes.",
+		"record": "Passive inspection and read-only local analysis without writes or state changes.",
+		"review": "Local writes or other reversible local side effects; active probes of explicitly authorized targets without target changes.",
 		"block":  "Target changes, unknown effects or authorization, destructive activity, data leakage, or possible service harm.",
 	},
+}
+
+// Separate from operator screening rules: flagging a class of operations does
+// not predetermine the consequences of one concrete invocation.
+var consequenceCriteria = map[string]string{
+	"record": "The actual invocation is demonstrably harmless: no destructive, irreversible, disruptive, out-of-scope or disclosure consequences. Any local side effects are bounded and reversible with no enterprise impact.",
+	"review": "Actual consequences remain uncertain: affected targets, authorization, reversibility, data sensitivity or service impact cannot be established from the invocation. Do not execute.",
+	"block":  "The actual invocation would destroy or irreversibly alter data, disrupt services, expose secrets, persist access, act outside established authorization, or otherwise cause harm. Do not execute.",
 }

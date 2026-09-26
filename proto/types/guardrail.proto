@@ -30,6 +30,8 @@ message Review {
   Decision decision = 4;
   ReviewState state = 5;
   google.protobuf.Timestamp expires_at = 6;
+  // Trusted resolving adapter, not an asserted user identity. Empty for older records.
+  string resolution_source = 7;
 }
 message PendingRequest { string session_id = 1; }
 message PendingResponse { repeated Review reviews = 1; }

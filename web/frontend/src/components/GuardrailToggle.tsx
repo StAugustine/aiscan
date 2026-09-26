@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Bot, ShieldCheck, ShieldOff, UserRound } from 'lucide-react'
-import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
+import { ChevronDown, ShieldCheck, ShieldOff, Loader2 } from 'lucide-react'
+import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
 import { cn } from '@cyber/theme'
-import { CONFIG_CHANGED_EVENT, getConfigStatus, setGuardrailEnabled, setGuardrailMode } from '../api'
+import { CONFIG_CHANGED_EVENT, getConfigStatus, setGuardrailMode } from '../api'
 
 export function GuardrailToggle({ disabled = false }: { disabled?: boolean }) {
   const { t } = useTranslation('app')
   const [enabled, setEnabled] = useState<boolean | null>(null)
-  const [mode, setMode] = useState<'safe' | 'auto'>('safe')
+  const [mode, setMode] = useState<'safe' | 'auto'>('auto')
+  const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -16,8 +17,9 @@ export function GuardrailToggle({ disabled = false }: { disabled?: boolean }) {
     const refresh = () => {
       void getConfigStatus().then(config => {
         if (!disposed) {
-          setEnabled(config.extensions.jev?.values?.enabled === true)
-          setMode(config.extensions.guardrail?.values?.mode === 'auto' ? 'auto' : 'safe')
+          setError('')
+          setEnabled(config.extensions.jev?.configuredSecrets.includes('api_key') === true)
+          setMode(config.extensions.guardrail?.values?.mode === 'safe' ? 'safe' : 'auto')
         }
       }).catch(cause => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)) })
     }
@@ -25,41 +27,43 @@ export function GuardrailToggle({ disabled = false }: { disabled?: boolean }) {
     window.addEventListener(CONFIG_CHANGED_EVENT, refresh)
     return () => { disposed = true; window.removeEventListener(CONFIG_CHANGED_EVENT, refresh) }
   }, [])
-  const update = async (nextMode?: 'safe' | 'auto') => {
-    if (enabled === null || saving) return
+  const update = async (nextMode: 'safe' | 'auto') => {
+    if (!enabled || saving || nextMode === mode) return
+    setOpen(false)
     setSaving(true)
     setError('')
     try {
-      const config = await (nextMode ? setGuardrailMode(nextMode) : setGuardrailEnabled(!enabled))
-      setEnabled(config.extensions.jev?.values?.enabled === true)
-      setMode(config.extensions.guardrail?.values?.mode === 'auto' ? 'auto' : 'safe')
+      const config = await setGuardrailMode(nextMode)
+      setEnabled(config.extensions.jev?.configuredSecrets.includes('api_key') === true)
+      setMode(config.extensions.guardrail?.values?.mode === 'safe' ? 'safe' : 'auto')
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
     finally { setSaving(false) }
   }
-  const label = t(saving ? 'guardrailSaving' : enabled ? 'guardrailOn' : 'guardrailOff')
+  const value = enabled ? mode : 'unconfigured'
+  const label = t(saving ? 'guardrailSaving' : enabled === null ? 'guardrailLoading' : 'guardrailChoice_' + value)
   const Icon = enabled ? ShieldCheck : ShieldOff
-  const ModeIcon = mode === 'safe' ? UserRound : Bot
-  return <div className="relative flex shrink-0 items-center gap-1">
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button type="button" role="switch" aria-label={t('guardrailSwitch')} aria-checked={enabled === true} aria-busy={saving}
-          variant="ghost" size="xs" disabled={disabled || saving || enabled === null} onClick={() => { void update() }}
-          className={cn('h-7 gap-1.5 rounded-md border px-2', enabled ? 'border-emerald-600/40 text-emerald-700 dark:text-emerald-400' : 'border-border text-muted-foreground')}>
-          <Icon className="h-3.5 w-3.5" /><span className="hidden text-xs sm:inline">{label}</span>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{t('guardrailSwitchHint')}</TooltipContent>
-    </Tooltip>
-    {enabled && <Tooltip>
-      <TooltipTrigger asChild>
-        <Button type="button" aria-label={t('guardrailModeSwitch', { mode: t('guardrailMode_' + mode) })}
-          variant="ghost" size="xs" disabled={disabled || saving} onClick={() => { void update(mode === 'safe' ? 'auto' : 'safe') }}
-          className="h-7 gap-1 rounded-md border border-border px-2 text-muted-foreground">
-          <ModeIcon className="h-3.5 w-3.5" /><span className="hidden text-xs sm:inline">{t('guardrailMode_' + mode)}</span>
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent>{t('guardrailModeHint_' + mode)}</TooltipContent>
-    </Tooltip>}
+  return <div className="relative flex shrink-0 items-center">
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" aria-label={t('guardrailControl', { mode: label })} aria-busy={saving}
+              data-guardrail-control variant="ghost" size="xs" disabled={disabled || saving || enabled === null}
+              className={cn('h-7 gap-1.5 rounded-md border px-2', enabled ? 'border-emerald-600/40 text-emerald-700 dark:text-emerald-400' : 'border-border text-muted-foreground')}>
+              {saving || enabled === null ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Icon className="h-3.5 w-3.5" aria-hidden="true" />}<span className="hidden text-xs sm:inline">{label}</span><ChevronDown className="h-3 w-3" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs text-wrap">{t('guardrailSwitchHint')}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-44">
+        {!enabled && <p className="px-2 py-1.5 text-xs text-muted-foreground">{t('guardrailConfigureHint')}</p>}
+        <DropdownMenuRadioGroup value={mode} onValueChange={next => { void update(next as 'safe' | 'auto') }}>
+          <DropdownMenuRadioItem value="auto" disabled={!enabled}>{t('guardrailMode_auto')}</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="safe" disabled={!enabled}>{t('guardrailMode_safe')}</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
     {error && <div role="alert" className="absolute right-0 top-9 z-[80] w-80 rounded-md border border-destructive/40 bg-background p-3 text-xs text-destructive shadow-lg">
       {error}<button type="button" className="ml-2 underline" onClick={() => setError('')}>{t('closePanel')}</button>
     </div>}

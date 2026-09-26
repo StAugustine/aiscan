@@ -1,4 +1,8 @@
 export default {
+  needsAttention: 'Needs attention',
+  pendingApprovals: '{{count}} pending approvals',
+  sessionsNeedAttention: '{{count}} sessions need attention',
+
   newTask: 'New task',
   tasks: 'Tasks',
   nodes: 'Nodes',

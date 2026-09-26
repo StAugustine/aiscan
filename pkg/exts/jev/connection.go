@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -12,7 +13,27 @@ import (
 	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
 	"github.com/chainreactors/cyber/core/types"
 	cfg "github.com/chainreactors/cyber/pkg/config"
+	"google.golang.org/protobuf/types/known/structpb"
 )
+
+// ProjectView exposes only presence of an environment credential. The settings
+// document remains unchanged and the key never enters its editable values.
+func ProjectView(view *types.ConfigView) {
+	if strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")) == "" {
+		return
+	}
+	if view.Extensions == nil {
+		view.Extensions = make(map[string]*types.ExtensionView)
+	}
+	entry := view.Extensions[ConfigKey]
+	if entry == nil {
+		entry = &types.ExtensionView{Values: &structpb.Struct{Fields: map[string]*structpb.Value{}}}
+		view.Extensions[ConfigKey] = entry
+	}
+	if !slices.Contains(entry.ConfiguredSecrets, "api_key") {
+		entry.ConfiguredSecrets = append(entry.ConfiguredSecrets, "api_key")
+	}
+}
 
 // testConnection judges an inert local-read description. It never executes a
 // tool, and uses judge directly so a fallback cannot masquerade as API success.

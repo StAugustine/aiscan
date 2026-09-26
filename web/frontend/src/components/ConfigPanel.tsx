@@ -746,20 +746,16 @@ function GuardrailTab({ form, setForm, cs }: TabProps) {
   const value = (key: string, fallback = '') => typeof jev[key] === 'string' ? jev[key] as string : fallback
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <div className="sm:col-span-2 flex items-center justify-between rounded-md border border-border p-3">
-        <label htmlFor="jev-enabled" className="text-sm font-medium">{t('guardrailEnabled')}</label>
-        <Switch id="jev-enabled" checked={jev.enabled === true} onCheckedChange={checked => update('enabled', checked)} />
-      </div>
       <Callout className="sm:col-span-2">{t('guardrailReloadHint')}</Callout>
       <Field label={t('guardrailMode')}>
-        <Select value={String(form.extensions.guardrail?.mode ?? 'safe')} onValueChange={mode => {
+        <Select value={form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'} onValueChange={mode => {
           setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, mode } } }))
         }}>
           <SelectTrigger aria-label={t('guardrailMode')} className="h-9 w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>{['safe', 'auto'].map(mode => <SelectItem key={mode} value={mode}>{t('guardrailMode_' + mode)}</SelectItem>)}</SelectContent>
+          <SelectContent>{['auto', 'safe'].map(mode => <SelectItem key={mode} value={mode}>{t('guardrailMode_' + mode)}</SelectItem>)}</SelectContent>
         </Select>
       </Field>
-      <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'auto' ? 'auto' : 'safe'))}</p>
+      <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'))}</p>
       <Field label={t('jevApiKey')}>
         <Input type="password" autoComplete="new-password" value={value('api_key')} onChange={e => update('api_key', e.target.value)}
           placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'} />
@@ -771,9 +767,9 @@ function GuardrailTab({ form, setForm, cs }: TabProps) {
         </Select>
       </Field>
       <Field label={t('guardrailOnError')}>
-        <Select value={value('on_error', 'block')} onValueChange={v => update('on_error', v)}>
+        <Select value={value('on_error', 'block') === 'record' ? 'review' : value('on_error', 'block')} onValueChange={v => update('on_error', v)}>
           <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
-          <SelectContent>{['block', 'review', 'record'].map(v => <SelectItem key={v} value={v}>{t('guardrailAction_' + v)}</SelectItem>)}</SelectContent>
+          <SelectContent>{['block', 'review'].map(v => <SelectItem key={v} value={v}>{t('guardrailAction_' + v)}</SelectItem>)}</SelectContent>
         </Select>
       </Field>
       <Field label={t('guardrailModel')}><Input value={value('model', 'jev-1.13.0')} onChange={e => update('model', e.target.value)} /></Field>

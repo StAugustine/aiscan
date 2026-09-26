@@ -187,15 +187,17 @@ func (x *Decision) GetReason() string {
 }
 
 type Review struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Call          *aop.ToolCall          `protobuf:"bytes,1,opt,name=call,proto3" json:"call,omitempty"`
-	Operation     *operation.Ref         `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"`
-	SessionId     string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Decision      *Decision              `protobuf:"bytes,4,opt,name=decision,proto3" json:"decision,omitempty"`
-	State         ReviewState            `protobuf:"varint,5,opt,name=state,proto3,enum=cyber.guardrail.ReviewState" json:"state,omitempty"`
-	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Call      *aop.ToolCall          `protobuf:"bytes,1,opt,name=call,proto3" json:"call,omitempty"`
+	Operation *operation.Ref         `protobuf:"bytes,2,opt,name=operation,proto3" json:"operation,omitempty"`
+	SessionId string                 `protobuf:"bytes,3,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Decision  *Decision              `protobuf:"bytes,4,opt,name=decision,proto3" json:"decision,omitempty"`
+	State     ReviewState            `protobuf:"varint,5,opt,name=state,proto3,enum=cyber.guardrail.ReviewState" json:"state,omitempty"`
+	ExpiresAt *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	// Trusted resolving adapter, not an asserted user identity. Empty for older records.
+	ResolutionSource string `protobuf:"bytes,7,opt,name=resolution_source,json=resolutionSource,proto3" json:"resolution_source,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Review) Reset() {
@@ -268,6 +270,13 @@ func (x *Review) GetExpiresAt() *timestamppb.Timestamp {
 		return x.ExpiresAt
 	}
 	return nil
+}
+
+func (x *Review) GetResolutionSource() string {
+	if x != nil {
+		return x.ResolutionSource
+	}
+	return ""
 }
 
 type PendingRequest struct {
@@ -575,7 +584,7 @@ const file_types_guardrail_proto_rawDesc = "" +
 	"\x15types/guardrail.proto\x12\x0fcyber.guardrail\x1a\x11aop/content.proto\x1a\x1caop/operation/protocol.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"S\n" +
 	"\bDecision\x12/\n" +
 	"\x06action\x18\x01 \x01(\x0e2\x17.cyber.guardrail.ActionR\x06action\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xa2\x02\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xcf\x02\n" +
 	"\x06Review\x12!\n" +
 	"\x04call\x18\x01 \x01(\v2\r.aop.ToolCallR\x04call\x120\n" +
 	"\toperation\x18\x02 \x01(\v2\x12.aop.operation.RefR\toperation\x12\x1d\n" +
@@ -584,7 +593,8 @@ const file_types_guardrail_proto_rawDesc = "" +
 	"\bdecision\x18\x04 \x01(\v2\x19.cyber.guardrail.DecisionR\bdecision\x122\n" +
 	"\x05state\x18\x05 \x01(\x0e2\x1c.cyber.guardrail.ReviewStateR\x05state\x129\n" +
 	"\n" +
-	"expires_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"/\n" +
+	"expires_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x12+\n" +
+	"\x11resolution_source\x18\a \x01(\tR\x10resolutionSource\"/\n" +
 	"\x0ePendingRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"D\n" +

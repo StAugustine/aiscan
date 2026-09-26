@@ -25,6 +25,8 @@ func TestAutomaticGuardrailKeepsAgentLoopRunning(t *testing.T) {
 					return &guardrail.Decision{Action: action, Reason: "possible business impact"}, nil
 				}
 				return &guardrail.Decision{Action: guardrail.Action_ACTION_RECORD}, nil
+			}, func(context.Context, toolhooks.CallEvent) (*guardrail.Decision, error) {
+				return &guardrail.Decision{Action: guardrail.Action_ACTION_BLOCK, Reason: "confirmed possible business impact"}, nil
 			})
 			toolhooks.Before.On(registry, "guardrail", runtime.Admit)
 			echo := &recordingTool{name: "echo", output: "safe alternative executed"}

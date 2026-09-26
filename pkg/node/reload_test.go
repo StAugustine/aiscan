@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/types/known/structpb"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -210,6 +211,20 @@ func TestRemoteReloadKeepsFailedProfileAndDrainsSuccessfulSwitch(t *testing.T) {
 		if err != nil || !result.GetOk() {
 			failure(fmt.Errorf("same config: %v %v", result, err))
 			return
+		}
+		// Mode-only updates use the same connection/profile and preserve its work.
+		for _, mode := range []string{"auto", "off", "safe"} {
+			values, _ := structpb.NewStruct(map[string]any{"mode": mode})
+			update := &types.DistributeConfig{Agent: &types.AgentConfig{Heartbeat: 1}, Extensions: map[string]*structpb.Struct{"guardrail": values}}
+			if err := send("mode-"+mode, "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{Config: update}}}); err != nil {
+				failure(err)
+				return
+			}
+			result, err := waitReload("mode-" + mode)
+			if err != nil || !result.GetOk() {
+				failure(fmt.Errorf("mode update: %v %v", result, err))
+				return
+			}
 		}
 		mu.Lock()
 		count, old := len(built), built[0]

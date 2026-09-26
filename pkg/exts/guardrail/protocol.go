@@ -54,6 +54,7 @@ func protocolHandler(runtime *core.Runtime, sessions *agentsession.Runtime) aop.
 			if invocation.SessionID == "" {
 				return reply(aop.NewProtocolError("GUARDRAIL_DENIED", "pending review not found in this session"))
 			}
+			invocation.Emitter = "control"
 			if err := runtime.Resolve(operation.ContextWithInvocation(ctx, invocation), resolve.OperationId, resolve.Approve); err != nil {
 				return reply(aop.NewProtocolError("GUARDRAIL_DENIED", err.Error()))
 			}

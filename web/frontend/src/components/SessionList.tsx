@@ -4,7 +4,7 @@ import {
   PanelLeftClose, PanelLeft,
   MessageSquare, Plus, Trash2,
   ChevronDown, ChevronRight, Monitor, Terminal,
-  Unplug, Archive, ArchiveRestore, Pencil, Check, X,
+  Unplug, Archive, ArchiveRestore, Pencil, Check, X, ShieldAlert,
 } from 'lucide-react'
 import {
   Button, Tooltip, TooltipTrigger, TooltipContent,
@@ -27,6 +27,7 @@ interface Props {
   onToggle: () => void
   agents?: AgentView[]
   sessions?: SessionRecord[]
+  pendingReviewCounts?: Record<string, number>
   filters: SessionFilters
   onFilter: (patch: Partial<SessionFilters>) => void
   onUpdateSession: (id: string, patch: { title?: string; archived?: boolean }) => Promise<void>
@@ -42,7 +43,7 @@ interface Props {
 }
 
 export default function SessionList({
-  open, onToggle, agents = [], sessions = [], filters, onFilter,
+  open, onToggle, agents = [], sessions = [], pendingReviewCounts = {}, filters, onFilter,
   activeSessionID, selectedNodeID, terminalNodeID,
   onSelectNode, onSelectSession, onCreateSession, onDeleteSession, onOpenTerminal, onUpdateSession,
 }: Props) {
@@ -174,7 +175,7 @@ export default function SessionList({
                 {(filters.view === 'targets' ? targetGroups : [['', sessions] as [string, SessionRecord[]]]).map(([target, records]) => (
                   <div key={target}>
                     {filters.view === 'targets' && <div className="truncate px-2 py-1 text-xs font-medium" title={target}>{target || t('unlinkedTarget')}</div>}
-                    {records.map((session) => <SessionItem key={recordID(session)} session={session} active={recordID(session) === activeSessionID} onSelect={() => onSelectSession(recordID(session))} onDelete={() => onDeleteSession(recordID(session))} onUpdate={(patch) => onUpdateSession(recordID(session), patch)} />)}
+                    {records.map((session) => <SessionItem key={recordID(session)} session={session} pendingReviews={pendingReviewCounts[recordID(session)] || 0} active={recordID(session) === activeSessionID} onSelect={() => onSelectSession(recordID(session))} onDelete={() => onDeleteSession(recordID(session))} onUpdate={(patch) => onUpdateSession(recordID(session), patch)} />)}
                   </div>
                 ))}
                 {sessions.length === 0 && <p className="p-3 text-xs text-muted-foreground">{t('noMatchingTasks')}</p>}
@@ -197,6 +198,7 @@ export default function SessionList({
                     key={agent.hello?.nodeId}
                     agent={agent}
                     sessions={own}
+                    pendingReviewCounts={pendingReviewCounts}
                     isSelected={agent.hello?.nodeId === selectedNodeID}
                     activeSessionID={activeSessionID}
                     terminalActive={agent.hello?.nodeId === terminalNodeID}
@@ -219,6 +221,7 @@ export default function SessionList({
                         key={g.name}
                         name={g.name}
                         sessions={g.sessions}
+                        pendingReviewCounts={pendingReviewCounts}
                         activeSessionID={activeSessionID}
                         defaultOpen={agents.length === 0 || g.sessions.some((s) => recordID(s) === activeSessionID)}
                         onSelectSession={onSelectSession}
@@ -288,11 +291,12 @@ function SidebarPreferences({ expanded }: { expanded: boolean }) {
 }
 
 function AgentGroup({
-  agent, sessions, isSelected, activeSessionID, terminalActive,
+  agent, sessions, pendingReviewCounts, isSelected, activeSessionID, terminalActive,
   onSelectNode, onSelectSession, onCreateSession, onDeleteSession, onOpenTerminal, onUpdateSession,
 }: {
   agent: AgentView
   sessions: SessionRecord[]
+  pendingReviewCounts: Record<string, number>
   isSelected: boolean
   activeSessionID: string | null
   terminalActive: boolean
@@ -386,6 +390,7 @@ function AgentGroup({
             <SessionItem
               key={recordID(session)}
               session={session}
+              pendingReviews={pendingReviewCounts[recordID(session)] || 0}
               active={recordID(session) === activeSessionID}
               onSelect={() => onSelectSession(recordID(session))}
               onDelete={() => onDeleteSession(recordID(session))}
@@ -399,10 +404,11 @@ function AgentGroup({
 }
 
 function SessionItem({
-  session, active, onSelect, onDelete, onUpdate,
+  session, active, pendingReviews, onSelect, onDelete, onUpdate,
 }: {
   session: SessionRecord
   active: boolean
+  pendingReviews: number
   onSelect: () => void
   onDelete: () => void
   onUpdate: (patch: { title?: string; archived?: boolean }) => Promise<void>
@@ -424,6 +430,8 @@ function SessionItem({
 
   return (
     <div
+      data-session-id={recordID(session)}
+      data-needs-attention={pendingReviews > 0 || undefined}
       className={cn(
         'group flex items-center gap-1.5 rounded-md px-2 py-1 cursor-pointer transition-colors',
         active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -436,10 +444,14 @@ function SessionItem({
       </form> : <>
       <button type="button" onClick={onSelect} className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-1.5">
-          <MessageSquare className="h-2.5 w-2.5 shrink-0" />
+          {pendingReviews > 0 ? <ShieldAlert className="h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
+            : <MessageSquare className="h-2.5 w-2.5 shrink-0" />}
           <span className="truncate text-[11px] font-medium">{title}</span>
         </div>
-        <div className="mt-0.5 text-[9px] text-muted-foreground">{time}</div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
+          {pendingReviews > 0 && <span role="status" aria-label={t('pendingApprovals', { count: pendingReviews })} className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">{t('needsAttention')}{pendingReviews > 1 ? ' · ' + pendingReviews : ''}</span>}
+          <span>{time}</span>
+        </div>
       </button>
       <Button size="icon-xs" variant="ghost" aria-label={t('renameTask')} onClick={() => { setTitleDraft(title); setEditing(true) }}><Pencil className="h-3 w-3" /></Button>
       <Button size="icon-xs" variant="ghost" disabled={saving} aria-label={t(session.archived ? 'restoreTask' : 'archiveTask')} onClick={() => void save({ archived: !session.archived })}>{session.archived ? <ArchiveRestore className="h-3 w-3" /> : <Archive className="h-3 w-3" />}</Button>
@@ -470,10 +482,11 @@ function SessionItem({
 // start a new turn on, so the terminal / new-session actions are omitted. A
 // banner in the chat panel spells out that a reconnect is needed to continue.
 function OfflineAgentGroup({
-  name, sessions, activeSessionID, defaultOpen, onSelectSession, onDeleteSession, onUpdateSession,
+  name, sessions, pendingReviewCounts, activeSessionID, defaultOpen, onSelectSession, onDeleteSession, onUpdateSession,
 }: {
   name: string
   sessions: SessionRecord[]
+  pendingReviewCounts: Record<string, number>
   activeSessionID: string | null
   defaultOpen: boolean
   onSelectSession: (id: string) => void
@@ -513,6 +526,7 @@ function OfflineAgentGroup({
             <SessionItem
               key={recordID(session)}
               session={session}
+              pendingReviews={pendingReviewCounts[recordID(session)] || 0}
               active={recordID(session) === activeSessionID}
               onSelect={() => onSelectSession(recordID(session))}
               onDelete={() => onDeleteSession(recordID(session))}

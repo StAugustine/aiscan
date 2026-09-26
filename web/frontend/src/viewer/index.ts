@@ -16,7 +16,10 @@ export interface SubagentRunTimelineItem {
   items: ViewerTimelineItem[]
 }
 
-export type ViewerTimelineItem = CyberTimelineItem | SubagentRunTimelineItem
+// Host presentation only: reuse timeline entries inside an approved tool turn.
+export type ViewerTimelineItem = Exclude<CyberTimelineItem, { kind: 'assistant_response' }>
+  | (Extract<CyberTimelineItem, { kind: 'assistant_response' }> & { steps?: CyberTimelineItem[] })
+  | SubagentRunTimelineItem
 
 export {
   stripAnsiControl,

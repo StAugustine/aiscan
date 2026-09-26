@@ -9,6 +9,7 @@ import (
 
 	"github.com/chainreactors/cyber/core/extension"
 	types "github.com/chainreactors/cyber/core/types"
+	cfg "github.com/chainreactors/cyber/pkg/config"
 	profile "github.com/chainreactors/cyber/pkg/profile"
 	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	"google.golang.org/protobuf/proto"
@@ -95,6 +96,24 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 	}
 	if proto.Equal(current, prepared.Config) {
 		return s.api.Config.View(ctx)
+	}
+	if mode, onlyMode := cfg.GuardrailModeChange(current, prepared.Config); onlyMode {
+		s.appMu.Lock()
+		target, supported := s.profile.(interface{ SetGuardrailMode(string) error })
+		s.appMu.Unlock()
+		if supported {
+			if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+				return nil, err
+			}
+			committed = true
+			if err := target.SetGuardrailMode(mode); err != nil {
+				return nil, fmt.Errorf("apply guardrail mode: %w", err)
+			}
+			if s.agents != nil {
+				s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))
+			}
+			return s.api.Config.View(ctx)
+		}
 	}
 	// Candidate cleanup has its own budget: the request may already be canceled.
 	// An unfinished candidate remains owned here for Close or the next Save.

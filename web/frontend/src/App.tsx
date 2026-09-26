@@ -19,7 +19,7 @@ import type { IOAMessage, IOANode, LLMProviderView, ServerStatus } from './api'
 import type { SCONode } from '@cyber/cstx-easm'
 import type { MentionPopupApi } from './viewer'
 import { useChatSession } from './hooks/useChatSession'
-import { GuardrailReviews } from './components/GuardrailReviews'
+import { useGuardrailReviews } from './hooks/useGuardrailReviews'
 import { GuardrailToggle } from './components/GuardrailToggle'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
@@ -55,6 +55,15 @@ export default function App() {
   const { t: tc } = useTranslation('chat')
   const confirm = useConfirm()
   const chat = useChatSession()
+  const guardrailSessions = useMemo(() => {
+    const online = new Set(chat.agents.map(agent => agent.hello?.nodeId))
+    const ids = chat.sessions.filter(record => online.has(record.session?.nodeId) && record.session?.state !== 'closed')
+      .map(record => record.session?.id || '').filter(Boolean)
+    if (chat.activeSessionID && !ids.includes(chat.activeSessionID)) ids.push(chat.activeSessionID)
+    return ids
+  }, [chat.agents, chat.sessions, chat.activeSessionID])
+  const guardrails = useGuardrailReviews(guardrailSessions, chat.activeSessionID)
+  const pendingReviewCounts = useMemo(() => Object.fromEntries(Object.entries(guardrails.bySession).map(([id, reviews]) => [id, reviews.length])), [guardrails.bySession])
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null)
   const [llmProfiles, setLLMProfiles] = useState<LLMProviderView[]>([])
   const [activeLLMProfile, setActiveLLMProfile] = useState('')
@@ -285,6 +294,7 @@ export default function App() {
             onToggle={() => setSidebarOpen(!sidebarOpen)}
             agents={chat.agents}
             sessions={chat.sessions}
+            pendingReviewCounts={pendingReviewCounts}
             filters={chat.sessionFilters}
             onFilter={chat.filterSessions}
             onUpdateSession={chat.updateSession}
@@ -300,6 +310,9 @@ export default function App() {
 
           <ChatPanel
             timeline={chat.timeline}
+            guardrailUnavailable={guardrails.unavailable[chat.activeSessionID || ''] === true}
+            guardrailReviews={guardrails.bySession[chat.activeSessionID || ''] || []}
+            onResolveGuardrail={(review, approve) => guardrails.resolve(chat.activeSessionID!, review, approve)}
             aopEvents={chat.aopEvents}
             scanResults={chat.scanResults}
             isThinking={chat.isThinking}
@@ -322,7 +335,6 @@ export default function App() {
             onPause={chat.cancelMessage}
             onClearError={chat.clearError}
           />
-          <GuardrailReviews key={chat.activeSessionID} sessionId={chat.activeSessionID} />
         </div>
       </div>
 

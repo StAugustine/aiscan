@@ -51,7 +51,7 @@ func consoleBindings(runtime *core.Runtime, sessions *agentsession.Runtime) *api
 				if owner == "" {
 					return fmt.Errorf("pending review not found in this session")
 				}
-				ctx := operation.ContextWithInvocation(cmd.Context(), operation.Invocation{SessionID: owner})
+				ctx := operation.ContextWithInvocation(cmd.Context(), operation.Invocation{SessionID: owner, Emitter: "cli"})
 				if err := runtime.Resolve(ctx, args[0], verb == "approve"); err != nil {
 					return err
 				}

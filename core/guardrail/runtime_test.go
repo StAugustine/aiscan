@@ -28,12 +28,21 @@ func fixture(t *testing.T, timeout time.Duration, modes ...Mode) (*Runtime, *hoo
 	reviews := make(chan *Review, 64)
 	stream.Observe(testObserver(func(event *aop.Event) {
 		var review Review
-		if ok, err := aop.FindTypedExtension(event, &review); ok && err == nil {
+		if extension := event.GetExtension(); extension != nil && extension.MessageIs(&review) && extension.UnmarshalTo(&review) == nil {
 			reviews <- &review
 		}
-		// Canonical Any payloads must survive the existing JSONL serialization.
-		if _, err := protojson.Marshal(event); err != nil {
+		// A payload is required by the Web event broker and durable transcript.
+		if event.GetExtension() == nil {
+			t.Error("guardrail event is missing its durable extension payload")
+		}
+		encoded, err := protojson.Marshal(event)
+		if err != nil {
 			t.Errorf("serialize guardrail event: %v", err)
+			return
+		}
+		var restored aop.Event
+		if err := protojson.Unmarshal(encoded, &restored); err != nil || restored.GetExtension() == nil {
+			t.Errorf("restore guardrail event: %v", err)
 		}
 	}))
 	mode := ModeSafe
@@ -57,7 +66,7 @@ func register(t *testing.T, r *Runtime, action Action) *hooks.Subscription {
 	t.Helper()
 	s, err := r.Register("test", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		return &Decision{Action: action, Reason: "policy"}, nil
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +103,7 @@ func TestAdmissionFailuresNeverExecute(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r, registry, _ := fixture(t, time.Second, ModeAuto)
-			if _, err := r.Register("broken", test.check); err != nil {
+			if _, err := r.Register("broken", test.check, nil); err != nil {
 				t.Fatal(err)
 			}
 			_, err := toolhooks.Execute(callContext(), registry, "shell", "{}", func(context.Context, string) (*aop.ToolResult, error) {
@@ -138,18 +147,18 @@ func TestMergeOrderAndSnapshotIsolation(t *testing.T) {
 		ev.Call.Name = "mutated"
 		ev.Operation.OperationId = "mutated"
 		return &Decision{Action: Action_ACTION_REVIEW}, nil
-	})
+	}, nil)
 	_, _ = r.Register("block", func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
 		seen++
 		if ev.Call.Name != "shell" || ev.Operation.OperationId != "op" {
 			t.Error("shared snapshot")
 		}
 		return &Decision{Action: Action_ACTION_BLOCK, Reason: "first block"}, nil
-	})
+	}, nil)
 	_, _ = r.Register("unreachable", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		t.Error("block did not short circuit")
 		return nil, nil
-	})
+	}, nil)
 	ev := toolhooks.CallEvent{Call: &aop.ToolCall{Name: "shell"}, Operation: &operationpb.Ref{OperationId: "op"}}
 	result, err := r.Admit(callContext(), ev)
 	if err != nil || !errors.Is(result.Deny, operation.ErrDenied) || seen != 1 {
@@ -166,7 +175,7 @@ func TestApprovalResumesExactlyOneInvocation(t *testing.T) {
 	_, _ = r.Register("review", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		judged.Add(1)
 		return &Decision{Action: Action_ACTION_REVIEW}, nil
-	})
+	}, nil)
 	run := func(_ context.Context, args string) (*aop.ToolResult, error) {
 		if args != `{"token":"dummy","command":"read"}` {
 			t.Error("executable arguments changed")
@@ -278,7 +287,7 @@ func TestCloseCancelsActiveCheck(t *testing.T) {
 		close(started)
 		<-ctx.Done()
 		return &Decision{Action: Action_ACTION_RECORD}, nil
-	})
+	}, nil)
 	done := make(chan error, 1)
 	go func() {
 		_, err := toolhooks.Execute(callContext(), registry, "shell", "{}", func(context.Context, string) (*aop.ToolResult, error) {
@@ -366,14 +375,14 @@ func TestSynchronousObserverCanResolveAndTieUsesFirstDecision(t *testing.T) {
 	for _, reason := range []string{"first", "second"} {
 		_, err := r.Register(reason, func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 			return &Decision{Action: Action_ACTION_REVIEW, Reason: reason}, nil
-		})
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	stream.Observe(testObserver(func(event *aop.Event) {
 		var review Review
-		if ok, _ := aop.FindTypedExtension(event, &review); !ok || review.State != ReviewState_REVIEW_STATE_PENDING {
+		if extension := event.GetExtension(); extension == nil || !extension.MessageIs(&review) || extension.UnmarshalTo(&review) != nil || review.State != ReviewState_REVIEW_STATE_PENDING {
 			return
 		}
 		if review.Decision.Reason != "first" {
@@ -398,5 +407,88 @@ func TestSynchronousObserverCanResolveAndTieUsesFirstDecision(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("synchronous observer deadlocked")
+	}
+}
+
+func TestModeChangesPreserveWaitingInvocation(t *testing.T) {
+	r, registry, reviews := fixture(t, time.Second*5)
+	register(t, r, Action_ACTION_REVIEW)
+	var executions atomic.Int32
+	run := func(context.Context, string) (*aop.ToolResult, error) {
+		executions.Add(1)
+		return &aop.ToolResult{}, nil
+	}
+	done := make(chan error, 1)
+	go func() { _, err := toolhooks.Execute(callContext(), registry, "bash", "{}", run); done <- err }()
+	pending := nextReview(t, reviews)
+	for _, mode := range []Mode{ModeAuto, ModeOff, ModeSafe} {
+		if err := r.SetMode(mode); err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Pending("session")) != 1 || executions.Load() != 0 {
+			t.Fatal("mode switch released or canceled pending call")
+		}
+		select {
+		case <-done:
+			t.Fatal("pending invocation ended")
+		default:
+		}
+	}
+	if err := r.SetMode(ModeAuto); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toolhooks.Execute(callContext(), registry, "bash", "{}", run); !errors.Is(err, operation.ErrDenied) {
+		t.Fatalf("new auto call = %v", err)
+	}
+	_ = nextReview(t, reviews) // automatic denial is an audit record, not a pending review
+	resolveContext := operation.ContextWithInvocation(callContext(), operation.Invocation{SessionID: "session", Emitter: "control"})
+	if err := r.Resolve(resolveContext, pending.Operation.OperationId, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil || executions.Load() != 1 {
+		t.Fatalf("approved call: %v, executions=%d", err, executions.Load())
+	}
+	if terminal := nextReview(t, reviews); terminal.ResolutionSource != "control" {
+		t.Fatal("resolution source missing")
+	}
+	if err := r.SetMode(ModeOff); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := toolhooks.Execute(callContext(), registry, "bash", "{}", run); !errors.Is(err, operation.ErrDenied) || executions.Load() != 1 {
+		t.Fatal("legacy off bypassed mandatory screening")
+	}
+	if err := r.SetMode("invalid"); err == nil {
+		t.Fatal("invalid mode accepted")
+	}
+}
+
+func TestRepeatedAutoInterceptionsAreScopedAndRechecked(t *testing.T) {
+	r, registry, _ := fixture(t, time.Second, ModeAuto)
+	var checks atomic.Int32
+	_, err := r.Register("risk", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+		checks.Add(1)
+		return &Decision{Action: Action_ACTION_BLOCK, Reason: "policy"}, nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(context.Context, string) (*aop.ToolResult, error) { t.Fatal("denied call ran"); return nil, nil }
+	for _, tc := range []struct{ session, turn, args, count string }{
+		{"a", "one", `{"cmd":"echo x","x":1}`, "1 identical"},
+		{"a", "one", `{ "x":1, "cmd":"echo x" }`, "2 identical"},
+		{"a", "two", `{"cmd":"echo x","x":1}`, "1 identical"},
+		{"b", "one", `{"cmd":"echo x","x":1}`, "1 identical"},
+	} {
+		ctx := operation.ContextWithInvocation(t.Context(), operation.Invocation{SessionID: tc.session, TurnID: tc.turn, CallID: "same"})
+		_, err := toolhooks.Execute(ctx, registry, "bash", tc.args, run)
+		if !errors.Is(err, operation.ErrDenied) || !strings.Contains(err.Error(), tc.count) {
+			t.Fatalf("feedback = %v", err)
+		}
+		if ctx.Err() != nil {
+			t.Fatal("interception canceled the agent context")
+		}
+	}
+	if checks.Load() != 4 {
+		t.Fatal("risk checks were cached")
 	}
 }
