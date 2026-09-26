@@ -80,3 +80,12 @@ export {
   SystemStatusSchema,
   type SystemStatus,
 } from './gen/types/system_pb.js'
+export {
+  ProtocolMessageSchema as GuardrailProtocolMessageSchema,
+  DecisionSchema as GuardrailDecisionSchema,
+  ReviewSchema,
+  ReviewState,
+  Action as GuardrailAction,
+  type ProtocolMessage as GuardrailProtocolMessage,
+  type Review,
+} from './gen/types/guardrail_pb.js'

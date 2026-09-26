@@ -1,0 +1,49 @@
+syntax = "proto3";
+package cyber.guardrail;
+import "aop/content.proto";
+import "aop/operation/protocol.proto";
+import "google/protobuf/timestamp.proto";
+option go_package = "github.com/chainreactors/cyber/core/guardrail;guardrail";
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_RECORD = 1;
+  ACTION_REVIEW = 2;
+  ACTION_BLOCK = 3;
+}
+message Decision {
+  Action action = 1;
+  string reason = 2;
+}
+enum ReviewState {
+  REVIEW_STATE_UNSPECIFIED = 0;
+  REVIEW_STATE_PENDING = 1;
+  REVIEW_STATE_APPROVED = 2;
+  REVIEW_STATE_REJECTED = 3;
+  REVIEW_STATE_EXPIRED = 4;
+  REVIEW_STATE_CANCELED = 5;
+}
+message Review {
+  aop.ToolCall call = 1;
+  aop.operation.Ref operation = 2;
+  string session_id = 3;
+  Decision decision = 4;
+  ReviewState state = 5;
+  google.protobuf.Timestamp expires_at = 6;
+}
+message PendingRequest { string session_id = 1; }
+message PendingResponse { repeated Review reviews = 1; }
+message ResolveRequest {
+  string session_id = 1;
+  string operation_id = 2;
+  bool approve = 3;
+}
+message ResolveResponse {}
+message ProtocolMessage {
+  oneof message {
+    PendingRequest pending = 1;
+    PendingResponse pending_result = 2;
+    ResolveRequest resolve = 3;
+    ResolveResponse resolved = 4;
+  }
+}

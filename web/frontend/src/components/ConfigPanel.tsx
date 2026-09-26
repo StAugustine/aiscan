@@ -90,10 +90,11 @@ interface ConfigPanelProps {
   onSaved: () => void
 }
 
-type TabKey = 'llm' | 'cyberhub' | 'recon' | 'scan' | 'search' | 'ioa' | 'agent'
+type TabKey = 'llm' | 'guardrail' | 'cyberhub' | 'recon' | 'scan' | 'search' | 'ioa' | 'agent'
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: 'llm', label: 'LLM' },
+  { key: 'guardrail', label: 'Guardrail' },
   { key: 'cyberhub', label: 'Cyberhub' },
   { key: 'recon', label: 'Recon' },
   { key: 'scan', label: 'Scan' },
@@ -233,6 +234,9 @@ function sectionStatus(
       ]
     case 'search':
       return [tag('Tavily', !!cs?.search?.tavilyKeysConfigured)]
+    case 'guardrail':
+      // The settings view contains stored values; an environment key stays server-side.
+      return cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []
     case 'ioa': {
       const ioa = cs?.extensions['ioa.client']
       return [tag('Server', !!(ioa?.values?.url && ioa.configuredSecrets.includes('token')))]
@@ -311,7 +315,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               key={tab.key} type="button" variant="ghost" size="sm"
               active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)}
               className={cn('h-8 text-xs', activeTab !== tab.key && 'text-muted-foreground')}
-            >{tab.label}</Button>
+            >{tab.key === 'guardrail' ? t('guardrail') : tab.label}</Button>
           ))}
         </div>
 
@@ -352,6 +356,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
                   />
                 )}
                 {activeTab === 'cyberhub' && <CyberhubTab form={form} setForm={setForm} cs={cs} />}
+                {activeTab === 'guardrail' && <GuardrailTab form={form} setForm={setForm} cs={cs} />}
                 {activeTab === 'recon' && <ReconTab form={form} setForm={setForm} cs={cs} />}
                 {activeTab === 'scan' && <ScanTab form={form} setForm={setForm} />}
                 {activeTab === 'search' && <SearchTab form={form} setForm={setForm} cs={cs} />}
@@ -732,6 +737,59 @@ function IOATab({ form, setForm, cs }: TabProps) {
   )
 }
 
+function GuardrailTab({ form, setForm, cs }: TabProps) {
+  const { t } = useTranslation('config')
+  const jev = form.extensions.jev ?? {}
+  const update = (key: string, value: string | boolean) => setForm(f => ({
+    ...f, extensions: { ...f.extensions, jev: { ...f.extensions.jev, [key]: value } },
+  }))
+  const value = (key: string, fallback = '') => typeof jev[key] === 'string' ? jev[key] as string : fallback
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <div className="sm:col-span-2 flex items-center justify-between rounded-md border border-border p-3">
+        <label htmlFor="jev-enabled" className="text-sm font-medium">{t('guardrailEnabled')}</label>
+        <Switch id="jev-enabled" checked={jev.enabled === true} onCheckedChange={checked => update('enabled', checked)} />
+      </div>
+      <Callout className="sm:col-span-2">{t('guardrailReloadHint')}</Callout>
+      <Field label={t('guardrailMode')}>
+        <Select value={String(form.extensions.guardrail?.mode ?? 'safe')} onValueChange={mode => {
+          setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, mode } } }))
+        }}>
+          <SelectTrigger aria-label={t('guardrailMode')} className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['safe', 'auto'].map(mode => <SelectItem key={mode} value={mode}>{t('guardrailMode_' + mode)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'auto' ? 'auto' : 'safe'))}</p>
+      <Field label={t('jevApiKey')}>
+        <Input type="password" autoComplete="new-password" value={value('api_key')} onChange={e => update('api_key', e.target.value)}
+          placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'} />
+      </Field>
+      <Field label={t('guardrailLevel')}>
+        <Select value={value('level', 'standard')} onValueChange={v => update('level', v)}>
+          <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['permissive', 'standard', 'strict'].map(v => <SelectItem key={v} value={v}>{t('guardrailLevel_' + v)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <Field label={t('guardrailOnError')}>
+        <Select value={value('on_error', 'block')} onValueChange={v => update('on_error', v)}>
+          <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['block', 'review', 'record'].map(v => <SelectItem key={v} value={v}>{t('guardrailAction_' + v)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <Field label={t('guardrailModel')}><Input value={value('model', 'jev-1.13.0')} onChange={e => update('model', e.target.value)} /></Field>
+      <Field label={t('guardrailTimeout')}><Input value={value('timeout', '10s')} onChange={e => update('timeout', e.target.value)} placeholder="10s" /></Field>
+      <Field label={t('guardrailReviewTimeout')}>
+        <Input value={String(form.extensions.guardrail?.review_timeout ?? '5m')} placeholder="5m" onChange={e => {
+          const timeout = e.target.value
+          setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, review_timeout: timeout } } }))
+        }} />
+      </Field>
+      <p className="sm:col-span-2 text-xs text-muted-foreground">{t('guardrailTestHint')}</p>
+      <ConnTest section="jev" form={form} />
+    </div>
+  )
+}
+
 function AgentTab({ form, setForm }: Omit<TabProps, 'cs'>) {
   const { t } = useTranslation('config')
   return (
@@ -770,7 +828,7 @@ function ProbePulse({ className }: { className?: string }) {
 // one result row per external dependency probed (Recon returns FOFA + Hunter).
 // The whole form is sent so unsaved edits are tested; blank secrets fall back to
 // the stored values on the server.
-function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' | 'ioa.client'; form: ConfigFormState }) {
+function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' | 'ioa.client' | 'jev'; form: ConfigFormState }) {
   const { t } = useTranslation('config')
   const [testing, setTesting] = useState(false)
   const [checks, setChecks] = useState<ConnectionCheck[] | null>(null)
@@ -805,7 +863,7 @@ function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' 
 }
 
 const CHECK_LABELS: Record<string, string> = {
-  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'Server',
+  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'Server', jev: 'JEV',
 }
 
 function ConnCheckRow({ check }: { check: ConnectionCheck }) {

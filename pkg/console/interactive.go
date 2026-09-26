@@ -478,6 +478,7 @@ func (r *AgentConsole) allCommands() []*cobra.Command {
 	if r.bindings != nil && r.bindings.Commands != nil {
 		cmds = append(cmds, r.bindings.Commands(consoleapi.View{Out: r.stdout, Err: r.stderr, Table: r.printBoxTable,
 			Command: r.command, RefreshStatus: func() { fmt.Fprint(r.stdout, r.renderStatus()) },
+			SessionID: func() string { if r.session != nil { return r.session.ID() }; return "" },
 		})...)
 	}
 	return cmds

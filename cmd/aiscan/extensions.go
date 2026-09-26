@@ -11,6 +11,7 @@ import (
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	loopext "github.com/chainreactors/cyber/pkg/exts/agent"
 	arsenalext "github.com/chainreactors/cyber/pkg/exts/arsenal"
+	guardrailext "github.com/chainreactors/cyber/pkg/exts/guardrail"
 	okfext "github.com/chainreactors/cyber/pkg/exts/okf"
 	protonext "github.com/chainreactors/cyber/pkg/exts/proton"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
@@ -25,7 +26,7 @@ import (
 // extensions returns the product's extensions in the order they must load. It
 // threads no capabilities: every extension borrows what it needs from the ones
 // ahead of it, so this reads as a membership decision and nothing else.
-func extensions(config appConfig, loop agent.Loop, workDir string, proxy extension.Extension) ([]extension.Extension, error) {
+func extensions(config appConfig, loop agent.Loop, workDir string, proxy extension.Extension, guardrailConfig guardrailext.Config) ([]extension.Extension, error) {
 	config.DataDir = cfg.ResolveDataDir(config.DataDir)
 	config.Scanner.Resources.CacheDir = filepath.Join(config.DataDir, "cache")
 
@@ -40,6 +41,7 @@ func extensions(config appConfig, loop agent.Loop, workDir string, proxy extensi
 	childEnv := map[string]string{"PATH": manager.BinPath() + string(os.PathListSeparator) + os.Getenv("PATH")}
 
 	extensions, err := harness.BaseExtensions(harness.BaseConfig{
+		Guardrail:  guardrailConfig,
 		Directory:  workDir,
 		SkillPaths: config.CLISkillPaths,
 		Terminal:   terminalext.Config{Environment: childEnv},

@@ -21,7 +21,9 @@ import (
 	coretool "github.com/chainreactors/cyber/core/tool"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
+	guardrailext "github.com/chainreactors/cyber/pkg/exts/guardrail"
 	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
+	jevext "github.com/chainreactors/cyber/pkg/exts/jev"
 	nativeext "github.com/chainreactors/cyber/pkg/exts/native"
 	nodeext "github.com/chainreactors/cyber/pkg/exts/node"
 	observeext "github.com/chainreactors/cyber/pkg/exts/observe"
@@ -130,7 +132,22 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	case config.Session == nil && config.Base.Provider.Mode != provider.StartupDisabled:
 		loop = agent.StandardLoop{}
 	}
-	graph, err := extensions(config.Base, loop, workDir, proxyExtension)
+	resolved := config.Option.Resolved
+	if resolved == nil {
+		resolved, err = defaultSections().ResolveValues(config.Option.Extensions, nil, os.LookupEnv)
+		if err != nil {
+			return nil, err
+		}
+	}
+	guardrailConfig, err := cfg.Get[*guardrailext.Config](resolved, guardrailext.ConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	jevConfig, err := cfg.Get[*jevext.Config](resolved, jevext.ConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	graph, err := extensions(config.Base, loop, workDir, proxyExtension, *guardrailConfig)
 	if err != nil {
 		return nil, fmt.Errorf("construct Cyber application: %w", err)
 	}
@@ -139,6 +156,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	// first. The observers follow it: they subscribe to hooks and to the event
 	// stream, both of which fire at run time rather than during load.
 	values := append([]extension.Extension{nodeext.New()}, graph...)
+	if jevConfig.Enabled {
+		values = append(values, jevext.New(*jevConfig))
+	}
 	if strings.TrimSpace(config.Output) != "" {
 		output, err := telemetryext.New(telemetryext.Options{Path: config.Output})
 		if err != nil {
@@ -177,7 +197,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 		agentConfig = sessionext.ConfigFromOption(config.Option, agentConfig)
 		values = append(values, sessionext.New(agentConfig), subagentext.NewTools())
 		values = append(values, sessionext.NewProtocol())
+		values = append(values, guardrailext.NewProtocol())
 		values = append(values, sessionext.NewConsole())
+		values = append(values, guardrailext.NewConsole())
 	}
 	// Last in the slice, so it borrows after everything is published and
 	// releases before anything is torn down. This is how a composition root
@@ -315,7 +337,7 @@ func newAIScanProfile(request profilepkg.Request) (profilepkg.Profile, error) {
 		return nil, fmt.Errorf("cyber profile option is required")
 	}
 	if request.Option.Resolved == nil {
-		resolved, err := defaultSections().ResolveValues(request.Option.Extensions, nil, nil)
+		resolved, err := defaultSections().ResolveValues(request.Option.Extensions, nil, os.LookupEnv)
 		if err != nil {
 			return nil, err
 		}

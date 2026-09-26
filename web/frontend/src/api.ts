@@ -18,7 +18,11 @@ import {
 import {
   AgentService,
   CommandProtocolMessageSchema,
+  GuardrailProtocolMessageSchema,
+  type GuardrailProtocolMessage,
+  type Review,
   ConfigService,
+  DistributeConfigSchema,
   LLMProbeRequestSchema,
   ReloadProtocolMessageSchema,
   AgentRunOptionsSchema,
@@ -81,8 +85,10 @@ const aopClient = new AOPClient()
   .register(CommandProtocolMessageSchema)
   .register(ScanProtocolMessageSchema)
   .register(ReloadProtocolMessageSchema)
+  .register(GuardrailProtocolMessageSchema)
 
 export const AUTH_REQUIRED_EVENT = 'cyber:auth-required'
+export const CONFIG_CHANGED_EVENT = 'cyber:config-changed'
 
 export class APIError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -212,6 +218,7 @@ export async function saveConfig(config: DistributeConfig): Promise<ConfigView> 
   try {
     const response = await cyberRPC.config.updateConfig({ config })
     if (!response.config) throw new Error('Config update returned no view')
+    window.dispatchEvent(new Event(CONFIG_CHANGED_EVENT))
     return response.config
   } catch (error) {
     throw connectFailure(error, 'Failed to save config')
@@ -226,6 +233,20 @@ export async function activateLLMProfile(id: string): Promise<ConfigView> {
   } catch (error) {
     throw connectFailure(error, 'Failed to switch LLM profile')
   }
+}
+
+export async function setGuardrailEnabled(enabled: boolean): Promise<ConfigView> {
+  const current = await getConfigStatus()
+  return saveConfig(create(DistributeConfigSchema, {
+    extensions: { jev: { ...current.extensions.jev?.values, enabled } },
+  }))
+}
+
+export async function setGuardrailMode(mode: 'safe' | 'auto'): Promise<ConfigView> {
+  const current = await getConfigStatus()
+  return saveConfig(create(DistributeConfigSchema, {
+    extensions: { guardrail: { ...current.extensions.guardrail?.values, mode } },
+  }))
 }
 
 // Blank api_key asks the server to reuse the stored secret.
@@ -378,6 +399,27 @@ export async function executeChatCommand(sessionID: string, line: string, reques
   } catch (error) {
 	throw error instanceof Error ? error : new Error('Failed to execute command')
   }
+}
+
+async function requestGuardrail(request: GuardrailProtocolMessage): Promise<GuardrailProtocolMessage> {
+  const response = await aopClient.request(GuardrailProtocolMessageSchema, request)
+  if (response.$typeName === 'aop.ProtocolMessage') {
+    const core = response as AOPProtocolMessage
+    if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
+  }
+  if (response.$typeName !== 'cyber.guardrail.ProtocolMessage') throw new Error('Unexpected guardrail response')
+  return response as GuardrailProtocolMessage
+}
+
+export async function pendingGuardrailReviews(sessionId: string): Promise<Review[]> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'pending', value: { sessionId } } }))
+  if (response.message.case !== 'pendingResult') throw new Error('Expected pending guardrail reviews')
+  return response.message.value.reviews
+}
+
+export async function resolveGuardrailReview(sessionId: string, operationId: string, approve: boolean): Promise<void> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'resolve', value: { sessionId, operationId, approve } } }))
+  if (response.message.case !== 'resolved') throw new Error('Expected guardrail resolution')
 }
 
 export async function cancelChatSession(sessionID: string, turnID: string): Promise<void> {

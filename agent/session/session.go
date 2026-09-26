@@ -391,8 +391,12 @@ func (s *commandSession) executeBash(ctx context.Context, line, command string) 
 	if bash == nil {
 		return commandOutcome{err: fmt.Errorf("bash tool is not registered")}
 	}
+	if s.state.runtime.tools == nil {
+		return commandOutcome{err: fmt.Errorf("tool executor is unavailable")}
+	}
 	payload, _ := json.Marshal(map[string]string{"command": command})
-	result, err := bash.Execute(ctx, string(payload))
+	// Direct user commands enter the same admission boundary as model tool calls.
+	result, err := s.state.runtime.tools.ExecuteTool(ctx, bash.Name(), string(payload))
 	if err != nil {
 		return commandOutcome{err: err}
 	}

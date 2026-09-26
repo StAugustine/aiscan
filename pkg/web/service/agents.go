@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/guardrail"
 
 	aop "github.com/chainreactors/cyber/aop"
 	filepb "github.com/chainreactors/cyber/aop/file"
@@ -36,11 +37,12 @@ func cloneCommandSpecs(values []*types.CommandSpec) []*types.CommandSpec {
 }
 
 type taskResult struct {
-	Output string
-	File   *filepb.Result
-	Err    string
-	Code   string
-	Turn   int
+	Guardrail *guardrail.ProtocolMessage
+	Output    string
+	File      *filepb.Result
+	Err       string
+	Code      string
+	Turn      int
 }
 
 // nodeState is the per-node task/session bookkeeping shared by both pool

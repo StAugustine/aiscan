@@ -12,6 +12,7 @@ import (
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/guardrail"
 	"github.com/chainreactors/cyber/core/truncate"
 	types "github.com/chainreactors/cyber/core/types"
 	cfg "github.com/chainreactors/cyber/pkg/config"
@@ -342,6 +343,15 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		o.beginRun()
 	}
 	switch payload := event.Payload.(type) {
+	case *aop.Event_Extension:
+		var review guardrail.Review
+		if ok, err := aop.FindTypedExtension(event, &review); !ok || err != nil || review.State != guardrail.ReviewState_REVIEW_STATE_PENDING {
+			return
+		}
+		// Approval is a control command and remains usable while the turn waits.
+		o.live.Stop()
+		o.stream.Flush()
+		fmt.Fprintf(o.Stderr(), "\nGuardrail: %s is waiting for approval until %s\n%s\n/guardrail pending\n/guardrail approve %s\n/guardrail reject %s\n", review.Call.GetName(), review.ExpiresAt.AsTime().Format("15:04:05"), review.Decision.GetReason(), review.Operation.GetOperationId(), review.Operation.GetOperationId())
 	case *aop.Event_SessionStarted:
 		o.agentStart = time.Now()
 

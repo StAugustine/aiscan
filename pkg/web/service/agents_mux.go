@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	operationpb "github.com/chainreactors/cyber/aop/operation"
+	"github.com/chainreactors/cyber/core/guardrail"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log/slog"
 
@@ -27,6 +28,19 @@ func namespaceMessage[T protobuf.Message](message protobuf.Message) (T, error) {
 }
 
 func (p *AgentPool) registerAgentNamespaces(mux *aop.NamespaceMux, agent *remoteAgent) error {
+	if err := mux.Register(&guardrail.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
+		value, err := namespaceMessage[*guardrail.ProtocolMessage](message)
+		if err != nil {
+			return err
+		}
+		if value.GetPendingResult() == nil && value.GetResolved() == nil {
+			return fmt.Errorf("unsupported guardrail reply")
+		}
+		p.finishAgentTask(agent, envelope.ReplyTo, taskResult{Guardrail: protobuf.CloneOf(value)})
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := mux.Register(&aop.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
 		value, err := namespaceMessage[*aop.ProtocolMessage](message)
 		if err != nil {

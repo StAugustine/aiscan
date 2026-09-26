@@ -19,6 +19,8 @@ import type { IOAMessage, IOANode, LLMProviderView, ServerStatus } from './api'
 import type { SCONode } from '@cyber/cstx-easm'
 import type { MentionPopupApi } from './viewer'
 import { useChatSession } from './hooks/useChatSession'
+import { GuardrailReviews } from './components/GuardrailReviews'
+import { GuardrailToggle } from './components/GuardrailToggle'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
 import type { IOAConsoleTarget } from './lib/ioa-navigation'
@@ -256,6 +258,7 @@ export default function App() {
             </span>
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
+            <GuardrailToggle disabled={activeToolPanel === 'settings'} />
             <AssetPoolButton count={scoNodes.length} open={activeToolPanel === 'assets'} onClick={() => toggleToolPanel('assets')} />
             <IOAConsoleButton open={activeToolPanel === 'ioa'} onClick={() => {
               setIOAConsoleTarget(null)
@@ -319,6 +322,7 @@ export default function App() {
             onPause={chat.cancelMessage}
             onClearError={chat.clearError}
           />
+          <GuardrailReviews key={chat.activeSessionID} sessionId={chat.activeSessionID} />
         </div>
       </div>
 

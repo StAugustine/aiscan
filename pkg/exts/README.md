@@ -1,5 +1,9 @@
 # Extensions
 
+Guardrail 的准入、决策合并与等待审批机制位于 core/guardrail；guardrail Extension
+负责安装和 CLI/AOP 适配，jev Extension 只贡献风险判定。业务载荷仅有共用 protobuf
+Decision 与 Review。配置、生命周期及边界详见 [Tool guardrail](../../docs/guardrail.md)。
+
 `pkg/exts` 是行为实现与 Profile 生命周期之间的适配层。`tools/` 和 `agent/` 保持普通业务类型，
 需要初始化、后台工作或清理时才由这里的 Extension 持有。
 
