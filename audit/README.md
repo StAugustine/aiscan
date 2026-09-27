@@ -76,6 +76,10 @@ Reuse harness configuration/model commands and `--provider`, `--base-url`,
 `-p`, `--task-file`, or `-i` starts a one-shot run. `--resume` restores recorded
 history; without a new task it opens the REPL. `--timeout` and Ctrl-C cancel runs.
 Use `--output-format json` or `stream-json` for machine-readable session output.
+Startup failures (configuration, workspace, task or required tools) also produce
+a JSON error result or a typed stream error, before any session ID exists. Once
+the session starts, its renderer owns the final output so failures are not
+reported twice. All failure paths retain a nonzero exit status.
 
 All Cyber binaries share `CYBER_API_KEY`, `CYBER_BASE_URL`, `CYBER_MODEL` and
 `CYBER_PROVIDER`; no per-binary model key is needed. Explicit CLI settings take
