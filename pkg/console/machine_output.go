@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 
@@ -29,6 +30,7 @@ type machineOutput struct {
 	stop      string
 	failure   *aop.ProtocolError
 	usage     *aop.TokenUsage
+	turnUsage map[string]*aop.TokenUsage
 	err       error
 	closed    bool
 }
@@ -90,19 +92,53 @@ func (o *machineOutput) HandleEvent(event *aop.Event) {
 	if event.TurnId != "" {
 		o.turnID = event.TurnId
 	}
+	if event.GetTurnStarted() != nil {
+		o.result, o.stop, o.failure = "", "", nil
+	}
 	if message := event.GetMessage(); message != nil && message.Role == "assistant" {
 		o.result = strings.TrimSpace(messagePartText(message, false))
 	}
 	if usage := event.GetUsage(); usage != nil {
-		o.usage = usage
+		o.updateUsage(o.turnID, usage, false)
 	}
 	if ended := event.GetTurnEnded(); ended != nil {
 		o.stop = ended.StopReason
 		o.failure = ended.Error
 		if ended.Usage != nil {
-			o.usage = ended.Usage
+			o.updateUsage(o.turnID, ended.Usage, true)
 		}
 	}
+}
+
+// Usage events report provider calls; TurnEnded supplies the authoritative turn
+// total. Replace that turn at its end and add distinct repair turns exactly once.
+func (o *machineOutput) updateUsage(turnID string, usage *aop.TokenUsage, final bool) {
+	if o.turnUsage == nil {
+		o.turnUsage = make(map[string]*aop.TokenUsage)
+	}
+	snapshot := &aop.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens, Model: usage.Model, Detail: maps.Clone(usage.Detail)}
+	if previous := o.turnUsage[turnID]; previous != nil && !final {
+		snapshot.InputTokens += previous.InputTokens
+		snapshot.OutputTokens += previous.OutputTokens
+		snapshot.TotalTokens += previous.TotalTokens
+		if snapshot.Detail == nil {
+			snapshot.Detail = make(map[string]uint64)
+		}
+		for key, value := range previous.Detail {
+			snapshot.Detail[key] += value
+		}
+	}
+	o.turnUsage[turnID] = snapshot
+	total := &aop.TokenUsage{Model: usage.Model, Detail: make(map[string]uint64)}
+	for _, snapshot := range o.turnUsage {
+		total.InputTokens += snapshot.InputTokens
+		total.OutputTokens += snapshot.OutputTokens
+		total.TotalTokens += snapshot.TotalTokens
+		for key, value := range snapshot.Detail {
+			total.Detail[key] += value
+		}
+	}
+	o.usage = total
 }
 
 func (o *machineOutput) SetError(err error) {

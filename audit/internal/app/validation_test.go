@@ -114,9 +114,9 @@ func TestOneShotReportRepairUsesSameContextAndHasLimit(t *testing.T) {
 				streamReply(w, "Finished repair.")
 			}))
 			defer server.Close()
-			output, err := captureStdout(t, func() error {
-				return run(t.Context(), []string{"--workdir", workspace, "--data-dir", t.TempDir(), "--report-dir", reportDir, "--provider", "openai", "--base-url", server.URL, "--api-key", "fixture", "--model", "fixture", "-p", "FUNCTIONAL_ONLY", "--output-format", "json", "--quiet", "--no-color"}, io.Discard, io.Discard, fakeTools)
-			})
+			var outputBuffer strings.Builder
+			err := run(t.Context(), []string{"--workdir", workspace, "--data-dir", t.TempDir(), "--report-dir", reportDir, "--provider", "openai", "--base-url", server.URL, "--api-key", "fixture", "--model", "fixture", "-p", "FUNCTIONAL_ONLY", "--output-format", "json", "--quiet", "--no-color"}, &outputBuffer, io.Discard, fakeTools)
+			output := outputBuffer.String()
 			if (err != nil) != (problem == "persistent") {
 				t.Fatalf("run=%v", err)
 			}

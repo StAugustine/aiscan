@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	aop "github.com/chainreactors/cyber/aop"
 	cfg "github.com/chainreactors/cyber/pkg/config"
+	"golang.org/x/term"
 )
 
 // TaskValidation lets a product check deliverables before the session closes.
@@ -21,6 +23,12 @@ type TaskValidation struct {
 	Check             func(context.Context) error
 	MaxRepairRounds   int
 	RepairInstruction string
+}
+
+// TaskOptions configures one-shot delivery. Nil writers use the process streams.
+type TaskOptions struct {
+	Stdout, Stderr io.Writer
+	Validation     TaskValidation
 }
 
 // TaskValidationError means execution finished but its deliverable is incomplete.
@@ -33,7 +41,17 @@ func (e *TaskValidationError) Unwrap() error { return e.Err }
 // executes the session and publishes events; Console owns presentation.
 // finish, when supplied, runs once after session closure and before final output.
 // It returns the final error, preserving any execution error it receives.
-func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, sessionID, label, display string, input agentsession.RunInput, finish func(error) error, validations ...TaskValidation) (err error) {
+func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, sessionID, label, display string, input agentsession.RunInput, finish func(error) error, options ...TaskOptions) (err error) {
+	var settings TaskOptions
+	if len(options) > 0 {
+		settings = options[0]
+	}
+	if settings.Stdout == nil {
+		settings.Stdout = os.Stdout
+	}
+	if settings.Stderr == nil {
+		settings.Stderr = os.Stderr
+	}
 	// A presentation label such as task/scanner must not create an empty session
 	// when the runtime has restored the primary session's history.
 	if option != nil && option.Resume != "" {
@@ -48,9 +66,10 @@ func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, 
 		machineOutput *machineOutput
 	)
 	if format == "text" {
-		textOutput = NewStaticAgentOutput(option)
+		isTerminal := func(w io.Writer) bool { file, ok := w.(*os.File); return ok && term.IsTerminal(int(file.Fd())) }
+		textOutput = newAgentOutput(option, settings.Stdout, settings.Stderr, isTerminal(settings.Stdout), isTerminal(settings.Stderr), ModeStatic)
 	} else {
-		machineOutput = newMachineOutput(os.Stdout, format)
+		machineOutput = newMachineOutput(settings.Stdout, format)
 	}
 	handle := func(event *aop.Event) {
 		if event == nil || isSessionBootstrapEvent(event) {
@@ -111,10 +130,7 @@ func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, 
 	if textOutput != nil {
 		textOutput.Start(label, display)
 	}
-	var validation TaskValidation
-	if len(validations) > 0 {
-		validation = validations[0]
-	}
+	validation := settings.Validation
 	for attempt := 0; ; attempt++ {
 		run, runErr := session.Run(ctx, input)
 		if runErr != nil {
