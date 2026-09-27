@@ -27,13 +27,11 @@ func loadAgentProfile(ctx context.Context, newProfile func(profile.Request) (pro
 		return nil, nil, fmt.Errorf("profile constructor returned nil")
 	}
 	if err := p.Load(ctx); err != nil {
-		_ = p.Close(context.Background())
-		return nil, nil, err
+		return nil, nil, profile.CloseOnce(ctx, p.Close)(err)
 	}
 	run, err := p.Runtime()
 	if err != nil {
-		_ = p.Close(context.Background())
-		return nil, nil, err
+		return nil, nil, profile.CloseOnce(ctx, p.Close)(err)
 	}
 	return p, run, nil
 }

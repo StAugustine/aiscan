@@ -3,15 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	"github.com/chainreactors/cyber/agent/skills"
 	aop "github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/telemetry"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
-	"github.com/chainreactors/cyber/pkg/console"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
 	"github.com/chainreactors/cyber/pkg/profile"
 	"github.com/chainreactors/cyber/tools/scan"
@@ -20,6 +19,36 @@ import (
 type scannerMode struct {
 	Provider profile.ProviderMode
 	Agent    bool
+}
+
+// Resolve only the model configuration used by this command. Help and atomic
+// tools must remain usable when a model profile or scan default needs repair.
+func resolveScannerRuntimeConfig(option *cfg.Option, args []string) (string, error) {
+	return cfg.ResolveCommandRuntimeConfig(option, func(loaded *cfg.Option) (bool, error) {
+		if cfg.IsScannerHelpRequest(args) {
+			return false, nil
+		}
+		if loaded.AI {
+			return true, nil
+		}
+		mode, _, err := configuredScannerMode(loaded, args)
+		return mode.Provider != profile.ProviderDisabled, err
+	})
+}
+
+func configuredScannerMode(option *cfg.Option, args []string) (scannerMode, []string, error) {
+	var verify string
+	if len(args) > 0 && args[0] == "scan" {
+		scanOptions, err := scannerext.ReadScan(option)
+		if err != nil {
+			return scannerMode{}, nil, err
+		}
+		verify = scanOptions.Verify
+		if err := scan.ValidateVerify(verify); err != nil {
+			return scannerMode{}, nil, err
+		}
+	}
+	return resolveScannerMode(args, verify)
 }
 
 func resolveScannerMode(rest []string, defaultVerify string) (scannerMode, []string, error) {
@@ -198,7 +227,7 @@ func removeScannerFlag(args []string, flag string) []string {
 	return out
 }
 
-func runScannerWithAgent(ctx context.Context, option *cfg.Option, runtime *agentsession.Runtime, scannerArgs []string, logger telemetry.Logger) error {
+func runScannerWithAgent(ctx context.Context, option *cfg.Option, runtime *agentsession.Runtime, scannerArgs []string, logger telemetry.Logger, outputTask *taskcli.Output, finish func(error) error) error {
 	if runtime == nil {
 		return fmt.Errorf("scanner Agent runtime is unavailable")
 	}
@@ -216,7 +245,7 @@ func runScannerWithAgent(ctx context.Context, option *cfg.Option, runtime *agent
 		return err
 	}
 	prompt := scan.FormatAgentTaskPrompt(scannerArgs, intent)
-	return console.RunTask(ctx, runtime, option, "scanner", "scanner", strings.Join(scannerArgs, " "), agentsession.RunInput{Content: []*aop.Content{aop.Text(prompt)}}, nil)
+	return outputTask.Run(ctx, runtime, "scanner", "scanner", strings.Join(scannerArgs, " "), agentsession.RunInput{Content: []*aop.Content{aop.Text(prompt)}}, finish)
 }
 
 func resolveScannerIntent(option *cfg.Option, store *skills.Store, command string) (string, error) {
@@ -226,16 +255,9 @@ func resolveScannerIntent(option *cfg.Option, store *skills.Store, command strin
 			sections = append(sections, skills.FormatVirtualInvocation(command, conceptURI, body))
 		}
 	}
-	intent, err := cfg.ResolvePrompt(option.Prompt)
+	intent, err := cfg.ResolveTaskPrompt(option)
 	if err != nil {
 		return "", err
-	}
-	if intent == "" && option.TaskFile != "" {
-		data, err := os.ReadFile(option.TaskFile)
-		if err != nil {
-			return "", fmt.Errorf("read task file: %w", err)
-		}
-		intent = strings.TrimSpace(string(data))
 	}
 	if intent == "" {
 		intent = "Process the scanner output according to the user's intent. If no specific intent is provided, briefly explain the important evidence in the output."

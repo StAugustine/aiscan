@@ -19,10 +19,11 @@ import (
 	"github.com/chainreactors/cyber/audit/internal/toolchain"
 	"github.com/chainreactors/cyber/core/telemetry"
 	"github.com/chainreactors/cyber/pkg/cli/configuration"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	"github.com/chainreactors/cyber/pkg/console"
 	"github.com/chainreactors/cyber/pkg/node"
-	"github.com/chainreactors/cyber/pkg/profile"
+	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -79,21 +80,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		return err
 	}
 	parsed, option, err := parseOptions(args, stdout)
-	taskOwnsOutput := false
-	defer func() {
-		var flagErr *flags.Error
-		if err == nil || taskOwnsOutput || errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp {
-			return
-		}
-		format := option.OutputFormat
-		if format == "" {
-			format = parsed.Format
-		}
-		if parsed.JSON || option.JSON {
-			format = "json"
-		}
-		err = errors.Join(err, console.WriteStartupError(stdout, format, err))
-	}()
+	output := taskcli.NewOutput(&option, stdout, stderr)
+	defer func() { err = output.Finish(err) }()
 	if err != nil {
 		return err
 	}
@@ -112,14 +100,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		for _, message := range option.Snapshot.Diagnostics {
 			fmt.Fprintln(stderr, message)
 		}
-	}
-	if parsed.JSON {
-		option.OutputFormat = "json"
-	}
-	switch option.OutputFormat {
-	case "text", "json", "stream-json":
-	default:
-		return fmt.Errorf("unsupported --output-format %q", option.OutputFormat)
 	}
 	workDir := strings.TrimSpace(parsed.WorkDir)
 	if workDir == "" {
@@ -148,14 +128,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
 		defer cancel()
 	}
-	if option.Timeout < 0 {
-		return fmt.Errorf("--timeout must be nonnegative (0 disables it)")
-	}
 	if parsed.BashTimeout <= 0 {
 		return fmt.Errorf("--bash-timeout must be positive")
-	}
-	if transport == cfg.AgentTransportWeb && (oneShot || option.Resume != "") {
-		return fmt.Errorf("node mode receives audit tasks from the server; omit --prompt, --input, --task-file and --resume")
 	}
 	manager, err := toolchain.New(option.DataDir)
 	if err != nil {
@@ -167,7 +141,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	}
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
 	if transport == cfg.AgentTransportWeb {
-		build := func(request profile.Request) (profile.Profile, error) {
+		build := func(request profilepkg.Request) (profilepkg.Profile, error) {
 			return newAuditProfile(request, workDir, parsed.BashTimeout, nil, manager.Manager, statuses)
 		}
 		return node.RunWebSocket(ctx, build, &option, logger)
@@ -177,15 +151,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		return err
 	}
 	fmt.Fprintf(stderr, "Audit report: %s\n", report.Directory)
-	profile, err := newAuditProfile(profile.Request{Option: &option, ProviderMode: provider.StartupRequired, Logger: logger, Session: &agentsession.Config{PrimarySessionID: "main", Loop: agent.StandardLoop{}}}, workDir, parsed.BashTimeout, report, manager.Manager, report.Tools)
+	profile, err := newAuditProfile(profilepkg.Request{Option: &option, ProviderMode: provider.StartupRequired, Logger: logger, Session: &agentsession.Config{PrimarySessionID: "main", Loop: agent.StandardLoop{}}}, workDir, parsed.BashTimeout, report, manager.Manager, report.Tools)
 	if err != nil {
 		return report.finish(ctx, err)
 	}
-	finish := func(runErr error) error {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		return report.finish(ctx, errors.Join(runErr, profile.Close(closeCtx)))
-	}
+	closeProfile := profilepkg.CloseOnce(ctx, profile.Close)
+	finish := func(runErr error) error { return report.finish(ctx, closeProfile(runErr)) }
 	if err := profile.Load(ctx); err != nil {
 		return finish(err)
 	}
@@ -200,11 +171,11 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	if err != nil {
 		return finish(err)
 	}
-	taskOwnsOutput = true
-	return console.RunTask(ctx, profile.runtime, &option, "task", "audit", task, agentsession.RunInput{
+	output.Validation = console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
+		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."}
+	return output.Run(ctx, profile.runtime, "task", "audit", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
-	}, finish, console.TaskOptions{Stdout: stdout, Stderr: stderr, Validation: console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
-		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."}})
+	}, finish)
 }
 
 func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, error) {
@@ -221,10 +192,10 @@ func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, err
 		if errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp && helpOutput != nil {
 			parser.WriteHelp(helpOutput)
 		}
-		return parsed, cfg.Option{}, err
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, err
 	}
 	if len(rest) != 0 {
-		return parsed, cfg.Option{}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
 	}
 	option := cfg.Option{
 		Context:    &cfg.Context{Directory: parsed.WorkDir, UserLLMOnly: true},
@@ -248,29 +219,16 @@ func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, err
 
 // No scanner fallback: explicit task -> one-shot; otherwise use the local REPL.
 func resolveAuditTask(option *cfg.Option) (string, bool, error) {
-	if option.Prompt != "" && option.TaskFile != "" {
-		return "", false, fmt.Errorf("use either --prompt or --task-file")
-	}
-	task, err := cfg.ResolvePrompt(option.Prompt)
+	task, err := cfg.ResolveTaskPrompt(option)
 	if err != nil {
 		return "", false, err
 	}
-	if option.TaskFile != "" {
-		body, err := os.ReadFile(option.TaskFile)
-		if err != nil {
-			return "", false, err
-		}
-		task = strings.TrimSpace(string(body))
-	}
-	explicit := option.Prompt != "" || option.TaskFile != "" || len(option.Inputs) > 0
+	explicit := cfg.HasAgentTaskInput(option)
 	if task == "" && len(option.Inputs) > 0 {
 		task = "Audit the supplied source code or binaries for vulnerabilities and record evidence and coverage."
 	}
 	if len(option.Inputs) > 0 {
 		task += "\n\nAudit inputs:\n" + strings.Join(option.Inputs, "\n")
-	}
-	if explicit && strings.TrimSpace(task) == "" {
-		return "", false, fmt.Errorf("audit task is empty")
 	}
 	return task, explicit, nil
 }
@@ -294,13 +252,7 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	if _, err := cfg.ResolveToolRuntimeConfig(&option); err != nil {
 		return true, err
 	}
-	if option.Timeout < 0 {
-		return true, fmt.Errorf("--timeout must be nonnegative (0 disables it)")
-	}
-	format := strings.ToLower(strings.TrimSpace(option.OutputFormat))
-	if option.JSON {
-		format = "json"
-	}
+	format := option.OutputFormat
 	if format != "text" && format != "json" {
 		return true, fmt.Errorf("tool commands support --output-format text or json")
 	}

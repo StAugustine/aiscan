@@ -18,6 +18,7 @@ import (
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
 	profilepkg "github.com/chainreactors/cyber/pkg/profile"
@@ -99,7 +100,7 @@ func TestDirectScannerAIUsesProfileRuntime(t *testing.T) {
 		return p, nil
 	}
 	option := &cfg.Option{LLMOptions: cfg.LLMOptions{AI: true}}
-	err := runDirectScannerMode(t.Context(), newProfile, option, []string{"gogo", "-i", "127.0.0.1"}, telemetry.NopLogger())
+	err := runDirectScannerMode(t.Context(), newProfile, option, []string{"gogo", "-i", "127.0.0.1"}, telemetry.NopLogger(), taskcli.NewOutput(&cfg.Option{}, nil, nil))
 	if !errors.Is(err, runtimeErr) {
 		t.Fatalf("RunDirectScannerMode() error = %v, want Profile.Runtime error", err)
 	}

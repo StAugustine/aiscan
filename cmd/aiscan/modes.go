@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 	"time"
 
@@ -17,6 +17,7 @@ import (
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	"github.com/chainreactors/cyber/pkg/console"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
@@ -31,21 +32,21 @@ import (
 // Mode dispatch
 // ---------------------------------------------------------------------------
 
-func runAgentMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, setInterrupt func(func() bool)) error {
+func runAgentMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, setInterrupt func(func() bool), outputTask *taskcli.Output) error {
 	if !cfg.HasAgentOneShotInput(option) {
 		if option != nil && option.OutputFormat != "" && option.OutputFormat != "text" {
 			return fmt.Errorf("--output-format=%s is only available for one-shot agent runs", option.OutputFormat)
 		}
 		return runInteractiveMode(ctx, newProfile, option, logger, setInterrupt)
 	}
-	return runOneShotMode(ctx, newProfile, option, logger)
+	return runOneShotMode(ctx, newProfile, option, logger, outputTask)
 }
 
 // ---------------------------------------------------------------------------
 // Agent one-shot
 // ---------------------------------------------------------------------------
 
-func runOneShotMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger) error {
+func runOneShotMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, outputTask *taskcli.Output) (runErr error) {
 	task, err := cfg.ResolveTask(option)
 	if err != nil {
 		return err
@@ -55,7 +56,8 @@ func runOneShotMode(ctx context.Context, newProfile func(profile.Request) (profi
 	if err != nil {
 		return err
 	}
-	defer p.Close(context.Background())
+	finish := profile.CloseOnce(ctx, p.Close)
+	defer func() { runErr = finish(runErr) }()
 
 	task = skills.ExpandCommand(task, rt.Skills())
 	task, err = rt.Skills().ApplySelected(task, option.Skills)
@@ -63,16 +65,16 @@ func runOneShotMode(ctx context.Context, newProfile func(profile.Request) (profi
 		return err
 	}
 
-	return console.RunTask(ctx, rt, option, "task", "task", task, agentsession.RunInput{
+	return outputTask.Run(ctx, rt, "task", "task", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
-	}, nil)
+	}, finish)
 }
 
 // ---------------------------------------------------------------------------
 // Agent interactive (REPL)
 // ---------------------------------------------------------------------------
 
-func runInteractiveMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, setInterrupt func(func() bool)) error {
+func runInteractiveMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, setInterrupt func(func() bool)) (runErr error) {
 	p, rt, err := loadAgentProfile(ctx, newProfile, option, logger, &agentsession.Config{
 		PrimarySessionID: console.MainREPLName,
 		Loop:             agent.StandardLoop{},
@@ -80,7 +82,8 @@ func runInteractiveMode(ctx context.Context, newProfile func(profile.Request) (p
 	if err != nil {
 		return err
 	}
-	defer p.Close(context.Background())
+	finish := profile.CloseOnce(ctx, p.Close)
+	defer func() { runErr = finish(runErr) }()
 
 	if _, err := rt.Skills().ApplySelected("", option.Skills); err != nil {
 		return err
@@ -103,26 +106,25 @@ type shellHost interface {
 	Shell() (coretool.CommandExecutor, *terminaltool.BashTool)
 }
 
-func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, rest []string, logger telemetry.Logger) (runErr error) {
-	defaultVerify, err := scannerext.ReadVerify(option)
-	if err != nil {
-		return err
+func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, rest []string, logger telemetry.Logger, outputTask *taskcli.Output) (runErr error) {
+	if cfg.IsScannerHelpRequest(rest) {
+		if usage, ok := scannerext.Usage(rest[0]); ok {
+			_, err := fmt.Fprint(outputTask.Stdout(), usage)
+			if err != nil {
+				return err
+			}
+			if !strings.HasSuffix(usage, "\n") {
+				_, err = fmt.Fprintln(outputTask.Stdout())
+			}
+			return err
+		}
 	}
-	mode, scannerArgs, err := resolveScannerMode(rest, defaultVerify)
+	mode, scannerArgs, err := configuredScannerMode(option, rest)
 	if err != nil {
 		return err
 	}
 	if option.AI || mode.Agent {
 		mode.Provider = profile.ProviderRequired
-	}
-	if cfg.IsScannerHelpRequest(scannerArgs) {
-		if usage, ok := scannerext.Usage(scannerArgs[0]); ok {
-			fmt.Print(usage)
-			if !strings.HasSuffix(usage, "\n") {
-				fmt.Println()
-			}
-			return nil
-		}
 	}
 	scannerLogger := logger
 	if !directScannerDebugEnabled(option, scannerArgs) {
@@ -150,10 +152,11 @@ func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) 
 	if p == nil {
 		return fmt.Errorf("profile constructor returned nil")
 	}
+	finish := profile.CloseOnce(ctx, p.Close)
+	defer func() { runErr = finish(runErr) }()
 	if err := p.Load(ctx); err != nil {
 		return fmt.Errorf("load scanner profile: %w", err)
 	}
-	defer p.Close(context.Background())
 	providers, err := p.Providers()
 	if err != nil {
 		return err
@@ -187,7 +190,7 @@ func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) 
 		if runtimeErr != nil {
 			return runtimeErr
 		}
-		return runScannerWithAgent(ctx, option, runtime, scannerArgs, logger)
+		return runScannerWithAgent(ctx, option, runtime, scannerArgs, logger, outputTask, finish)
 	}
 
 	if option.NoColor && scannerArgs[0] == "scan" && !hasScannerFlag(scannerArgs[1:], "--no-color") {
@@ -242,18 +245,28 @@ func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) 
 		emitSessionEnded(application, sessionID, emitter, string(closeReason))
 	}()
 	streaming := shouldStreamScannerOutput(scannerArgs)
+	var outputErr error
 	var captured strings.Builder
 	execution, err := bash.RunForeground(ctx, coretool.JoinCommandLine(scannerArgs[0], scannerArgs[1:]), terminaltool.BashExecOptions{
 		OnOutput: func(data []byte) {
 			if streaming {
-				_, _ = os.Stdout.Write(data)
+				if outputErr == nil {
+					var n int
+					n, outputErr = outputTask.Stdout().Write(data)
+					if outputErr == nil && n != len(data) {
+						outputErr = io.ErrShortWrite
+					}
+				}
 			} else {
 				_, _ = captured.Write(data)
 			}
 		},
 	})
 	if err != nil {
-		return err
+		return errors.Join(err, outputErr)
+	}
+	if outputErr != nil {
+		return outputErr
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -263,7 +276,9 @@ func runDirectScannerMode(ctx context.Context, newProfile func(profile.Request) 
 		if isDirectScannerJSONOutput(scannerArgs) {
 			output = filterScannerJSONLines(output)
 		}
-		fmt.Print(output)
+		if _, err := io.WriteString(outputTask.Stdout(), output); err != nil {
+			return err
+		}
 	}
 	info, retained := execution.Session()
 	if !retained && execution.ID != "" {

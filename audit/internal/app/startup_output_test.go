@@ -16,7 +16,7 @@ import (
 
 func TestStartupFailureHasMachineOutput(t *testing.T) {
 	for _, format := range []string{"json", "stream-json"} {
-		for _, failure := range []string{"config", "workdir", "task-file", "tools", "report", "parse"} {
+		for _, failure := range []string{"config", "workdir", "task-file", "tools", "report", "parse", "positional"} {
 			t.Run(format+"/"+failure, func(t *testing.T) {
 				workspace := t.TempDir()
 				args := []string{"--output-format", format, "--workdir", workspace, "--data-dir", t.TempDir(), "--provider", "openai", "--api-key", "fixture", "--model", "fixture", "-p", "functional test"}
@@ -34,6 +34,8 @@ func TestStartupFailureHasMachineOutput(t *testing.T) {
 					}
 				case "report":
 					args = append(args, "--report-dir", workspace)
+				case "positional":
+					args = append(args, "unexpected-positional")
 				case "parse":
 					args = append(args, "--unknown-fixture-option")
 				}
