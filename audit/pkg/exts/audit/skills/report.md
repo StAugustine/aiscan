@@ -46,7 +46,8 @@ the claimed impact. Do not include complete secret values.
 index.md is the final OKF summary. Its frontmatter contains only
 `okf_version: "0.2"`. Cover scope/revision,
 prioritized findings, reasoning, evidence links, coverage and unresolved limits.
-log.md records dated investigation decisions and has no frontmatter. Other
+log.md is required, records dated investigation decisions and has no frontmatter.
+Both index.md and log.md must contain Markdown headings. Other
 Markdown evidence files are concepts and require a non-empty `type` frontmatter. Link raw/evidence artifacts with
 bundle-relative paths. Run `audit validate` through bash before completion; it
 defaults to the assigned report. `audit validate <report-directory>` selects an

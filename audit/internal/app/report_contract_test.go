@@ -114,3 +114,17 @@ func TestReportFinalizationDoesNotHideExecutionFailureBehindValidation(t *testin
 		t.Fatalf("status=%s err=%v", r.Status, err)
 	}
 }
+
+func TestReportRequiresInvestigationLog(t *testing.T) {
+	r, err := newReport(t.Context(), t.TempDir(), "", "fixture", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	completeReport(t, r)
+	if err := os.Remove(filepath.Join(r.Directory, "log.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.validate(t.Context()); err == nil {
+		t.Fatal("report without required investigation log accepted")
+	}
+}
