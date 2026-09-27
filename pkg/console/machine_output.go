@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"strings"
 	"sync"
 
 	"github.com/chainreactors/cyber/agent"
 	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/events"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -29,6 +31,7 @@ type machineOutput struct {
 	stop      string
 	failure   *aop.ProtocolError
 	usage     *aop.TokenUsage
+	turnUsage map[string]*aop.TokenUsage
 	err       error
 	closed    bool
 }
@@ -65,6 +68,27 @@ func newMachineOutput(writer io.Writer, format string) *machineOutput {
 	return &machineOutput{writer: writer, format: strings.ToLower(strings.TrimSpace(format))}
 }
 
+// WriteStartupError preserves the one-shot output contract before RunTask owns
+// presentation. No session has started, so the failure has no session/turn ID.
+// Text-mode errors remain the caller's responsibility.
+func WriteStartupError(writer io.Writer, format string, err error) error {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if err == nil || format != "json" && format != "stream-json" {
+		return nil
+	}
+	output := newMachineOutput(writer, format)
+	if format == "stream-json" {
+		event := &aop.Event{Payload: &aop.Event_Error{Error: &aop.ProtocolError{Code: "startup_error", Message: err.Error()}}}
+		// A standalone stream stamps this pre-session failure's envelope.
+		events.New().Publish(event)
+		output.HandleEvent(event)
+	} else {
+		output.SetError(err)
+		output.failure.Code = "startup_error"
+	}
+	return output.Close()
+}
+
 func (o *machineOutput) HandleEvent(event *aop.Event) {
 	if o == nil || event == nil {
 		return
@@ -90,19 +114,53 @@ func (o *machineOutput) HandleEvent(event *aop.Event) {
 	if event.TurnId != "" {
 		o.turnID = event.TurnId
 	}
+	if event.GetTurnStarted() != nil {
+		o.result, o.stop, o.failure = "", "", nil
+	}
 	if message := event.GetMessage(); message != nil && message.Role == "assistant" {
 		o.result = strings.TrimSpace(messagePartText(message, false))
 	}
 	if usage := event.GetUsage(); usage != nil {
-		o.usage = usage
+		o.updateUsage(o.turnID, usage, false)
 	}
 	if ended := event.GetTurnEnded(); ended != nil {
 		o.stop = ended.StopReason
 		o.failure = ended.Error
 		if ended.Usage != nil {
-			o.usage = ended.Usage
+			o.updateUsage(o.turnID, ended.Usage, true)
 		}
 	}
+}
+
+// Usage events report provider calls; TurnEnded supplies the authoritative turn
+// total. Replace that turn at its end and add distinct repair turns exactly once.
+func (o *machineOutput) updateUsage(turnID string, usage *aop.TokenUsage, final bool) {
+	if o.turnUsage == nil {
+		o.turnUsage = make(map[string]*aop.TokenUsage)
+	}
+	snapshot := &aop.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, TotalTokens: usage.TotalTokens, Model: usage.Model, Detail: maps.Clone(usage.Detail)}
+	if previous := o.turnUsage[turnID]; previous != nil && !final {
+		snapshot.InputTokens += previous.InputTokens
+		snapshot.OutputTokens += previous.OutputTokens
+		snapshot.TotalTokens += previous.TotalTokens
+		if snapshot.Detail == nil {
+			snapshot.Detail = make(map[string]uint64)
+		}
+		for key, value := range previous.Detail {
+			snapshot.Detail[key] += value
+		}
+	}
+	o.turnUsage[turnID] = snapshot
+	total := &aop.TokenUsage{Model: usage.Model, Detail: make(map[string]uint64)}
+	for _, snapshot := range o.turnUsage {
+		total.InputTokens += snapshot.InputTokens
+		total.OutputTokens += snapshot.OutputTokens
+		total.TotalTokens += snapshot.TotalTokens
+		for key, value := range snapshot.Detail {
+			total.Detail[key] += value
+		}
+	}
+	o.usage = total
 }
 
 func (o *machineOutput) SetError(err error) {

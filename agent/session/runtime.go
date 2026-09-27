@@ -98,6 +98,9 @@ type Config struct {
 }
 
 // Accessors lend the runtime capabilities used by host presentation.
+// PrimarySessionID identifies the session that receives restored history.
+func (rt *Runtime) PrimarySessionID() string { return rt.primarySessionID }
+
 func (rt *Runtime) Skills() *skills.Store {
 	if rt == nil {
 		return nil

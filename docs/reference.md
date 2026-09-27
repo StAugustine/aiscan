@@ -243,7 +243,7 @@ Agent 只会重试当前 provider。重试耗尽后直接返回错误，不会�
 
 ```bash
 # 环境变量
-export OPENAI_API_KEY="sk-..."
+export CYBER_API_KEY="sk-..."
 aiscan agent -p "检查目标" -i http://target.example
 
 # DeepSeek（OpenAI-compatible）
@@ -477,6 +477,8 @@ scan:
 
 ## 环境变量汇总
 
+模型配置统一推荐 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER`，无需为 aiscan、cyber-audit 等入口分别配置。优先级为显式 CLI > `CYBER_*` > 配置文件 > 兼容的 `LLM_*` / provider 环境变量。后者仅补充尚未配置的值。搜索、测绘等独立服务的凭据仍使用各自名称。
+
 | 变量 | 说明 |
 | --- | --- |
 | `OPENAI_API_KEY` | OpenAI API key |
@@ -485,7 +487,7 @@ scan:
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `ANTHROPIC_BASE_URL` | Anthropic-compatible API base URL |
 | `ANTHROPIC_MODEL` | Claude Code 风格模型名 |
-| `CYBER_API_KEY` | 统一 fallback API key（所有 provider 通用） |
+| `CYBER_API_KEY` | 统一模型 API key，所有 Cyber 二进制共用；覆盖配置文件，显式 CLI 优先 |
 | `CYBER_BASE_URL` | 统一 LLM API base URL |
 | `CYBER_MODEL` | 统一模型名 |
 | `CYBER_PROVIDER` | 协议类型：`openai` 或 `anthropic` |
@@ -540,7 +542,7 @@ scan:
 设置对应环境变量或通过 `--api-key` 传入：
 
 ```bash
-export OPENAI_API_KEY="sk-..."
+export CYBER_API_KEY="sk-..."
 aiscan agent -p "检查目标" -i http://target.example
 ```
 

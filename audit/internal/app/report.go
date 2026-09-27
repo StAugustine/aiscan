@@ -14,23 +14,27 @@ import (
 	"time"
 
 	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/pkg/console"
 	"github.com/chainreactors/cyber/tools/okf"
 )
 
 type runReport struct {
-	Directory string             `json:"-"`
-	ID        string             `json:"id"`
-	Workspace string             `json:"workspace"`
-	Goal      string             `json:"goal,omitempty"`
-	Revision  string             `json:"revision,omitempty"`
-	Dirty     *bool              `json:"dirty,omitempty"`
-	GitError  string             `json:"git_error,omitempty"`
-	Resume    string             `json:"resume,omitempty"`
-	Started   time.Time          `json:"started"`
-	Finished  *time.Time         `json:"finished,omitempty"`
-	Status    string             `json:"status"`
-	Error     string             `json:"error,omitempty"`
-	Tools     []toolchain.Status `json:"tools"`
+	Directory       string             `json:"-"`
+	ID              string             `json:"id"`
+	Workspace       string             `json:"workspace"`
+	Goal            string             `json:"goal,omitempty"`
+	Revision        string             `json:"revision,omitempty"`
+	Dirty           *bool              `json:"dirty,omitempty"`
+	GitError        string             `json:"git_error,omitempty"`
+	GitRoot         string             `json:"git_root,omitempty"`
+	GitSubdir       string             `json:"git_subdir,omitempty"`
+	GitTrackedFiles int                `json:"git_tracked_files"`
+	Resume          string             `json:"resume,omitempty"`
+	Started         time.Time          `json:"started"`
+	Finished        *time.Time         `json:"finished,omitempty"`
+	Status          string             `json:"status"`
+	Error           string             `json:"error,omitempty"`
+	Tools           []toolchain.Status `json:"tools"`
 }
 type coverage struct {
 	Reviewed    bool          `json:"reviewed"`
@@ -83,21 +87,7 @@ func newReport(ctx context.Context, workDir, requested, task, resume string, too
 	}
 	dir = filepath.Clean(dir)
 	r := &runReport{Directory: dir, ID: id, Workspace: workDir, Goal: task, Resume: resume, Started: now, Status: "running", Tools: tools}
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(gitCtx, "git", "-C", workDir, "rev-parse", "HEAD")
-	if out, err := cmd.Output(); err == nil {
-		r.Revision = strings.TrimSpace(string(out))
-		status, err := exec.CommandContext(gitCtx, "git", "-C", workDir, "status", "--porcelain", "--untracked-files=normal").Output()
-		if err == nil {
-			dirty := strings.TrimSpace(string(status)) != ""
-			r.Dirty = &dirty
-		} else {
-			r.GitError = "could not read worktree status"
-		}
-	} else {
-		r.GitError = "Git/revision unavailable; auditing supplied files"
-	}
+	r.captureGit(ctx)
 	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return nil, err
 	}
@@ -129,6 +119,55 @@ func newReport(ctx context.Context, workDir, requested, task, resume string, too
 	}
 	return r, nil
 }
+
+// A parent repository's HEAD is not provenance for an imported, untracked tree.
+// Even for tracked scopes, revision identifies the Git base; dirty is scoped to
+// the audited directory and captures local modifications before report creation.
+func (r *runReport) captureGit(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	git := func(args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, "git", append([]string{"-C", r.Workspace}, args...)...).Output()
+	}
+	root, err := git("rev-parse", "--show-toplevel")
+	if err != nil {
+		r.GitError = "Git/revision unavailable; auditing supplied files"
+		return
+	}
+	r.GitRoot = strings.TrimSpace(string(root))
+	prefix, err := git("rev-parse", "--show-prefix")
+	if err != nil {
+		r.GitError = "could not identify audited Git subdirectory"
+		return
+	}
+	r.GitSubdir = strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/")
+	if r.GitSubdir == "" {
+		r.GitSubdir = "."
+	}
+	tracked, err := git("ls-files", "-z", "--", ".")
+	if err != nil {
+		r.GitError = "could not identify tracked audit files"
+		return
+	}
+	r.GitTrackedFiles = strings.Count(string(tracked), "\x00")
+	if r.GitTrackedFiles == 0 {
+		r.GitError = "audited directory has no Git-tracked files; parent repository revision does not identify this snapshot"
+		return
+	}
+	revision, err := git("rev-parse", "HEAD")
+	if err != nil {
+		r.GitError = "Git revision unavailable; auditing supplied files"
+		return
+	}
+	r.Revision = strings.TrimSpace(string(revision))
+	status, err := git("status", "--porcelain", "--untracked-files=normal", "--", ".")
+	if err != nil {
+		r.GitError = "could not read audited worktree status"
+		return
+	}
+	dirty := strings.TrimSpace(string(status)) != ""
+	r.Dirty = &dirty
+}
 func (r *runReport) save() error { return writeJSON(filepath.Join(r.Directory, "run.json"), r) }
 func (r *runReport) finish(ctx context.Context, runErr error) error {
 	runErr = errors.Join(runErr, ctx.Err())
@@ -140,6 +179,9 @@ func (r *runReport) finish(ctx context.Context, runErr error) error {
 		}
 	} else {
 		r.Status = "failed"
+		if onlyReportValidationErrors(runErr) {
+			r.Status = "incomplete"
+		}
 	}
 	if runErr != nil {
 		r.Error = runErr.Error()
@@ -150,6 +192,30 @@ func (r *runReport) finish(ctx context.Context, runErr error) error {
 	now := time.Now().UTC()
 	r.Finished = &now
 	return errors.Join(runErr, r.save())
+}
+
+// Cleanup failures can be joined with a validation error. They still mean the
+// run failed, even though its deliverable also needs repair.
+func onlyReportValidationErrors(err error) bool {
+	if _, ok := err.(*console.TaskValidationError); ok {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !onlyReportValidationErrors(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return onlyReportValidationErrors(wrapped.Unwrap())
+	}
+	return false
 }
 
 // searchExclusions is shared by rg's default config and the model's AST recipes.
@@ -183,17 +249,26 @@ func (r *runReport) validate(ctx context.Context) error {
 	if err = json.Unmarshal(body, &c); err != nil {
 		return fmt.Errorf("coverage.json: %w", err)
 	}
-	if !c.Reviewed || c.Scope == "" || len(c.Examined) == 0 || c.Excluded == nil || c.Unsupported == nil || c.Unresolved == nil {
+	if !c.Reviewed || strings.TrimSpace(c.Scope) == "" || len(c.Examined) == 0 || c.Excluded == nil || c.Unsupported == nil || c.Unresolved == nil {
 		return fmt.Errorf("audit report incomplete: coverage must identify examined scope and remaining limits")
+	}
+	for field, values := range map[string][]string{"examined": c.Examined, "excluded": c.Excluded, "unsupported": c.Unsupported, "unresolved": c.Unresolved} {
+		if !nonblankItems(values) {
+			return fmt.Errorf("coverage.json: %s contains a blank entry", field)
+		}
 	}
 	checks := map[string]bool{}
 	for _, check := range c.Checks {
+		name := strings.TrimSpace(check.Tool)
+		if name == "" || checks[name] {
+			return fmt.Errorf("coverage.json: check requires a unique non-empty tool name: %q", check.Tool)
+		}
 		switch check.Status {
 		case "completed", "incomplete", "not_applicable":
 		default:
-			return fmt.Errorf("invalid check status %q", check.Status)
+			return fmt.Errorf("coverage.json: %s: invalid check status %q (expected completed, incomplete or not_applicable)", name, check.Status)
 		}
-		if check.Evidence == "" {
+		if strings.TrimSpace(check.Evidence) == "" {
 			return fmt.Errorf("%s check requires evidence or a reason", check.Tool)
 		}
 		if check.Status == "completed" {
@@ -204,7 +279,7 @@ func (r *runReport) validate(ctx context.Context) error {
 		if check.Status == "incomplete" && len(c.Unresolved) == 0 {
 			return fmt.Errorf("incomplete check %s requires an unresolved limitation", check.Tool)
 		}
-		checks[check.Tool] = true
+		checks[name] = true
 	}
 	if !checks["osv-scanner"] || !checks["proton"] {
 		return fmt.Errorf("coverage must record SCA and leak checks, including skipped/incomplete reasons")
@@ -222,7 +297,7 @@ func (r *runReport) validate(ctx context.Context) error {
 	}
 	ids := map[string]bool{}
 	for _, f := range findings {
-		if f.ID == "" || f.Title == "" || ids[f.ID] {
+		if strings.TrimSpace(f.ID) == "" || strings.TrimSpace(f.Title) == "" || ids[f.ID] {
 			return fmt.Errorf("finding requires a unique id and title")
 		}
 		ids[f.ID] = true
@@ -236,10 +311,10 @@ func (r *runReport) validate(ctx context.Context) error {
 		default:
 			return fmt.Errorf("%s: invalid verification", f.ID)
 		}
-		if f.Status == "confirmed" && (f.Location == "" || f.Preconditions == "" || f.Impact == "" || len(f.Trace) == 0 || len(f.Evidence) == 0 || f.Verification == "not_attempted") {
+		if f.Status == "confirmed" && (strings.TrimSpace(f.Location) == "" || strings.TrimSpace(f.Preconditions) == "" || strings.TrimSpace(f.Impact) == "" || len(f.Trace) == 0 || !nonblankItems(f.Trace) || len(f.Evidence) == 0 || f.Verification == "not_attempted") {
 			return fmt.Errorf("%s: confirmed finding lacks trace/evidence", f.ID)
 		}
-		if f.Verification == "reproduced" && (f.Reproduction == "" || len(f.Evidence) == 0) {
+		if f.Verification == "reproduced" && (strings.TrimSpace(f.Reproduction) == "" || len(f.Evidence) == 0) {
 			return fmt.Errorf("%s: reproduction evidence required", f.ID)
 		}
 		for _, path := range f.Evidence {
@@ -255,6 +330,9 @@ func (r *runReport) validate(ctx context.Context) error {
 	if strings.Contains(string(body), "# Audit in progress") {
 		return fmt.Errorf("audit report incomplete: index.md is still a draft")
 	}
+	if err := reportEvidence(r.Directory, "log.md"); err != nil {
+		return fmt.Errorf("audit report incomplete: investigation log required: %w", err)
+	}
 	validation, err := okf.Validate(ctx, r.Directory, false)
 	if err != nil {
 		return err
@@ -266,17 +344,29 @@ func (r *runReport) validate(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+func nonblankItems(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func reportEvidence(dir, path string) error {
-	if filepath.IsAbs(path) {
+	if !filepath.IsLocal(filepath.FromSlash(path)) {
 		return fmt.Errorf("evidence must use a report-relative path: %s", path)
 	}
 	rel := filepath.Clean(filepath.FromSlash(path))
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("evidence must remain in the report: %s", path)
-	}
-	info, err := os.Stat(filepath.Join(dir, rel))
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("missing evidence %s: %w", path, err)
+		return fmt.Errorf("resolve report directory: %w", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil {
+		return fmt.Errorf("missing evidence %s (requires a report-local file or contained relative symlink): %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("evidence is not a file: %s", path)

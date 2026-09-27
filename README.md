@@ -56,7 +56,7 @@ llm:
   model: deepseek-chat
 ```
 
-Set `OPENAI_API_KEY` to your credential. For Anthropic-compatible services, use `provider: anthropic` and the corresponding settings. See the [configuration reference](docs/reference.md) for protocols, profiles, and precedence.
+Set `CYBER_API_KEY` to your credential. For Anthropic-compatible services, use `provider: anthropic` and the corresponding settings. See the [configuration reference](docs/reference.md) for protocols, profiles, and precedence.
 
 ## Documentation
 

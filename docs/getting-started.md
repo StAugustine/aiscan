@@ -61,13 +61,13 @@ llm:
 通过环境变量设置密钥。Linux/macOS：
 
 ```sh
-export OPENAI_API_KEY="你的密钥"
+export CYBER_API_KEY="你的密钥"
 ```
 
 PowerShell：
 
 ```powershell
-$env:OPENAI_API_KEY = "你的密钥"
+$env:CYBER_API_KEY = "你的密钥"
 ```
 
 OpenAI-compatible 服务使用 `provider: openai`；Anthropic-compatible 服务使用 `anthropic` 和对应凭据。配置文件与环境变量的优先级见 [参考手册](reference.md#配置优先级)。

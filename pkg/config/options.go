@@ -37,10 +37,10 @@ type Option struct {
 }
 
 type LLMOptions struct {
-	Provider      string             `long:"provider" config:"provider" description:"LLM protocol: openai (OpenAI-compatible, default) or anthropic"`
-	BaseURL       string             `long:"base-url" config:"base_url" description:"LLM API base URL (leave empty to use provider default)"`
-	APIKey        string             `long:"api-key" config:"api_key" description:"LLM API key (or env: OPENAI_API_KEY, ANTHROPIC_API_KEY, CYBER_API_KEY)"`
-	Model         string             `long:"model" config:"model" description:"LLM model name"`
+	Provider      string             `long:"provider" config:"provider" description:"LLM protocol: openai (default) or anthropic; env: CYBER_PROVIDER"`
+	BaseURL       string             `long:"base-url" config:"base_url" description:"LLM API base URL; env: CYBER_BASE_URL (otherwise provider default)"`
+	APIKey        string             `long:"api-key" config:"api_key" description:"Shared LLM API key; env: CYBER_API_KEY (OPENAI_API_KEY/ANTHROPIC_API_KEY remain fallbacks)"`
+	Model         string             `long:"model" config:"model" description:"LLM model name; env: CYBER_MODEL"`
 	MaxTokens     int                `long:"max-tokens" config:"max_tokens" description:"Maximum output tokens per LLM response"`
 	ContextWindow int                `long:"context-window" config:"context_window" description:"Explicit model context window in tokens"`
 	LLMProxy      string             `long:"llm-proxy" config:"proxy" description:"Proxy for LLM API requests"`
@@ -152,11 +152,14 @@ const (
 	RunModeNoCommand RunMode = ""
 )
 
+// HasAgentTaskInput distinguishes explicit tasks from stdin/interactive mode.
+// Presence matters: --prompt="" is an invalid task, not a request for the REPL.
+func HasAgentTaskInput(opt *Option) bool {
+	return opt.Prompt != "" || opt.TaskFile != "" || opt.hasExplicit("Prompt") || opt.hasExplicit("TaskFile") || len(opt.Inputs) > 0
+}
+
 func HasAgentOneShotInput(opt *Option) bool {
-	if strings.TrimSpace(opt.Prompt) != "" || opt.TaskFile != "" || len(opt.Inputs) > 0 {
-		return true
-	}
-	return !StdinIsTerminal()
+	return HasAgentTaskInput(opt) || !StdinIsTerminal()
 }
 
 func StdinIsTerminal() bool {
@@ -167,8 +170,33 @@ func StdinIsTerminal() bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func ResolveTask(opt *Option) (string, error) {
+// ResolveTaskPrompt resolves only explicit text/file input. Hosts retain their
+// own policy for stdin, input-only defaults and interactive mode.
+func ResolveTaskPrompt(opt *Option) (string, error) {
+	hasPrompt := opt.Prompt != "" || opt.hasExplicit("Prompt")
+	hasFile := opt.TaskFile != "" || opt.hasExplicit("TaskFile")
+	if hasPrompt && hasFile {
+		return "", fmt.Errorf("use either --prompt or --task-file")
+	}
 	prompt, err := ResolvePrompt(opt.Prompt)
+	if err != nil {
+		return "", err
+	}
+	if hasFile {
+		data, err := os.ReadFile(opt.TaskFile)
+		if err != nil {
+			return "", fmt.Errorf("read task file: %w", err)
+		}
+		prompt = strings.TrimSpace(string(data))
+	}
+	if (hasPrompt || hasFile) && prompt == "" {
+		return "", fmt.Errorf("task is empty")
+	}
+	return prompt, nil
+}
+
+func ResolveTask(opt *Option) (string, error) {
+	prompt, err := ResolveTaskPrompt(opt)
 	if err != nil {
 		return "", err
 	}
@@ -177,18 +205,6 @@ func ResolveTask(opt *Option) (string, error) {
 			return fmt.Sprintf("%s\n\nTargets:\n%s", prompt, FormatInputs(opt.Inputs)), nil
 		}
 		return prompt, nil
-	}
-
-	if opt.TaskFile != "" {
-		data, err := os.ReadFile(opt.TaskFile)
-		if err != nil {
-			return "", fmt.Errorf("read task file: %w", err)
-		}
-		task := strings.TrimSpace(string(data))
-		if len(opt.Inputs) > 0 {
-			return fmt.Sprintf("%s\n\nTargets:\n%s", task, FormatInputs(opt.Inputs)), nil
-		}
-		return task, nil
 	}
 
 	if !StdinIsTerminal() {

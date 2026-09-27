@@ -4,7 +4,10 @@ type: reference
 
 # Minimal tools
 
-`read`, `ls`, `glob` and `bash` provide code access. Use `write` for assigned audit artifacts.
+`read`, `ls`, `glob` and `bash` provide code access. Use `write` for audit artifacts
+inside the workspace; use bash with quoted absolute paths for an external report
+directory. `glob` supports single-directory patterns such as `src/*.go`; use
+`rg --files -g '*.go'` for recursive discovery instead of a `**` glob.
 Always quote paths. Shell syntax depends on the runtime environment; on Windows
 Git Bash is preferred. Consult each CLI's `--help` before unfamiliar options.
 
@@ -43,7 +46,9 @@ other nonzero results need diagnosis and must remain visible in coverage.
 ## Dependency evidence
 
 ```sh
+# Directory discovery (choose a scoped directory):
 osv-scanner scan source --recursive --format json --no-call-analysis=go --no-call-analysis=rust --output-file <output>/osv.json .
+# Explicit lockfile (do not append the directory from the previous example):
 osv-scanner scan source --lockfile <path> --format json --no-call-analysis=go --no-call-analysis=rust --output-file <output>/osv.json
 ```
 
@@ -51,6 +56,13 @@ For directory scans add `--experimental-exclude .cyber` and exclude an assigned
 report directory. Disable call analysis as shown to avoid build-script execution.
 Prefer explicit discovered lockfiles/manifests when the repository contains
 generated output or fixtures. `--help` lists supported inputs/options.
+These are alternative recipes. Directory discovery honors .gitignore, including
+an enclosing repository's rules for imported snapshots. Combining a lockfile
+with an ignored directory can produce exit 127 / "could not determine extractor"
+even when that lockfile works on its own. Retry the explicit lockfile recipe
+without a positional directory. When ignored files are intentionally in scope,
+use `--no-ignore` with that scoped directory and retain report exclusions; do not
+expand the scan to the parent repository. Preserve the failed invocation too.
 Version 2: exit 0 means a completed scan with no vulnerabilities; exit 1 means
 vulnerabilities were found; exit 128 means no supported packages were found.
 Other nonzero statuses are failures. Capture stderr and exit status even when

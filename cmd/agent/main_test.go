@@ -63,7 +63,8 @@ func TestAgentOneShotRunsAgainstOpenAICompatibleGateway(t *testing.T) {
 			return
 		}
 		var request struct {
-			Model string `json:"model"`
+			Model  string `json:"model"`
+			Stream bool   `json:"stream"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode request: %v", err)
@@ -75,6 +76,11 @@ func TestAgentOneShotRunsAgainstOpenAICompatibleGateway(t *testing.T) {
 		select {
 		case called <- request.Model:
 		default:
+		}
+		if request.Stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"fixture response\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"fixture response"},"finish_reason":"stop"}]}`)
@@ -89,6 +95,9 @@ func TestAgentOneShotRunsAgainstOpenAICompatibleGateway(t *testing.T) {
 	if err != nil {
 		t.Fatalf("agent run failed: %v\nstderr: %s", err, stderr.String())
 	}
+	if !strings.Contains(stdout.String(), "fixture response") {
+		t.Fatalf("task bypassed the provided writer: %q", stdout.String())
+	}
 	select {
 	case model := <-called:
 		if model != "fixture" {
@@ -96,5 +105,31 @@ func TestAgentOneShotRunsAgainstOpenAICompatibleGateway(t *testing.T) {
 		}
 	default:
 		t.Fatalf("agent did not call the configured gateway; stdout = %q", stdout.String())
+	}
+}
+
+func TestAgentHelpAndStartupErrorOutput(t *testing.T) {
+	var output strings.Builder
+	if _, _, err := parseOptions([]string{"--help"}, &output); err == nil || !strings.Contains(output.String(), "prompt") {
+		t.Fatalf("help error=%v output=%q", err, output.String())
+	}
+	for _, args := range [][]string{
+		{"--json", "--provider", "invalid-fixture"},
+		{"--json", "--timeout", "-1"},
+		{"--json", "--prompt", "fixture", "--task-file", "missing"},
+		{"--json", "--unknown-fixture"},
+		{"--json", "unexpected-positional"},
+	} {
+		output.Reset()
+		err := run(t.Context(), args, &output, io.Discard)
+		var result struct {
+			IsError bool `json:"is_error"`
+		}
+		if decodeErr := json.Unmarshal([]byte(output.String()), &result); decodeErr != nil {
+			t.Fatalf("%v: err=%v decode=%v", args, err, decodeErr)
+		}
+		if err == nil || !result.IsError {
+			t.Fatalf("args=%v err=%v output=%s", args, err, output.String())
+		}
 	}
 }

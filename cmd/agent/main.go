@@ -17,8 +17,10 @@ import (
 	"github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/telemetry"
 	"github.com/chainreactors/cyber/pkg/cli/configuration"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	"github.com/chainreactors/cyber/pkg/console"
+	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -67,7 +69,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (resultEr
 	if handled, err := configuration.Run(ctx, args, configuration.Host{Name: "agent", Out: stdout, Err: stderr}); handled {
 		return err
 	}
-	parsed, option, err := parseOptions(args, stderr)
+	parsed, option, err := parseOptions(args, stdout)
+	output := taskcli.NewOutput(&option, stdout, stderr)
+	defer func() { resultErr = output.Finish(resultErr) }()
 	if err != nil {
 		return err
 	}
@@ -84,14 +88,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (resultEr
 			fmt.Fprintln(stderr, message)
 		}
 	}
-	if parsed.JSON {
-		option.OutputFormat = "json"
-	}
-	switch option.OutputFormat {
-	case "text", "json", "stream-json":
-	default:
-		return fmt.Errorf("unsupported --output-format %q", option.OutputFormat)
-	}
 	workDir := strings.TrimSpace(parsed.WorkDir)
 	if workDir == "" {
 		workDir, err = os.Getwd()
@@ -103,43 +99,60 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) (resultEr
 	if err != nil {
 		return err
 	}
-	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
-	profile, err := newAgentProfile(option, logger, workDir, parsed.BashTimeout)
+	info, err := os.Stat(workDir)
 	if err != nil {
 		return err
 	}
-	if err := profile.Load(ctx); err != nil {
-		return errors.Join(err, profile.Close(context.Background()))
+	if !info.IsDir() {
+		return fmt.Errorf("workdir must be a directory")
 	}
-	defer func() { resultErr = errors.Join(resultErr, profile.Close(context.Background())) }()
-
+	if parsed.BashTimeout <= 0 {
+		return fmt.Errorf("--bash-timeout must be positive")
+	}
+	oneShot := cfg.HasAgentOneShotInput(&option)
+	var task string
+	if oneShot {
+		task, err = cfg.ResolveTask(&option)
+		if err != nil {
+			return err
+		}
+	} else if option.OutputFormat != "text" {
+		return fmt.Errorf("--output-format=%s is only available for one-shot agent runs", option.OutputFormat)
+	}
 	runCtx := ctx
 	if option.Timeout > 0 {
 		var cancel context.CancelFunc
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
 		defer cancel()
 	}
-	if !cfg.HasAgentOneShotInput(&option) {
+	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
+	profile, err := newAgentProfile(option, logger, workDir, parsed.BashTimeout)
+	if err != nil {
+		return err
+	}
+	finish := profilepkg.CloseOnce(runCtx, profile.Close)
+	defer func() { resultErr = finish(resultErr) }()
+	if err := profile.Load(runCtx); err != nil {
+		return err
+	}
+
+	if !oneShot {
 		if _, err := profile.runtime.Skills().ApplySelected("", option.Skills); err != nil {
 			return err
 		}
 		return console.AttachLocalREPL(runCtx, profile.runtime, &option, profile.ConsoleBindings())
-	}
-	task, err := cfg.ResolveTask(&option)
-	if err != nil {
-		return err
 	}
 	task = skills.ExpandCommand(task, profile.runtime.Skills())
 	task, err = profile.runtime.Skills().ApplySelected(task, option.Skills)
 	if err != nil {
 		return err
 	}
-	return console.RunTask(runCtx, profile.runtime, &option, "task", "task", task, agentsession.RunInput{
+	return output.Run(runCtx, profile.runtime, "task", "task", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
-	}, nil)
+	}, finish)
 }
 
-func parseOptions(args []string, stderr io.Writer) (options, cfg.Option, error) {
+func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, error) {
 	var parsed options
 	parser := flags.NewParser(&parsed, flags.Default&^flags.PrintErrors)
 	configuration.RegisterHelp(parser)
@@ -148,10 +161,14 @@ func parseOptions(args []string, stderr io.Writer) (options, cfg.Option, error) 
 	parser.Usage = "[OPTIONS]"
 	rest, err := parser.ParseArgs(args)
 	if err != nil {
-		return parsed, cfg.Option{}, err
+		var flagErr *flags.Error
+		if errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp {
+			parser.WriteHelp(helpOutput)
+		}
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, err
 	}
 	if len(rest) != 0 {
-		return parsed, cfg.Option{}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
 	}
 	option := cfg.Option{
 		LLMOptions: parsed.LLMOptions,

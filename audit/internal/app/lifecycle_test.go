@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -275,6 +276,7 @@ func TestAuditFinalOutputIncludesReportOutcome(t *testing.T) {
 				reportDir := filepath.Join(workspace, "report")
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
+				var requests atomic.Int32
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					body, _ := io.ReadAll(r.Body)
 					if !strings.Contains(string(body), "cyber-audit") {
@@ -282,10 +284,12 @@ func TestAuditFinalOutputIncludesReportOutcome(t *testing.T) {
 						return
 					}
 					if outcome == "model-failure" {
+						requests.Add(1)
 						http.Error(w, "fixture provider failure", http.StatusBadRequest)
 						return
 					}
 					if outcome == "canceled" {
+						requests.Add(1)
 						cancel()
 						return
 					}
@@ -314,13 +318,21 @@ func TestAuditFinalOutputIncludesReportOutcome(t *testing.T) {
 							}
 						}
 					}
+					requests.Add(1)
 					streamReply(w, "Model finished.")
 				}))
 				defer server.Close()
-				output, runErr := captureStdout(t, func() error {
-					return run(ctx, []string{"--workdir", workspace, "--data-dir", t.TempDir(), "--report-dir", reportDir, "--provider", "openai", "--base-url", server.URL, "--api-key", "fixture", "--model", "fixture", "-p", "Review", "--output-format", format, "--quiet", "--no-color"}, io.Discard, io.Discard, fakeTools)
-				})
+				var outputBuffer strings.Builder
+				runErr := run(ctx, []string{"--workdir", workspace, "--data-dir", t.TempDir(), "--report-dir", reportDir, "--provider", "openai", "--base-url", server.URL, "--api-key", "fixture", "--model", "fixture", "-p", "Review", "--output-format", format, "--quiet", "--no-color"}, &outputBuffer, io.Discard, fakeTools)
+				output := outputBuffer.String()
 				wantFailure := outcome != "valid"
+				wantRequests := int32(1)
+				if outcome == "missing" || outcome == "invalid-okf" {
+					wantRequests = 3
+				}
+				if requests.Load() != wantRequests {
+					t.Fatalf("requests=%d want=%d", requests.Load(), wantRequests)
+				}
 				if (runErr != nil) != wantFailure {
 					t.Fatalf("run outcome: %v", runErr)
 				}

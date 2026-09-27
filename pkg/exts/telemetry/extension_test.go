@@ -10,8 +10,41 @@ import (
 	telemetry "github.com/chainreactors/cyber/pkg/exts/telemetry"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
+
+func TestBurstRecordingWithTinyQueueIsLossless(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "burst.jsonl")
+	events := coreevents.New()
+	writer, err := telemetry.New(telemetry.Options{Path: path, Queue: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	set, err := extension.New(extension.Provided[*coreevents.Stream](events), writer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set.Load(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const count = 10000
+	for i := range count {
+		events.Publish(&aop.Event{Id: strconv.Itoa(i), SessionId: "burst", Payload: &aop.Event_Status{Status: &aop.Status{State: "streaming"}}})
+	}
+	if err := set.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := eventjsonl.ReadJSONL(path)
+	if err != nil || len(recorded) != count {
+		t.Fatalf("events=%d err=%v", len(recorded), err)
+	}
+	for i, event := range recorded {
+		if event.Id != strconv.Itoa(i) || event.Seq != uint64(i+1) {
+			t.Fatalf("event %d: %v", i, event)
+		}
+	}
+}
 
 func TestOutputIsInertThenDrainsCanonicalEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.jsonl")

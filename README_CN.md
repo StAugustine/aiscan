@@ -54,7 +54,7 @@ llm:
   model: deepseek-chat
 ```
 
-通过 `OPENAI_API_KEY` 提供密钥。Anthropic-compatible 服务使用 `provider: anthropic` 和相应配置。协议、profile、环境变量优先级见 [配置参考](docs/reference.md)。
+通过 `CYBER_API_KEY` 提供密钥。Anthropic-compatible 服务使用 `provider: anthropic` 和相应配置。协议、profile、环境变量优先级见 [配置参考](docs/reference.md)。
 
 ## 文档
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,10 +19,11 @@ import (
 	"github.com/chainreactors/cyber/audit/internal/toolchain"
 	"github.com/chainreactors/cyber/core/telemetry"
 	"github.com/chainreactors/cyber/pkg/cli/configuration"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	"github.com/chainreactors/cyber/pkg/console"
 	"github.com/chainreactors/cyber/pkg/node"
-	"github.com/chainreactors/cyber/pkg/profile"
+	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	flags "github.com/jessevdk/go-flags"
 )
 
@@ -59,14 +61,27 @@ type options struct {
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return run(ctx, args, stdout, stderr, (*toolchain.Manager).Ensure)
 }
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) error {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) (err error) {
+	args = toolCommandFirst(args)
+	if len(args) > 0 && args[0] == "validate" {
+		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+			_, err := fmt.Fprintln(stdout, "Usage: cyber-audit validate <report-directory>\nRead-only check of coverage, findings, evidence paths and OKF; no model credentials or tool installation required.")
+			return err
+		}
+		if len(args) != 2 {
+			return fmt.Errorf("usage: cyber-audit validate <report-directory>")
+		}
+		return validateReport(ctx, args[1], stdout)
+	}
 	if handled, err := runToolCommand(ctx, args, stdout, stderr); handled {
 		return err
 	}
 	if handled, err := configuration.Run(ctx, args, configuration.Host{Name: "cyber-audit", Context: &cfg.Context{UserLLMOnly: true}, Out: stdout, Err: stderr}); handled {
 		return err
 	}
-	parsed, option, err := parseOptions(args, stderr)
+	parsed, option, err := parseOptions(args, stdout)
+	output := taskcli.NewOutput(&option, stdout, stderr)
+	defer func() { err = output.Finish(err) }()
 	if err != nil {
 		return err
 	}
@@ -85,14 +100,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		for _, message := range option.Snapshot.Diagnostics {
 			fmt.Fprintln(stderr, message)
 		}
-	}
-	if parsed.JSON {
-		option.OutputFormat = "json"
-	}
-	switch option.OutputFormat {
-	case "text", "json", "stream-json":
-	default:
-		return fmt.Errorf("unsupported --output-format %q", option.OutputFormat)
 	}
 	workDir := strings.TrimSpace(parsed.WorkDir)
 	if workDir == "" {
@@ -121,6 +128,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
 		defer cancel()
 	}
+	if parsed.BashTimeout <= 0 {
+		return fmt.Errorf("--bash-timeout must be positive")
+	}
 	manager, err := toolchain.New(option.DataDir)
 	if err != nil {
 		return err
@@ -131,10 +141,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	}
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
 	if transport == cfg.AgentTransportWeb {
-		if oneShot || option.Resume != "" {
-			return fmt.Errorf("node mode receives audit tasks from the server; omit --prompt, --input, --task-file and --resume")
-		}
-		build := func(request profile.Request) (profile.Profile, error) {
+		build := func(request profilepkg.Request) (profilepkg.Profile, error) {
 			return newAuditProfile(request, workDir, parsed.BashTimeout, nil, manager.Manager, statuses)
 		}
 		return node.RunWebSocket(ctx, build, &option, logger)
@@ -144,15 +151,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		return err
 	}
 	fmt.Fprintf(stderr, "Audit report: %s\n", report.Directory)
-	profile, err := newAuditProfile(profile.Request{Option: &option, ProviderMode: provider.StartupRequired, Logger: logger, Session: &agentsession.Config{PrimarySessionID: "main", Loop: agent.StandardLoop{}}}, workDir, parsed.BashTimeout, report, manager.Manager, report.Tools)
+	profile, err := newAuditProfile(profilepkg.Request{Option: &option, ProviderMode: provider.StartupRequired, Logger: logger, Session: &agentsession.Config{PrimarySessionID: "main", Loop: agent.StandardLoop{}}}, workDir, parsed.BashTimeout, report, manager.Manager, report.Tools)
 	if err != nil {
 		return report.finish(ctx, err)
 	}
-	finish := func(runErr error) error {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		return report.finish(ctx, errors.Join(runErr, profile.Close(closeCtx)))
-	}
+	closeProfile := profilepkg.CloseOnce(ctx, profile.Close)
+	finish := func(runErr error) error { return report.finish(ctx, closeProfile(runErr)) }
 	if err := profile.Load(ctx); err != nil {
 		return finish(err)
 	}
@@ -167,24 +171,31 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	if err != nil {
 		return finish(err)
 	}
-	return console.RunTask(ctx, profile.runtime, &option, "task", "audit", task, agentsession.RunInput{
+	output.Validation = console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
+		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."}
+	return output.Run(ctx, profile.runtime, "task", "audit", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
 	}, finish)
 }
 
-func parseOptions(args []string, stderr io.Writer) (options, cfg.Option, error) {
+func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, error) {
 	var parsed options
 	parser := flags.NewParser(&parsed, flags.Default&^flags.PrintErrors)
 	configuration.RegisterHelp(parser)
 	parser.SubcommandsOptional = true
 	parser.Name = "cyber-audit"
 	parser.Usage = "[OPTIONS]"
+	parser.LongDescription = "Model-led code audit. Shared model settings: CYBER_API_KEY, CYBER_BASE_URL, CYBER_MODEL, CYBER_PROVIDER.\n\nCommands:\n  validate <report-directory>  Check a complete report without starting a model\n  doctor                      Check required tools\n  tools install               Prepare required tools\n  config                      Inspect or configure shared Cyber settings"
 	rest, err := parser.ParseArgs(args)
 	if err != nil {
-		return parsed, cfg.Option{}, err
+		var flagErr *flags.Error
+		if errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp && helpOutput != nil {
+			parser.WriteHelp(helpOutput)
+		}
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, err
 	}
 	if len(rest) != 0 {
-		return parsed, cfg.Option{}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
+		return parsed, cfg.Option{MiscOptions: cfg.MiscOptions{OutputFormat: parsed.Format, JSON: parsed.JSON}}, fmt.Errorf("unexpected arguments: %s", strings.Join(rest, " "))
 	}
 	option := cfg.Option{
 		Context:    &cfg.Context{Directory: parsed.WorkDir, UserLLMOnly: true},
@@ -208,29 +219,16 @@ func parseOptions(args []string, stderr io.Writer) (options, cfg.Option, error) 
 
 // No scanner fallback: explicit task -> one-shot; otherwise use the local REPL.
 func resolveAuditTask(option *cfg.Option) (string, bool, error) {
-	if option.Prompt != "" && option.TaskFile != "" {
-		return "", false, fmt.Errorf("use either --prompt or --task-file")
-	}
-	task, err := cfg.ResolvePrompt(option.Prompt)
+	task, err := cfg.ResolveTaskPrompt(option)
 	if err != nil {
 		return "", false, err
 	}
-	if option.TaskFile != "" {
-		body, err := os.ReadFile(option.TaskFile)
-		if err != nil {
-			return "", false, err
-		}
-		task = strings.TrimSpace(string(body))
-	}
-	explicit := option.Prompt != "" || option.TaskFile != "" || len(option.Inputs) > 0
+	explicit := cfg.HasAgentTaskInput(option)
 	if task == "" && len(option.Inputs) > 0 {
 		task = "Audit the supplied source code or binaries for vulnerabilities and record evidence and coverage."
 	}
 	if len(option.Inputs) > 0 {
 		task += "\n\nAudit inputs:\n" + strings.Join(option.Inputs, "\n")
-	}
-	if explicit && strings.TrimSpace(task) == "" {
-		return "", false, fmt.Errorf("audit task is empty")
 	}
 	return task, explicit, nil
 }
@@ -247,12 +245,16 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		rest = rest[1:]
 	}
-	_, option, err := parseOptions(rest, stderr)
+	_, option, err := parseOptions(rest, stdout)
 	if err != nil {
 		return true, err
 	}
-	if _, err := cfg.ResolveRuntimeConfig(&option); err != nil {
+	if _, err := cfg.ResolveToolRuntimeConfig(&option); err != nil {
 		return true, err
+	}
+	format := option.OutputFormat
+	if format != "text" && format != "json" {
+		return true, fmt.Errorf("tool commands support --output-format text or json")
 	}
 	if option.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -271,18 +273,57 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	failed := false
 	for _, status := range statuses {
+		failed = failed || status.Error != ""
+	}
+	if failed && err == nil {
+		err = fmt.Errorf("required tools unavailable; run cyber-audit tools install")
+	}
+	err = errors.Join(err, ctx.Err())
+	if format == "json" {
+		result := struct {
+			Tools   []toolchain.Status `json:"tools"`
+			IsError bool               `json:"is_error"`
+			Error   string             `json:"error,omitempty"`
+		}{Tools: statuses, IsError: err != nil}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return true, errors.Join(err, json.NewEncoder(stdout).Encode(result))
+	}
+	for _, status := range statuses {
+		var writeErr error
 		if status.Error != "" {
-			fmt.Fprintf(stdout, "%s: %s\n", status.Name, status.Error)
-			failed = true
+			_, writeErr = fmt.Fprintf(stdout, "%s: %s\n", status.Name, status.Error)
 		} else {
-			fmt.Fprintf(stdout, "%s %s: %s\n", status.Name, status.Version, status.Path)
+			_, writeErr = fmt.Fprintf(stdout, "%s %s: %s\n", status.Name, status.Version, status.Path)
+		}
+		if writeErr != nil {
+			return true, errors.Join(err, writeErr)
 		}
 	}
-	if err != nil {
-		return true, err
+	return true, err
+}
+
+// Otherwise --data-dir X doctor falls into the shared config doctor's route,
+// while doctor --data-dir X checks audit's installed tools.
+func toolCommandFirst(args []string) []string {
+	var parsed options
+	parser := flags.NewParser(&parsed, flags.PassAfterNonOption)
+	rest, err := parser.ParseArgs(args)
+	if err != nil || len(rest) == 0 {
+		return args
 	}
-	if failed {
-		return true, fmt.Errorf("required tools unavailable; run cyber-audit tools install")
+	index := len(args) - len(rest)
+	if index == 0 {
+		return args
 	}
-	return true, nil
+	switch rest[0] {
+	case "doctor":
+		return append(append([]string{"doctor"}, args[:index]...), rest[1:]...)
+	case "tools":
+		if len(rest) > 1 && rest[1] == "install" {
+			return append(append([]string{"tools", "install"}, args[:index]...), rest[2:]...)
+		}
+	}
+	return args
 }

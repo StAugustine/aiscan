@@ -24,7 +24,7 @@ make harness
 Web 服务以 `--no-agent` 启动，绑定 `127.0.0.1:0`；IOA 场景额外启动两个独立的
 `aiscan agent --transport stdio` 进程，扫描场景启动独立的 Web Agent 和本地 HTTP 目标。每个场景有独立的配置、数据库与
 数据目录。无 LLM 场景仅继承操作系统及动态库加载所需环境变量。真实 LLM 场景
-只额外注入明确配置的 `CYBER_HARNESS_LLM_*`，不读取个人默认模型设置。
+只额外注入明确配置的 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER`，不读取个人默认模型设置。
 
 当前验收范围：
 
@@ -139,7 +139,7 @@ go test -tags live_llm -run '^TestLiveLLMIOAGomoku$' -count=1 -v -timeout 35m ./
 
 长流程方案见 [多租户订单系统的审计、修复、回归与交接](ioa-long-task-plan.md)：实际代码修复、途中需求变化、一次工具故障及新负责人接续。首版入口为 `TestLiveLLMIOALongTask`，模型闭环尚未验收。独立业务环境及实际应用接线分别由 `TestUserOrderLabFixtureContract`、`TestUserIOALongTaskRuntimeSmoke` 验证，两者不包含模型回答。
 
-显式配置 `CYBER_HARNESS_LLM_*` 后运行一轮长任务（默认外部 IOA；设置 `CYBER_HARNESS_LONG_BACKEND=memory` 使用进程内 IOA）：
+显式配置 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER` 后运行一轮长任务（默认外部 IOA；设置 `CYBER_HARNESS_LONG_BACKEND=memory` 使用进程内 IOA）：
 
 ```sh
 go test -tags live_llm -run '^TestLiveLLMIOALongTask$' -count=1 -v -timeout 65m ./cmd/harness
@@ -176,10 +176,10 @@ race 检查覆盖测试驱动；应用子进程仍由普通 `go build -tags full
 
 | 配置 | 要求 |
 | --- | --- | --- |
-| `CYBER_HARNESS_LLM_API_KEY` | 必填，使用独立测试密钥 |
-| `CYBER_HARNESS_LLM_BASE_URL` | 必填，HTTP(S) API 根地址，不含 URL 凭据或查询参数 |
-| `CYBER_HARNESS_LLM_MODEL` | 必填，支持 function calling 的模型；应使用当前账户可用模型，长任务实测使用 `deepseek-v4-pro` |
-| `CYBER_HARNESS_LLM_PROVIDER` | 可选，默认 `openai`；完整 live suite 的 IOA 操作器当前支持 `openai`、`deepseek`（OpenAI 兼容接口）；连接场景单独运行时仍支持应用其他 Provider |
+| `CYBER_API_KEY` | 必填，与 Cyber 各二进制共用模型密钥 |
+| `CYBER_BASE_URL` | 必填，HTTP(S) API 根地址，不含 URL 凭据或查询参数 |
+| `CYBER_MODEL` | 必填，支持 function calling 的模型；应使用当前账户可用模型，长任务实测使用 `deepseek-v4-pro` |
+| `CYBER_PROVIDER` | 可选，默认 `openai`；完整 live suite 的 IOA 操作器当前支持 `openai`、`deepseek`（OpenAI 兼容接口）；连接场景单独运行时仍支持应用其他 Provider |
 
 本地使用同名环境变量后执行 `make harness-llm`，或：
 
@@ -193,3 +193,5 @@ make harness-llm-ioa
 live 场景，即使机器存在个人模型密钥也不会自动调用。HTTP 客户端模拟用户操作接口；
 当前尚未验证浏览器渲染、Agent 会话任务的推理质量或整仓库所有功能。新增场景应明确
 实际入口、前置条件、可观察结果与退出条件，避免用固定快照数量代替覆盖范围。
+
+模型配置优先使用共享 `CYBER_*`；原 `CYBER_HARNESS_LLM_*` 作为低优先级兼容别名保留。普通离线测试不继承这些凭据，仅显式 live 场景注入，日志同时脱敏新旧变量。

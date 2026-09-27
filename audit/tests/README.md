@@ -41,7 +41,8 @@ it against packaged Linux artifacts and the Windows amd64 artifact after UPX.
 
 ## Live model evaluation
 
-Configure a model normally, then audit testdata/repository from a copied temporary
+Use the shared `CYBER_API_KEY`, `CYBER_BASE_URL`, `CYBER_MODEL` and
+`CYBER_PROVIDER` settings (the same as other Cyber binaries), then audit testdata/repository from a copied temporary
 worktree (so reports do not pollute fixtures). Do not expose expected.json to the
 model. Use a fixed provider/model and preserve session.jsonl, run.json and tool
 versions so a reviewer can reproduce the evaluation.
@@ -59,3 +60,8 @@ outcomes, evidence-backed coverage and rejection of the protected lookalike.
 Review traces and reproduction evidence manually as well: a keyword or finding
 count alone is not proof of useful auditing. This opt-in test uses your configured
 provider and can incur model usage. It is skipped by default in CI.
+
+For functionality-only acceptance, explicitly restrict the task to file access,
+text/AST search, CLI execution, evidence saving, `audit validate`, and JSONL resume.
+Keep findings empty and document that vulnerability discovery was not evaluated.
+The live fixture test above evaluates findings and is a separate opt-in scenario.

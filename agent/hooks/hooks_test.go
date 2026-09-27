@@ -453,16 +453,24 @@ func TestConcurrentEmitWhileRegistering(t *testing.T) {
 		registrars.Add(1)
 		go func() {
 			defer registrars.Done()
+			firstCall := make(chan struct{})
+			var called sync.Once
 			for j := 0; j < 200; j++ {
 				off := toolhooks.After.On(r, "racer", func(_ context.Context, ev toolhooks.ResultEvent) (struct{}, error) {
 					calls.Add(1)
 					ev.Result.Output = []*aop.Content{aop.Text(coretool.ResultText(ev.Result) + "!")}
+					called.Do(func() { close(firstCall) })
 					return struct{}{}, nil
 				})
 				offEnd := RunEnd.On(r, "racer", func(_ context.Context, _ RunEndEvent) (struct{}, error) {
 					calls.Add(1)
 					return struct{}{}, nil
 				})
+				// Keep the first subscription live until an emitter observes it,
+				// even when this registrar runs before the emitting goroutines.
+				if j == 0 {
+					<-firstCall
+				}
 				off.Cancel()
 				offEnd.Cancel()
 			}
@@ -475,6 +483,9 @@ func TestConcurrentEmitWhileRegistering(t *testing.T) {
 
 	if n := toolhooks.After.Len(r); n != 0 {
 		t.Fatalf("leftover handlers: %d", n)
+	}
+	if n := RunEnd.Len(r); n != 0 {
+		t.Fatalf("leftover run-end handlers: %d", n)
 	}
 	if calls.Load() == 0 {
 		t.Fatal("no handler ever ran concurrently with registration")

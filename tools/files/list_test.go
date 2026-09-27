@@ -47,6 +47,9 @@ func TestListingAndGlobRespectRootAndCancellation(t *testing.T) {
 	}{
 		{"*.txt", 10, []string{"a.txt", "b.txt"}},
 		{"sub/*.txt", 10, []string{"sub/c.txt"}},
+		{"sub[.-0]c.txt", 10, []string{"sub/c.txt"}},
+		{"sub[^x]c.txt", 10, []string{"sub/c.txt"}},
+		{"sub[/]c.txt", 10, []string{"sub/c.txt"}},
 		{"*.txt", 1, []string{"a.txt"}},
 	} {
 		got, err := f.Glob(t.Context(), tt.pattern, tt.limit)

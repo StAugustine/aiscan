@@ -51,7 +51,7 @@ func (e *Extension) Load(scope *extension.Scope) error {
 		}
 		workspace := fmt.Sprintf("## Audit workspace\n\nRepository: %s\nTool versions:\n%s\n\nSearch exclusions:\n%s\n\nPreserve every occurrence and location as evidence. File-tool paths are repository-relative. Exclude audit artifacts from subsequent repository searches and scans.", e.config.Workspace, e.config.ToolSummary, e.config.SearchExclusions)
 		if e.config.ReportDir != "" {
-			workspace += "\nReport directory: " + e.config.ReportDir + "\nRead cyber://skills/audit/report.md. Store coverage.json, findings.json, raw tool output and the final OKF index.md in this directory. Do not edit run.json or session.jsonl; the harness records session.jsonl. Keep experiments and reports in the report directory."
+			workspace += "\nReport directory: " + e.config.ReportDir + "\nRead cyber://skills/audit/report.md. Store coverage.json, findings.json, raw tool output and the final OKF index.md in this directory. File tools cannot access paths outside the workspace: if the report is outside it, use bash with quoted absolute paths to read/write report files. Do not edit run.json or session.jsonl; the harness records session.jsonl. Keep experiments and reports in the report directory. Before finishing, run `audit validate` through bash to check the complete report contract (coverage, findings, evidence and OKF)."
 		} else {
 			workspace += "\nNo local report directory is assigned. Return findings, evidence, coverage and unresolved limits in the task response. Keep temporary experiments outside the target repository."
 		}

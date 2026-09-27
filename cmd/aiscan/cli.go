@@ -16,6 +16,7 @@ import (
 	"github.com/chainreactors/cyber/core/telemetry"
 	hostcli "github.com/chainreactors/cyber/pkg/cli"
 	"github.com/chainreactors/cyber/pkg/cli/configuration"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
 	"github.com/chainreactors/cyber/pkg/output"
@@ -71,112 +72,99 @@ type parsedCLI struct {
 }
 
 func cyber() {
-	if handled, err := configuration.Run(context.Background(), os.Args[1:], configuration.Host{Name: "aiscan", Sections: defaultSections(), Checks: configChecks}); handled {
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if len(os.Args) == 1 {
-		var cli cliOptions
-		printHelp(newCLIParser(&cli, goflags.Default&^goflags.PrintErrors))
-		return
-	}
-	parsed, err := parseCLI(os.Args[1:])
-	if err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	signals := setupSignalHandler(cancel, telemetry.NopLogger())
+	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, signals.SetStopFunc); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
 	}
+}
 
+// runCLI returns only after resources have closed. Process exit belongs to main.
+func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, setInterrupt func(func() bool)) (resultErr error) {
+	if handled, err := configuration.Run(ctx, args, configuration.Host{Name: "aiscan", Sections: defaultSections(), Checks: configChecks, Out: stdout, Err: stderr}); handled {
+		return err
+	}
+	if len(args) == 0 {
+		var cli cliOptions
+		writeHelp(newCLIParser(&cli, goflags.Default&^goflags.PrintErrors), stdout)
+		return nil
+	}
+	parsed, err := parseCLIWithOutput(args, stdout)
 	option := parsed.Option
+	taskOutput := taskcli.NewOutput(&option, stdout, stderr)
+	defer func() {
+		if parsed.Mode == cfg.RunModeAgent || parsed.Mode == cfg.RunModeScanner && option.AI && len(parsed.ScannerArgs) > 0 && parsed.ScannerArgs[0] != "scan" {
+			resultErr = taskOutput.Finish(resultErr)
+		}
+	}()
+	if err != nil {
+		return err
+	}
 	explicitOption := option
 	if option.Version {
-		fmt.Printf("aiscan v%s\n", cfg.Version)
-		return
+		_, err := fmt.Fprintf(stdout, "aiscan v%s\n", cfg.Version)
+		return err
 	}
 	if option.ViewFile != "" {
-		if err := output.RenderEventFile(option.ViewFile, option.ViewFormat, option.ViewOutput); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			os.Exit(1)
-		}
-		return
+		return output.RenderEventFile(option.ViewFile, option.ViewFormat, option.ViewOutput)
 	}
 	if parsed.Help {
-		return
+		return nil
 	}
 	if parsed.Mode == cfg.RunModeNoCommand && parsed.Action == nil {
-		fmt.Fprintf(os.Stderr, "error: missing subcommand: use %s\n", cliCommandSummary())
-		os.Exit(1)
+		return fmt.Errorf("missing subcommand: use %s", cliCommandSummary())
 	}
-
 	resolveConfig := cfg.ResolveRuntimeConfig
 	if parsed.Mode == cfg.RunModeAgent {
 		resolveConfig = cfg.ResolveAgentRuntimeConfig
 	}
+	if parsed.Mode == cfg.RunModeScanner {
+		resolveConfig = func(option *cfg.Option) (string, error) {
+			return resolveScannerRuntimeConfig(option, parsed.ScannerArgs)
+		}
+	}
 	cfgPath, err := resolveConfig(&option)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 	if err := applyIdentity(&option); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
+		return err
 	}
 	if cfgPath != "" && option.Debug {
-		fmt.Fprintf(os.Stderr, "loaded config: %s\n", cfgPath)
+		fmt.Fprintf(stderr, "loaded config: %s\n", cfgPath)
 	}
 	if option.Snapshot != nil {
 		for _, message := range option.Snapshot.Diagnostics {
-			fmt.Fprintln(os.Stderr, message)
+			fmt.Fprintln(stderr, message)
 		}
 	}
-	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: os.Stderr, Color: !option.NoColor})
-
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
-	switch {
-	case parsed.Mode == runModeWeb || parsed.Action != nil && parsed.Action.Persistent || option.Timeout == 0:
-		ctx, cancel = context.WithCancel(context.Background())
-	default:
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(option.Timeout)*time.Second)
+	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
+	if parsed.Mode != runModeWeb && !(parsed.Action != nil && parsed.Action.Persistent) && option.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
+		defer cancel()
 	}
-	defer cancel()
-
-	sigHandler := setupSignalHandler(cancel, logger)
 	if parsed.Action != nil {
-		if err := parsed.Action.Run(ctx, hostcli.Environment{Config: &option, Logger: logger, Out: os.Stdout, Err: os.Stderr}); err != nil {
-			logger.Errorf("command failed: %s", err)
-			os.Exit(1)
-		}
-		return
+		return parsed.Action.Run(ctx, hostcli.Environment{Config: &option, Logger: logger, Out: stdout, Err: stderr})
 	}
-
 	switch parsed.Mode {
 	case cfg.RunModeAgent:
-		err := runAgentTransport(ctx, newAIScanProfile, &option, logger, os.Stdin, os.Stdout, sigHandler.SetStopFunc)
-		if err != nil {
-			logger.Errorf("agent failed: %s", err)
-			os.Exit(1)
-		}
+		return runAgentTransport(ctx, newAIScanProfile, &option, logger, stdin, stdout, setInterrupt, taskOutput)
 	case runModeWeb:
-		if err := serveWeb(ctx, &option, &explicitOption, parsed.WebOpts, logger); err != nil {
-			logger.Errorf("web server failed: %s", err)
-			os.Exit(1)
-		}
+		return serveWeb(ctx, &option, &explicitOption, parsed.WebOpts, logger)
 	case cfg.RunModeScanner:
-		if err := runDirectScannerMode(ctx, newAIScanProfile, &option, parsed.ScannerArgs, logger); err != nil {
-			logger.Errorf("scanner command failed: %s", err)
-			os.Exit(1)
-		}
+		return runDirectScannerMode(ctx, newAIScanProfile, &option, parsed.ScannerArgs, logger, taskOutput)
 	}
+	return nil
 }
 
-func parseCLI(args []string) (parsedCLI, error) {
+func parseCLI(args []string) (parsedCLI, error) { return parseCLIWithOutput(args, os.Stdout) }
+
+func parseCLIWithOutput(args []string, stdout io.Writer) (parsedCLI, error) {
 	if scannerName, rootArgs, scannerRest, ok := splitScannerCommand(args); ok {
-		return parseScannerCLI(scannerName, rootArgs, scannerRest)
+		return parseScannerCLI(scannerName, rootArgs, scannerRest, stdout)
 	}
 
 	var cli cliOptions
@@ -191,10 +179,10 @@ func parseCLI(args []string) (parsedCLI, error) {
 				scannerArgs := append([]string{scannerName}, argsAfterCommand(args, scannerName)...)
 				return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: scannerArgs}, nil
 			}
-			printHelp(parser)
+			writeHelp(parser, stdout)
 			return parsedCLI{Mode: cfg.RunModeNoCommand, Help: true}, nil
 		}
-		return parsedCLI{}, err
+		return parsedCLI{Option: buildOption(&cli, parser), Mode: selectedMode(parser)}, err
 	}
 
 	if cli.Version {
@@ -218,7 +206,7 @@ func parseCLI(args []string) (parsedCLI, error) {
 		option.Timeout = 3600
 	}
 	if err := validateOutputFlags(&option); err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: option, Mode: mode}, err
 	}
 
 	if mode == cfg.RunModeNoCommand && action == nil {
@@ -230,7 +218,7 @@ func parseCLI(args []string) (parsedCLI, error) {
 		option.Timeout = 3600
 		scannerRest, err := applyScannerCommandArgs("", rest, &option)
 		if err != nil {
-			return parsedCLI{}, err
+			return parsedCLI{Option: option, Mode: mode}, err
 		}
 		scannerArgs := append([]string{scannerName}, scannerRest...)
 		return parsedCLI{Option: option, Mode: mode, ScannerArgs: scannerArgs}, nil
@@ -243,28 +231,32 @@ func parseCLI(args []string) (parsedCLI, error) {
 	return parsedCLI{Option: option, Mode: mode, Action: action}, nil
 }
 
-func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsedCLI, error) {
+func parseScannerCLI(scannerName string, rootArgs, scannerRest []string, stdout io.Writer) (parsedCLI, error) {
 	var manual cfg.Option
 	filteredRootArgs, err := applyScannerCommandArgs("", rootArgs, &manual)
 	if err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: manual, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 	}
 	var cli cliOptions
 	parser := newCLIParser(&cli, goflags.Default&^goflags.PrintErrors)
 	if scannerName == "scan" {
 		parser = newCLIParser(&cli, (goflags.Default&^goflags.PrintErrors)|goflags.IgnoreUnknown)
 	}
-	if _, err := parser.ParseArgs(filteredRootArgs); err != nil {
+	_, parseErr := parser.ParseArgs(filteredRootArgs)
+	if parseErr != nil {
+		err := parseErr
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
-			printHelp(parser)
+			writeHelp(parser, stdout)
 			return parsedCLI{Mode: cfg.RunModeNoCommand, Help: true}, nil
 		}
-		return parsedCLI{}, err
 	}
 
 	option := cfg.Option{MiscOptions: cli.MiscOptions}
 	finalizeOptions(&option, nil)
 	mergeManualScannerOptions(&option, manual)
+	if parseErr != nil {
+		return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, parseErr
+	}
 	cfg.CaptureExplicitFlags(&option, parser)
 	for flag := range manual.Explicit {
 		option.MarkExplicit(flag)
@@ -281,7 +273,7 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 	if scannerName == "scan" {
 		scannerArgs, err = applyScannerCommandArgs(scannerName, scannerRest, &option)
 		if err != nil {
-			return parsedCLI{}, err
+			return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 		}
 	} else {
 		scannerArgs = append([]string(nil), scannerRest...)
@@ -290,7 +282,7 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 		option.Debug = true
 	}
 	if err := validateOutputFlags(&option); err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 	}
 	return parsedCLI{
 		Option:      option,
@@ -300,20 +292,12 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 }
 
 func validateOutputFlags(option *cfg.Option) error {
-	format := strings.TrimSpace(option.OutputFormat)
-	if option.JSON {
-		format = "json"
-	}
-	if format == "" {
-		format = "text"
-	}
-	if format != "text" && format != "json" && format != "stream-json" {
-		return fmt.Errorf("unsupported --output-format %q: use text, json, or stream-json", format)
+	if err := cfg.ResolveOutputFormat(option); err != nil {
+		return err
 	}
 	if strings.TrimSpace(option.ViewOutput) != "" && strings.TrimSpace(option.ViewFile) == "" {
 		return fmt.Errorf("--file/-f is only valid with --view/-F")
 	}
-	option.OutputFormat = format
 	return nil
 }
 
@@ -756,10 +740,6 @@ func setupSignalHandler(cancel context.CancelFunc, logger telemetry.Logger) *sig
 		}
 	}()
 	return handler
-}
-
-func printHelp(parser *goflags.Parser) {
-	writeHelp(parser, os.Stdout)
 }
 
 func writeHelp(parser *goflags.Parser, writer io.Writer) {
