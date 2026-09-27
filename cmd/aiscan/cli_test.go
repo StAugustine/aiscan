@@ -10,6 +10,7 @@ import (
 
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/core/telemetry"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
@@ -289,7 +290,7 @@ func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
 	logger := telemetry.NewLogger(telemetry.LogConfig{Output: &logBuf})
 	err := runDirectScannerMode(context.Background(), newAIScanProfile, &cfg.Option{
 		MiscOptions: cfg.MiscOptions{NoColor: true},
-	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger, taskcli.NewOutput(&cfg.Option{}, nil, nil))
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
@@ -306,7 +307,7 @@ func TestDirectScannerModeDebugShowsInitInfo(t *testing.T) {
 	logger := telemetry.NewLogger(telemetry.LogConfig{Debug: true, Output: &logBuf})
 	err := runDirectScannerMode(context.Background(), newAIScanProfile, &cfg.Option{
 		MiscOptions: cfg.MiscOptions{Debug: true, NoColor: true},
-	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger, taskcli.NewOutput(&cfg.Option{}, nil, nil))
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}

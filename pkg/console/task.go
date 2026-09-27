@@ -62,12 +62,14 @@ func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, 
 		format = strings.ToLower(strings.TrimSpace(option.OutputFormat))
 	}
 	var (
-		textOutput    *AgentOutput
-		machineOutput *machineOutput
+		textOutput             *AgentOutput
+		machineOutput          *machineOutput
+		textStdout, textStderr *errorWriter
 	)
 	if format == "text" {
 		isTerminal := func(w io.Writer) bool { file, ok := w.(*os.File); return ok && term.IsTerminal(int(file.Fd())) }
-		textOutput = newAgentOutput(option, settings.Stdout, settings.Stderr, isTerminal(settings.Stdout), isTerminal(settings.Stderr), ModeStatic)
+		textStdout, textStderr = &errorWriter{writer: settings.Stdout}, &errorWriter{writer: settings.Stderr}
+		textOutput = newAgentOutput(option, textStdout, textStderr, isTerminal(settings.Stdout), isTerminal(settings.Stderr), ModeStatic)
 	} else {
 		machineOutput = newMachineOutput(settings.Stdout, format)
 	}
@@ -112,6 +114,7 @@ func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, 
 		}
 		if textOutput != nil {
 			textOutput.Close()
+			err = errors.Join(err, textStdout.Err(), textStderr.Err())
 		} else {
 			machineOutput.SetError(err)
 			err = errors.Join(err, machineOutput.Close())

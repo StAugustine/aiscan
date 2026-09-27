@@ -12,35 +12,29 @@ type envLookup func(string) (string, bool)
 
 // ResolveRuntimeConfig resolves parsed configuration with environment and defaults.
 func ResolveRuntimeConfig(option *Option) (string, error) {
-	return resolveRuntimeConfig(option, false)
+	return resolveRuntimeConfig(option, false, nil)
 }
 
 // ResolveToolRuntimeConfig resolves local paths and runtime flags without
 // selecting or validating an LLM. Tool maintenance remains usable when model
 // profiles or providers need repair.
 func ResolveToolRuntimeConfig(option *Option) (string, error) {
-	if option.Sections == nil {
-		option.Sections = NewSections()
-	}
-	explicit := explicitOptions(option)
-	path, err := LoadAndApplyConfig(option)
-	if err != nil {
-		return path, err
-	}
-	applyRuntimeEnvironment(option, explicit, sourceLookup(option, option.Context.defaults().LookupEnv))
-	ApplyDefaults(option)
-	option.DataDir = resolveDataDir(option.DataDir, option.Context)
-	finishSnapshot(option, &explicit)
-	return path, nil
+	return ResolveCommandRuntimeConfig(option, func(*Option) (bool, error) { return false, nil })
+}
+
+// ResolveCommandRuntimeConfig selects whether a command uses a model after
+// file layering, before provider profiles or credentials are resolved.
+func ResolveCommandRuntimeConfig(option *Option, usesModel func(*Option) (bool, error)) (string, error) {
+	return resolveRuntimeConfig(option, false, usesModel)
 }
 
 // ResolveAgentRuntimeConfig selects the transport before resolving models so a
 // node can enroll even when its local profile selection is stale or incomplete.
 func ResolveAgentRuntimeConfig(option *Option) (string, error) {
-	return resolveRuntimeConfig(option, true)
+	return resolveRuntimeConfig(option, true, nil)
 }
 
-func resolveRuntimeConfig(option *Option, agentMode bool) (string, error) {
+func resolveRuntimeConfig(option *Option, agentMode bool, usesModel func(*Option) (bool, error)) (string, error) {
 	if option.Sections == nil {
 		option.Sections = NewSections()
 	}
@@ -49,12 +43,29 @@ func resolveRuntimeConfig(option *Option, agentMode bool) (string, error) {
 	if err != nil {
 		return configPath, err
 	}
+	if usesModel != nil {
+		uses, err := usesModel(option)
+		if err != nil {
+			return configPath, err
+		}
+		if !uses {
+			lookup := option.Context.defaults().LookupEnv
+			if err := resolveExtensions(option, &explicit, lookup); err != nil {
+				return configPath, err
+			}
+			applyRuntimeEnvironment(option, explicit, sourceLookup(option, lookup))
+			return configPath, finishExecutionConfig(option, &explicit)
+		}
+	}
 	if agentMode {
 		transport, err := ResolveAgentTransport(option)
 		if err != nil {
 			return configPath, err
 		}
 		if transport == AgentTransportWeb {
+			if HasAgentTaskInput(option) || option.Resume != "" {
+				return configPath, fmt.Errorf("node mode receives tasks from the server; omit --prompt, --input, --task-file and --resume")
+			}
 			useRemoteLLM(option)
 			useRemoteLLM(&explicit)
 			option.Snapshot.Diagnostics = append(option.Snapshot.Diagnostics, "node mode: waiting for LLM configuration from the remote server")
@@ -67,26 +78,38 @@ func resolveRuntimeConfig(option *Option, agentMode bool) (string, error) {
 }
 
 func finishRuntimeConfig(option, explicit *Option) error {
-	sections := option.Sections
-	if sections == nil {
-		sections = NewSections()
-		option.Sections = sections
-	}
 	lookup := option.Context.defaults().LookupEnv
 	if err := seedProviderProfile(option, explicit); err != nil {
 		return err
 	}
-	var err error
-	option.Resolved, err = sections.ResolveValues(option.Extensions, explicit.Extensions, lookup)
-	if err != nil {
+	if err := resolveExtensions(option, explicit, lookup); err != nil {
 		return err
 	}
-	option.Extensions = option.Resolved.Values()
 	applyEnvironment(option, *explicit, sourceLookup(option, lookup))
 	if err := normalizeProviderOptions(option); err != nil {
 		return err
 	}
+	return finishExecutionConfig(option, explicit)
+}
+
+func resolveExtensions(option, explicit *Option, lookup envLookup) error {
+	if option.Sections == nil {
+		option.Sections = NewSections()
+	}
+	var err error
+	option.Resolved, err = option.Sections.ResolveValues(option.Extensions, explicit.Extensions, lookup)
+	if err != nil {
+		return err
+	}
+	option.Extensions = option.Resolved.Values()
+	return nil
+}
+
+func finishExecutionConfig(option, explicit *Option) error {
 	ApplyDefaults(option)
+	if err := validateExecutionOptions(option); err != nil {
+		return err
+	}
 	if _, err := ResolveOutputPolicy(option); err != nil {
 		return err
 	}
