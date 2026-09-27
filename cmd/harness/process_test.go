@@ -215,14 +215,28 @@ func readFile(t *testing.T, path string) []byte {
 }
 
 func redactSecrets(data []byte) []byte {
-	key := strings.TrimSpace(os.Getenv("CYBER_HARNESS_LLM_API_KEY"))
-	if key == "" {
-		return data
+	for _, name := range []string{"CYBER_API_KEY", "CYBER_HARNESS_LLM_API_KEY"} {
+		key := strings.TrimSpace(os.Getenv(name))
+		if key == "" {
+			continue
+		}
+		// Match both plaintext logs and JSON-escaped error bodies.
+		encoded, _ := json.Marshal(key)
+		data = bytes.ReplaceAll(data, encoded[1:len(encoded)-1], []byte("[REDACTED]"))
+		data = bytes.ReplaceAll(data, []byte(key), []byte("[REDACTED]"))
 	}
-	// Match both plaintext logs and JSON-escaped error bodies.
-	encoded, _ := json.Marshal(key)
-	data = bytes.ReplaceAll(data, encoded[1:len(encoded)-1], []byte("[REDACTED]"))
-	return bytes.ReplaceAll(data, []byte(key), []byte("[REDACTED]"))
+	return data
+}
+
+// Model settings are shared by every Cyber binary and opt-in live test. Retain
+// the old harness names as fallbacks for existing test deployments.
+func liveLLMEnv(suffix string) string {
+	for _, prefix := range []string{"CYBER_", "CYBER_HARNESS_LLM_"} {
+		if value := strings.TrimSpace(os.Getenv(prefix + suffix)); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // Buffer complete log lines so a credential split across Write calls cannot
@@ -310,14 +324,9 @@ func testEnvironment(includeLLM bool) []string {
 		}
 	}
 	if includeLLM {
-		for source, target := range map[string]string{
-			"CYBER_HARNESS_LLM_API_KEY":  "CYBER_API_KEY",
-			"CYBER_HARNESS_LLM_BASE_URL": "CYBER_BASE_URL",
-			"CYBER_HARNESS_LLM_MODEL":    "CYBER_MODEL",
-			"CYBER_HARNESS_LLM_PROVIDER": "CYBER_PROVIDER",
-		} {
-			if value := os.Getenv(source); value != "" {
-				env = append(env, target+"="+value)
+		for _, suffix := range []string{"API_KEY", "BASE_URL", "MODEL", "PROVIDER"} {
+			if value := liveLLMEnv(suffix); value != "" {
+				env = append(env, "CYBER_"+suffix+"="+value)
 			}
 		}
 	}

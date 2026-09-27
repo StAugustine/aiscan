@@ -37,10 +37,10 @@ type Option struct {
 }
 
 type LLMOptions struct {
-	Provider      string             `long:"provider" config:"provider" description:"LLM protocol: openai (OpenAI-compatible, default) or anthropic"`
-	BaseURL       string             `long:"base-url" config:"base_url" description:"LLM API base URL (leave empty to use provider default)"`
-	APIKey        string             `long:"api-key" config:"api_key" description:"LLM API key (or env: OPENAI_API_KEY, ANTHROPIC_API_KEY, CYBER_API_KEY)"`
-	Model         string             `long:"model" config:"model" description:"LLM model name"`
+	Provider      string             `long:"provider" config:"provider" description:"LLM protocol: openai (default) or anthropic; env: CYBER_PROVIDER"`
+	BaseURL       string             `long:"base-url" config:"base_url" description:"LLM API base URL; env: CYBER_BASE_URL (otherwise provider default)"`
+	APIKey        string             `long:"api-key" config:"api_key" description:"Shared LLM API key; env: CYBER_API_KEY (OPENAI_API_KEY/ANTHROPIC_API_KEY remain fallbacks)"`
+	Model         string             `long:"model" config:"model" description:"LLM model name; env: CYBER_MODEL"`
 	MaxTokens     int                `long:"max-tokens" config:"max_tokens" description:"Maximum output tokens per LLM response"`
 	ContextWindow int                `long:"context-window" config:"context_window" description:"Explicit model context window in tokens"`
 	LLMProxy      string             `long:"llm-proxy" config:"proxy" description:"Proxy for LLM API requests"`

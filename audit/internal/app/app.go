@@ -60,13 +60,23 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return run(ctx, args, stdout, stderr, (*toolchain.Manager).Ensure)
 }
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) error {
+	if len(args) > 0 && args[0] == "validate" {
+		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
+			_, err := fmt.Fprintln(stdout, "Usage: cyber-audit validate <report-directory>\nRead-only check of coverage, findings, evidence paths and OKF; no model credentials or tool installation required.")
+			return err
+		}
+		if len(args) != 2 {
+			return fmt.Errorf("usage: cyber-audit validate <report-directory>")
+		}
+		return validateReport(ctx, args[1], stdout)
+	}
 	if handled, err := runToolCommand(ctx, args, stdout, stderr); handled {
 		return err
 	}
 	if handled, err := configuration.Run(ctx, args, configuration.Host{Name: "cyber-audit", Context: &cfg.Context{UserLLMOnly: true}, Out: stdout, Err: stderr}); handled {
 		return err
 	}
-	parsed, option, err := parseOptions(args, stderr)
+	parsed, option, err := parseOptions(args, stdout)
 	if err != nil {
 		return err
 	}
@@ -169,18 +179,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	}
 	return console.RunTask(ctx, profile.runtime, &option, "task", "audit", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
-	}, finish)
+	}, finish, console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
+		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."})
 }
 
-func parseOptions(args []string, stderr io.Writer) (options, cfg.Option, error) {
+func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, error) {
 	var parsed options
 	parser := flags.NewParser(&parsed, flags.Default&^flags.PrintErrors)
 	configuration.RegisterHelp(parser)
 	parser.SubcommandsOptional = true
 	parser.Name = "cyber-audit"
 	parser.Usage = "[OPTIONS]"
+	parser.LongDescription = "Model-led code audit. Shared model settings: CYBER_API_KEY, CYBER_BASE_URL, CYBER_MODEL, CYBER_PROVIDER.\n\nCommands:\n  validate <report-directory>  Check a complete report without starting a model\n  doctor                      Check required tools\n  tools install               Prepare required tools\n  config                      Inspect or configure shared Cyber settings"
 	rest, err := parser.ParseArgs(args)
 	if err != nil {
+		var flagErr *flags.Error
+		if errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp && helpOutput != nil {
+			parser.WriteHelp(helpOutput)
+		}
 		return parsed, cfg.Option{}, err
 	}
 	if len(rest) != 0 {
@@ -247,7 +263,7 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		rest = rest[1:]
 	}
-	_, option, err := parseOptions(rest, stderr)
+	_, option, err := parseOptions(rest, stdout)
 	if err != nil {
 		return true, err
 	}

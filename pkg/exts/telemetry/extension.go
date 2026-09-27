@@ -100,7 +100,8 @@ func (e *Extension) Load(scope *extension.Scope) error {
 	e.file, e.path = file, path
 	e.sub, err = e.events.Consume(eventbus.SubscribeOptions[*aop.Event]{
 		Buffer: e.options.Queue, MaxBytes: e.options.MaxBytes,
-		Size: func(event *aop.Event) int64 { return int64(proto.Size(event)) },
+		BlockOnOverflow: true,
+		Size:            func(event *aop.Event) int64 { return int64(proto.Size(event)) },
 		Clone: func(event *aop.Event) *aop.Event {
 			if event == nil {
 				return nil

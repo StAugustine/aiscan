@@ -70,6 +70,7 @@ func TestOneShotAuditToolReportAndResume(t *testing.T) {
 	workspace := t.TempDir()
 	dataDir := t.TempDir()
 	reportDir := filepath.Join(workspace, "report")
+	continuedDir := filepath.Join(workspace, "continued-cli")
 	if err := os.WriteFile(filepath.Join(workspace, "handler.ts"), []byte("export function handler(input: string) { return input; }"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +85,7 @@ func TestOneShotAuditToolReportAndResume(t *testing.T) {
 		{"write", map[string]any{"path": "report/coverage.json", "content": string(coverageJSON)}},
 		{"write", map[string]any{"path": "report/index.md", "content": "---\nokf_version: \"0.2\"\n---\n\n# Fixture audit\n\nNo confirmed vulnerability in the reviewed function. See [coverage](coverage.json), [findings](findings.json) and [log](log.md).\n"}},
 		{"bash", map[string]any{"command": "okf validate report"}},
+		{"bash", map[string]any{"command": "audit validate"}},
 	}
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +96,24 @@ func TestOneShotAuditToolReportAndResume(t *testing.T) {
 			return
 		}
 		step := int(requests.Add(1)) - 1
+		if step > len(steps) {
+			var request struct {
+				Messages []json.RawMessage `json:"messages"`
+			}
+			if err := json.Unmarshal(body, &request); err != nil {
+				t.Error(err)
+			}
+			if len(request.Messages) < 8 || !strings.Contains(string(body), "Audit handler.ts") || !strings.Contains(string(body), "export function handler") {
+				t.Error("one-shot resume provider request lost prior user/tool messages")
+			}
+			for name, content := range map[string]string{"coverage.json": string(coverageJSON), "raw/proton.jsonl": "", "index.md": "---\nokf_version: '0.2'\n---\n# Continued audit\n"} {
+				if err := os.WriteFile(filepath.Join(continuedDir, name), []byte(content), 0600); err != nil {
+					t.Error(err)
+				}
+			}
+			streamReply(w, "Resumed.")
+			return
+		}
 		if step == 0 {
 			for _, want := range []string{"cyber-audit", "# Audit workflow", "ast-grep", "proton", "candidate"} {
 				if !strings.Contains(string(body), want) {
@@ -126,6 +146,15 @@ func TestOneShotAuditToolReportAndResume(t *testing.T) {
 	}
 	if len(history.Messages) < 5 {
 		t.Fatalf("missing tool history: %d", len(history.Messages))
+	}
+	// Exercise the real --resume one-shot route, including the request sent to the
+	// provider. Merely opening the primary session missed the original CLI bug.
+	err = run(t.Context(), []string{"--provider", "openai", "--base-url", server.URL, "--api-key", "fixture", "--model", "fixture", "--workdir", workspace, "--data-dir", dataDir, "--report-dir", continuedDir, "--resume", historyPath, "-p", "Continue the functional fixture", "--quiet", "--no-color", "--timeout", "30"}, &out, &stderr, fakeTools)
+	if err != nil {
+		t.Fatalf("one-shot resume: %v", err)
+	}
+	if requests.Load() != int32(len(steps)+2) {
+		t.Fatalf("unexpected resume requests: %d", requests.Load())
 	}
 	option := testOption(t, server.URL)
 	option.Resume = historyPath
@@ -204,7 +233,7 @@ func TestInteractiveProfileCommandsAndCancellation(t *testing.T) {
 	if err != nil || !strings.Contains(catalog.String(), "shared-fixture") {
 		t.Fatalf("session has a different Arsenal manager: %v", err)
 	}
-	for _, name := range []string{"proton", "arsenal", "okf"} {
+	for _, name := range []string{"proton", "arsenal", "okf", "audit"} {
 		if !profile.runtime.CommandRegistry().Has(name) {
 			t.Fatalf("missing %s", name)
 		}

@@ -84,7 +84,7 @@ func (f *Files) Glob(ctx context.Context, pattern string, limit int) ([]string, 
 		}
 	}
 	if strings.Contains(pattern, "**") {
-		return nil, fmt.Errorf("glob does not support **")
+		return nil, fmt.Errorf("glob does not support **; use a single-directory pattern (e.g. src/*.go) or bash with rg --files -g '*.go' for recursive discovery")
 	}
 	if _, err := path.Match(pattern, ""); err != nil {
 		return nil, err
