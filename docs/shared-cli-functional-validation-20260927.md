@@ -55,3 +55,9 @@
 浏览器集成测试覆盖静态页面、工具帮助输出、AOP 会话流式回复，3 项均通过。cyber-ui 已整合本地 `4776841` 的连接状态、请求 deadline 和内联历史展示修复；新增 4 项 AOP 客户端回归，viewer 共 12 项测试通过，相关 5 个包的类型检查与构建通过。theme/markdown 补齐独立类型检查所需的开发依赖。
 
 cyber-ui 的实际主分支名为 main，合入提交为 `9872741`，本 PR 固定到该提交。其推送采用普通快进更新；主仓库通过独立 PR 交付，不直接更新 master。云端跨平台与发布构建检查以 PR CI 为准。
+
+## 合并前 CI 修复（2026-09-28）
+
+PR #160 的 Windows CI 暴露 `TestConcurrentEmitWhileRegistering` 的调度依赖：注册线程可能在事件线程运行前取消全部处理器，使调用次数为零。单核配置下连续 20 次均复现。测试现在通过 channel 保持每个注册线程的首次订阅，直到事件线程实际调用；后续注册/取消仍与事件分发并发执行，并检查两种 hook 均无残留订阅。生产逻辑未变。
+
+修复后 Windows 验证通过：该测试在 `-cpu=1,2,8 -count=100` 下共 300 次重复运行；agent/hooks 与 core/hooks 在相同 CPU 配置下执行 `-race -count=20`；CI 对应的完整 `go test -count=1 ./agent/... ./cmd/aiscan/... ./pkg/web/...`。
