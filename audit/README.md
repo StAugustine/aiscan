@@ -126,6 +126,9 @@ that directory takes precedence in the child PATH. No latest-version check is
 performed each launch. Installation validates a staged executable and preserves
 an existing version on failure. `tools install` preprovisions without starting a
 model. `doctor` only checks tools, never creates directories or downloads.
+Tool maintenance does not require a valid model provider/profile. Global options
+may precede `doctor` or `tools install`; `doctor --json` reports tool statuses and
+an `is_error` flag, with a nonzero exit status if required tools are unavailable.
 
 The three source tools support all six platforms. Reverse tools are included
 only on the platforms listed above. Bundled builds prepare tools from embedded resources; smaller builds need GitHub access when a

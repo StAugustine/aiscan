@@ -15,6 +15,25 @@ func ResolveRuntimeConfig(option *Option) (string, error) {
 	return resolveRuntimeConfig(option, false)
 }
 
+// ResolveToolRuntimeConfig resolves local paths and runtime flags without
+// selecting or validating an LLM. Tool maintenance remains usable when model
+// profiles or providers need repair.
+func ResolveToolRuntimeConfig(option *Option) (string, error) {
+	if option.Sections == nil {
+		option.Sections = NewSections()
+	}
+	explicit := explicitOptions(option)
+	path, err := LoadAndApplyConfig(option)
+	if err != nil {
+		return path, err
+	}
+	applyRuntimeEnvironment(option, explicit, sourceLookup(option, option.Context.defaults().LookupEnv))
+	ApplyDefaults(option)
+	option.DataDir = resolveDataDir(option.DataDir, option.Context)
+	finishSnapshot(option, &explicit)
+	return path, nil
+}
+
 // ResolveAgentRuntimeConfig selects the transport before resolving models so a
 // node can enroll even when its local profile selection is stale or incomplete.
 func ResolveAgentRuntimeConfig(option *Option) (string, error) {
