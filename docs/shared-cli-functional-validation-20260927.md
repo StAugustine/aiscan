@@ -45,3 +45,13 @@
 两个入口的正式任务 token 用量均逐项匹配转发器计量；启动探针用量单独排除。验证记录位于本地 `.tmp/shared-cli-fixes/verification.json`、`smoke.json` 和 `runs/{aiscan,audit}/`；exe 和原始运行产物不提交。
 
 本轮验证限于 Windows 功能与输出契约，未验收 Linux/macOS 发布产物、模型漏洞发现率或长任务稳定性。未推送或发布变更。
+
+## PR 集成复核
+
+本轮修复迁入基于远端 master `67e0f4e9` 的独立分支 `fix/audit-cli-functional`。保留每轮提交，解决 modes.go 与 scanner_mode.go 的冲突，沿用 master 已有的参数解析与事件订阅接口。未迁入其他 JEV/recap 功能或工作区未提交改动。
+
+集成分支再次通过受影响包测试、audit 全模块 race/vet/构建、根模块 go vet 与 golangci-lint（0 issues）、full aiscan/scanner 测试与构建、架构检查、Console/profile/eventbus/telemetry race；三个 Go 模块执行 tidy 后无差异。
+
+浏览器集成测试覆盖静态页面、工具帮助输出、AOP 会话流式回复，3 项均通过。cyber-ui 已整合本地 `4776841` 的连接状态、请求 deadline 和内联历史展示修复；新增 4 项 AOP 客户端回归，viewer 共 12 项测试通过，相关 5 个包的类型检查与构建通过。theme/markdown 补齐独立类型检查所需的开发依赖。
+
+cyber-ui 的实际主分支名为 main，合入提交为 `9872741`，本 PR 固定到该提交。其推送采用普通快进更新；主仓库通过独立 PR 交付，不直接更新 master。云端跨平台与发布构建检查以 PR CI 为准。
