@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainreactors/cyber/core/operation"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/core/truncate"
@@ -123,6 +124,7 @@ Session Subcommands (multi-step interactive workflows):
   detach <session>                                Disconnect from attached session without closing browser
 
   Navigation:
+    scroll <session> <up|down>                  Scroll the viewport
     reload <session>                            Reload the current page
     go-back <session>                           Navigate back in history
     go-forward <session>                        Navigate forward in history
@@ -276,6 +278,14 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	if globalSession != "" {
 		subArgs = c.injectGlobalSession(sub, subArgs, globalSession)
 	}
+	if strings.HasPrefix(operation.InvocationFromContext(ctx).CallID, "choice-pw-") {
+		result, err := c.runChoice(ctx, sub, subArgs)
+		if err != nil {
+			return nil, err
+		}
+		_, err = fmt.Fprint(execution.Stdout, result)
+		return nil, err
+	}
 
 	var result string
 
@@ -350,6 +360,8 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	// --- Navigation ---
 	case "reload":
 		result, err = c.execReload(ctx, subArgs)
+	case "scroll":
+		result, err = c.execScroll(ctx, subArgs)
 	case "go-back", "back":
 		result, err = c.execGoBack(ctx, subArgs)
 	case "go-forward", "forward":

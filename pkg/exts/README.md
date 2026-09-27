@@ -1,8 +1,11 @@
 # Extensions
 
-Guardrail 的准入、决策合并与等待审批机制位于 core/guardrail；guardrail Extension
-负责安装和 CLI/AOP 适配，jev Extension 只贡献风险判定。业务载荷仅有共用 protobuf
-Decision 与 Review。配置、生命周期及边界详见 [Tool guardrail](../../docs/guardrail.md)。
+JEV provider (`agent/provider/jev`) 只实现原生 `choice / score / noul` 请求、响应与用量。
+`pkg/exts/jev` 在其上定义 Reflex、动态候选接管与学习；Reflex 不属于 provider API。
+`pkg/exts/guardrail` 直接调用 JEV `choice`，通过 `tool.before` 实现准入，拥有复核、审批等待、
+配置和 CLI/AOP 适配。它不依赖 Reflex，也不在核心中安装第二套策略注册表。
+协议保持 `cyber.guardrail` 命名空间，Go 类型由 Guardrail 扩展拥有。
+详见 [Tool guardrail](../../docs/guardrail.md)。
 
 `pkg/exts` 是行为实现与 Profile 生命周期之间的适配层。`tools/` 和 `agent/` 保持普通业务类型，
 需要初始化、后台工作或清理时才由这里的 Extension 持有。

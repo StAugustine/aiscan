@@ -2,18 +2,24 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	"github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/events"
-	"github.com/chainreactors/cyber/core/guardrail"
+	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/hooks"
 	"github.com/chainreactors/cyber/core/operation"
 	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
+	"github.com/chainreactors/cyber/pkg/exts/guardrail"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -53,19 +59,51 @@ func TestGuardrailDecisionsSurviveTimelineRestart(t *testing.T) {
 			if tc.state == guardrail.ReviewState_REVIEW_STATE_EXPIRED {
 				timeout = 30 * time.Millisecond
 			}
-			runtime := guardrail.New(stream, timeout, tc.mode)
-			defer runtime.Close(context.Background())
-			_, err = runtime.Register("test", func(context.Context, toolhooks.CallEvent) (*guardrail.Decision, error) {
-				return &guardrail.Decision{Action: guardrail.Action_ACTION_REVIEW, Reason: "JEV fixture / risk / policy 123456: potential side effect"}, nil
-			}, func(context.Context, toolhooks.CallEvent) (*guardrail.Decision, error) {
-				if tc.mode != guardrail.ModeAuto {
-					t.Fatal("safe mode called automatic confirmation")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body jevapi.Request
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
 				}
-				return &guardrail.Decision{Action: tc.consequence, Reason: "JEV fixture / consequence / policy abcdef: " + tc.consequence.String()}, nil
-			})
+				choice := "review"
+				instructions, _ := body.Questions["action"].Instructions.(string)
+				if strings.Contains(instructions, "Stage 2:") {
+					if tc.mode != guardrail.ModeAuto {
+						t.Error("safe mode called automatic confirmation")
+					}
+					choice = map[guardrail.Action]string{
+						guardrail.Action_ACTION_RECORD: "record",
+						guardrail.Action_ACTION_REVIEW: "review",
+						guardrail.Action_ACTION_BLOCK:  "block",
+					}[tc.consequence]
+				}
+				fmt.Fprintf(w, `{"answers":{"action":{"type":"choice","choice":%q}}}`, choice)
+			}))
+			defer server.Close()
+			client := jevapi.New("fixture-key", "", time.Second)
+			client.Endpoint = server.URL
+			defer client.Close()
+			registry := hooks.New()
+			var runtime *guardrail.Runtime
+			set, err := extension.New(
+				extension.Provided[*events.Stream](stream),
+				extension.Provided[*hooks.Registry](registry),
+				extension.Provided[*jevapi.Client](client),
+				guardrail.New(guardrail.Config{Provider: "jev", Mode: tc.mode, ReviewTimeout: timeout.String()}),
+				extension.Func{LoadFunc: func(scope *extension.Scope) error {
+					var err error
+					runtime, err = extension.Use[*guardrail.Runtime](scope)
+					return err
+				}},
+			)
 			if err != nil {
 				t.Fatal(err)
 			}
+			if err := set.Load(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer set.Close(context.Background())
 			ctx, cancel := context.WithCancel(operation.ContextWithInvocation(t.Context(), operation.Invocation{SessionID: "session", TurnID: "turn", CallID: "call", Emitter: "control"}))
 			defer cancel()
 			var emitted []*aop.Event
@@ -86,8 +124,6 @@ func TestGuardrailDecisionsSurviveTimelineRestart(t *testing.T) {
 					}
 				}
 			}))
-			registry := hooks.New()
-			toolhooks.Before.On(registry, "guardrail", runtime.Admit)
 			executed := false
 			args, _ := aop.JSONValue(map[string]string{"command": "echo safe"})
 			_, err = toolhooks.Execute(ctx, registry, "bash", string(args.Data), func(context.Context, string) (*aop.ToolResult, error) {
@@ -145,8 +181,8 @@ func TestGuardrailDecisionsSurviveTimelineRestart(t *testing.T) {
 			if terminal.ResolutionSource != tc.source || terminal.SessionId != "session" || terminal.Decision.Action != guardrail.Action_ACTION_REVIEW {
 				t.Fatal("stored review lost its source, session or initial risk")
 			}
-			if !strings.Contains(terminal.Decision.Reason, "policy 123456") ||
-				(tc.mode == guardrail.ModeAuto && !strings.Contains(terminal.Decision.Reason, "Consequence assessment: JEV fixture / consequence / policy abcdef")) {
+			if !strings.Contains(terminal.Decision.Reason, " / risk / policy ") ||
+				(tc.mode == guardrail.ModeAuto && (!strings.Contains(terminal.Decision.Reason, "Consequence assessment: JEV ") || !strings.Contains(terminal.Decision.Reason, " / consequence / policy "))) {
 				t.Fatal("stored review lost a judgment stage or policy version")
 			}
 			if reviews[0].Operation.OperationId != terminal.Operation.OperationId || terminal.Call.Id != "call" || string(terminal.Call.Arguments.Data) != string(args.Data) {

@@ -9,8 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/cyber/aop"
-	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	"github.com/chainreactors/cyber/core/types"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -73,14 +72,19 @@ func testConnection(ctx context.Context, incoming, stored *types.DistributeConfi
 	duration, _ := time.ParseDuration(config.Timeout)
 	ctx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
-	client := New(config)
-	defer client.client.CloseIdleConnections()
-	decision, err := client.judge(ctx, toolhooks.CallEvent{Call: &aop.ToolCall{Name: "read_file", WorkingDirectory: "local-test", Arguments: &aop.EncodedValue{Data: []byte(`{"path":"README.md","purpose":"Read a local public project document; no network access or writes"}`), MediaType: aop.JSONMediaType}}})
+	client := jevapi.New(config.APIKey, config.Model, duration)
+	defer client.Close()
+	q := jevapi.Question{Type: "choice", Instructions: "Classify this inert connection-test description. Do not execute anything.", Criteria: map[string]string{"record": "Reading a public local document.", "review": "Uncertain effects.", "block": "Destructive effects."}}
+	out, err := client.Exchange(ctx, jevapi.Request{State: json.RawMessage(`{"operation":"Read public README.md locally, no writes or network"}`), Questions: map[string]jevapi.Question{"action": q}})
+	choice := ""
+	if err == nil {
+		choice, err = out.Choice("action", q)
+	}
 	if err != nil {
 		check.Error = err.Error()
 		return []*types.ConnectionCheck{check}
 	}
 	check.Ok = true
-	check.Detail = "JEV " + strings.TrimPrefix(decision.Action.String(), "ACTION_") + "; judgment only, no tool executed"
+	check.Detail = "JEV " + strings.ToUpper(choice) + "; judgment only, no tool executed"
 	return []*types.ConnectionCheck{check}
 }

@@ -1,5 +1,3 @@
-// Package guardrail enforces tool admission independently of policy providers
-// and presentation. Approval only releases the original, waiting invocation.
 package guardrail
 
 import (
@@ -9,14 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/chainreactors/cyber/aop"
 	operationpb "github.com/chainreactors/cyber/aop/operation"
 	"github.com/chainreactors/cyber/core/events"
-	"github.com/chainreactors/cyber/core/hooks"
 	"github.com/chainreactors/cyber/core/operation"
 	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
 	"google.golang.org/protobuf/proto"
@@ -24,7 +20,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-type CheckFunc = func(context.Context, toolhooks.CallEvent) (*Decision, error)
+type checkFunc = func(context.Context, toolhooks.CallEvent) (*Decision, error)
 
 // Mode controls how a valid policy interception is handled, independently of
 // the provider's risk classification. Each invocation snapshots the mode.
@@ -37,29 +33,6 @@ const (
 	ModeOff Mode = "off"
 )
 
-// These are private dispatch state, not protocol DTOs. Each provider confirms
-// only risks it identified; an allow from another provider cannot erase a denial.
-type checkInput struct {
-	call toolhooks.CallEvent
-	mode Mode
-}
-type checkResult struct {
-	risk, decision *Decision
-}
-
-var checks = hooks.NewPoint[checkInput, checkResult]("guardrail.check").
-	WithErrorPolicy(hooks.FailClosed).
-	WithReducer(func(acc *checkResult, _ *checkInput, next checkResult) bool {
-		if acc.risk == nil || next.risk.Action > acc.risk.Action {
-			acc.risk = next.risk
-		}
-		if acc.decision == nil || next.decision.Action > acc.decision.Action ||
-			(next.risk.Action > Action_ACTION_RECORD && next.decision.Action == Action_ACTION_RECORD && acc.decision.Action == Action_ACTION_RECORD) {
-			acc.decision = next.decision
-		}
-		return next.decision.Action == Action_ACTION_BLOCK
-	})
-
 type pending struct {
 	review *Review
 	ctx    context.Context
@@ -67,71 +40,48 @@ type pending struct {
 }
 
 type Runtime struct {
-	stream        *events.Stream
-	timeout       time.Duration
-	mode          Mode
-	registry      *hooks.Registry
-	ctx           context.Context
-	cancel        context.CancelFunc
-	mu            sync.Mutex
-	closed        bool
-	subscriptions []*hooks.Subscription
-	pending       map[string]*pending
-	active        sync.WaitGroup
-	rejections    map[[32]byte]int
+	stream         *events.Stream
+	timeout        time.Duration
+	mode           Mode
+	check, confirm checkFunc
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mu             sync.Mutex
+	closed         bool
+	pending        map[string]*pending
+	active         sync.WaitGroup
+	rejections     map[[32]byte]int
 }
 
-func New(stream *events.Stream, timeout time.Duration, mode Mode) *Runtime {
+// newRuntime owns one tool admission policy and its pending reviews. Policies
+// compose through tool.before; there is no nested policy registry.
+func newRuntime(parent context.Context, stream *events.Stream, timeout time.Duration, mode Mode, check, confirm checkFunc) *Runtime {
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
 	if mode == "" || mode == ModeOff {
 		mode = ModeAuto
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Runtime{stream: stream, timeout: timeout, mode: mode, registry: hooks.New(), ctx: ctx, cancel: cancel, pending: make(map[string]*pending), rejections: make(map[[32]byte]int)}
+	ctx, cancel := context.WithCancel(parent)
+	return &Runtime{stream: stream, timeout: timeout, mode: mode, check: check, confirm: confirm, ctx: ctx, cancel: cancel, pending: make(map[string]*pending), rejections: make(map[[32]byte]int)}
 }
 
-// Register installs a risk screen and an optional consequence assessment.
-// In auto mode, only RECORD from confirm releases a flagged invocation.
-// A missing confirm retains the screening decision and cannot grant a bypass.
-func (r *Runtime) Register(source string, check, confirm CheckFunc) (*hooks.Subscription, error) {
-	if strings.TrimSpace(source) == "" || check == nil {
-		return nil, errors.New("guardrail source and check are required")
+// evaluate preserves the original call for each stage and never exposes provider
+// failures through the tool result. The hook boundary handles panics.
+func evaluate(ctx context.Context, fn checkFunc, ev toolhooks.CallEvent) (*Decision, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed {
-		return nil, errors.New("guardrail is closed")
+	d, err := fn(ctx, cloneCall(ev))
+	if err != nil {
+		return nil, errors.New("guardrail check failed")
 	}
-	judge := func(ctx context.Context, fn CheckFunc, ev toolhooks.CallEvent) (*Decision, error) {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		d, err := fn(ctx, cloneCall(ev))
-		if err != nil {
-			return nil, errors.New("guardrail check failed")
-		}
-		if d == nil || d.Action < Action_ACTION_RECORD || d.Action > Action_ACTION_BLOCK {
-			return nil, errors.New("guardrail check returned an invalid decision")
-		}
-		d = proto.Clone(d).(*Decision)
-		d.Reason = RedactText(d.Reason)
-		return d, nil
+	if d == nil || d.Action < Action_ACTION_RECORD || d.Action > Action_ACTION_BLOCK {
+		return nil, errors.New("guardrail check returned an invalid decision")
 	}
-	sub := checks.On(r.registry, source, func(ctx context.Context, input checkInput) (checkResult, error) {
-		risk, err := judge(ctx, check, input.call)
-		if err != nil {
-			return checkResult{}, err
-		}
-		result := checkResult{risk: risk, decision: risk}
-		if risk.Action != Action_ACTION_RECORD && input.mode == ModeAuto && confirm != nil {
-			result.decision, err = judge(ctx, confirm, input.call)
-		}
-		return result, err
-	})
-	r.subscriptions = append(r.subscriptions, sub)
-	return sub, nil
+	d = proto.Clone(d).(*Decision)
+	d.Reason = RedactText(d.Reason)
+	return d, nil
 }
 
 func cloneCall(ev toolhooks.CallEvent) toolhooks.CallEvent {
@@ -146,7 +96,7 @@ func cloneCall(ev toolhooks.CallEvent) toolhooks.CallEvent {
 
 func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.Admission, error) {
 	r.mu.Lock()
-	closed, installed, mode := r.closed, len(r.subscriptions), r.mode
+	closed, mode := r.closed, r.mode
 	if !closed {
 		r.active.Add(1)
 	}
@@ -165,20 +115,16 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 	if err := ctx.Err(); err != nil {
 		return denied("guardrail invocation canceled"), err
 	}
-	if installed == 0 {
+	if r.check == nil {
 		return toolhooks.Admission{}, nil
 	}
 	ev = cloneCall(ev)
-	var d *Decision
-	var result checkResult
-	var err error
-	if !r.available(installed) {
-		err = errors.New("guardrail policy was removed")
-	} else {
-		result, err = checks.Emit(ctx, r.registry, checkInput{call: ev, mode: mode})
-		d = result.decision
+	risk, err := evaluate(ctx, r.check, ev)
+	d := risk
+	if err == nil && risk.Action != Action_ACTION_RECORD && mode == ModeAuto && r.confirm != nil {
+		d, err = evaluate(ctx, r.confirm, ev)
 	}
-	invalid := err != nil || d == nil || !r.available(installed)
+	invalid := err != nil || d == nil
 	if invalid {
 		d = &Decision{Action: Action_ACTION_BLOCK, Reason: "Guardrail policy unavailable or invalid"}
 	}
@@ -186,12 +132,12 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 		d = &Decision{Action: Action_ACTION_BLOCK, Reason: "Invocation canceled"}
 	}
 	d.Reason = RedactText(d.Reason)
-	if !invalid && result.risk != nil && ctx.Err() == nil {
-		r.emit(ctx, result.risk, ev)
+	if !invalid && risk != nil && ctx.Err() == nil {
+		r.emit(ctx, risk, ev)
 	} else {
 		r.emit(ctx, d, ev)
 	}
-	// Broken policy registration and cancellation cannot be overridden by a
+	// Failed judgments and cancellation cannot be overridden by a
 	// human decision; only a valid provider judgment can enter review.
 	if invalid || ctx.Err() != nil {
 		return denied(d.Reason), nil
@@ -200,13 +146,13 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 	if mode != ModeSafe && mode != ModeAuto {
 		return denied("invalid guardrail mode"), nil
 	}
-	if mode == ModeAuto && result.risk.Action != Action_ACTION_RECORD {
+	if mode == ModeAuto && risk.Action != Action_ACTION_RECORD {
 		state := ReviewState_REVIEW_STATE_REJECTED
 		if d.Action == Action_ACTION_RECORD {
 			state = ReviewState_REVIEW_STATE_APPROVED
 		}
-		audit := proto.Clone(result.risk).(*Decision)
-		if d != result.risk {
+		audit := proto.Clone(risk).(*Decision)
+		if d != risk {
 			audit.Reason += "\nConsequence assessment: " + d.Reason
 		}
 		r.emit(ctx, &Review{Call: SanitizeCall(ev.Call), Operation: ev.Operation,
@@ -232,9 +178,9 @@ func (r *Runtime) Admit(ctx context.Context, ev toolhooks.CallEvent) (toolhooks.
 		}
 		admission = r.review(ctx, ev, d)
 	}
-	// A synchronous observer or pending approval may outlive a policy teardown.
-	if ctx.Err() != nil || r.ctx.Err() != nil || !r.available(installed) {
-		return denied("guardrail invocation canceled or policy removed"), nil
+	// A synchronous observer or pending approval may outlive extension teardown.
+	if ctx.Err() != nil || r.ctx.Err() != nil {
+		return denied("guardrail invocation canceled or extension closed"), nil
 	}
 	return admission, nil
 }
@@ -285,12 +231,6 @@ func (r *Runtime) repeatedRejection(ctx context.Context, ev toolhooks.CallEvent)
 
 func denied(reason string) toolhooks.Admission {
 	return toolhooks.Admission{Deny: fmt.Errorf("%w: %s", operation.ErrDenied, reason)}
-}
-
-func (r *Runtime) available(installed int) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return !r.closed && len(r.subscriptions) == installed && checks.Len(r.registry) == installed
 }
 
 func (r *Runtime) review(ctx context.Context, ev toolhooks.CallEvent, d *Decision) toolhooks.Admission {
@@ -402,16 +342,7 @@ func (r *Runtime) Close(ctx context.Context) error {
 	for _, p := range r.pending {
 		r.finishLocked(p, ReviewState_REVIEW_STATE_CANCELED)
 	}
-	subs := append([]*hooks.Subscription(nil), r.subscriptions...)
 	r.mu.Unlock()
-	for _, s := range subs {
-		s.Cancel()
-	}
-	for _, s := range subs {
-		if err := s.Close(ctx); err != nil {
-			return err
-		}
-	}
 	done := make(chan struct{})
 	go func() { r.active.Wait(); close(done) }()
 	select {

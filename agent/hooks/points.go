@@ -60,9 +60,19 @@ var BeforeRun = corehooks.NewPoint[RunStartEvent, RunStartResult]("before_run").
 
 type ContextEvent struct {
 	SessionID string
+	TurnID    string
 	Turn      int
 	Messages  []*Msg
 }
+
+// BeforeModel runs once at a decision boundary, outside model retry and request
+// serialization. Its result can only append messages to the durable transcript.
+// The input is an isolated snapshot; handlers cannot edit the existing prefix.
+var BeforeModel = corehooks.NewPoint[ContextEvent, []*Msg]("before_model").WithReducer(
+	corehooks.Fold(func(acc *[]*Msg, _ *ContextEvent, out []*Msg) {
+		*acc = append(*acc, out...)
+	}),
+)
 
 // ContextResult replaces the whole message list; nil means unchanged.
 type ContextResult struct {

@@ -85,7 +85,7 @@ func TestAutoModeReturnsInterceptionWithoutReviewOrTermination(t *testing.T) {
 
 func TestSafeModeCannotAuthorizeBrokenPolicy(t *testing.T) {
 	r, registry, reviews := fixture(t, time.Second, ModeSafe)
-	_, _ = r.Register("invalid", func(context.Context, toolhooks.CallEvent) (*Decision, error) { return nil, errors.New("broken policy") }, nil)
+	r.check, r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) { return nil, errors.New("broken policy") }, nil
 	_, err := toolhooks.Execute(callContext(), registry, "echo", "{}", func(context.Context, string) (*aop.ToolResult, error) {
 		t.Fatal("broken policy executed")
 		return nil, nil

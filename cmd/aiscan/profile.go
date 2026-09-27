@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/agent/provider"
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	"github.com/chainreactors/cyber/agent/skills"
 	"github.com/chainreactors/cyber/aop"
@@ -15,7 +18,6 @@ import (
 	"github.com/chainreactors/cyber/core/eventbus"
 	"github.com/chainreactors/cyber/core/events"
 	"github.com/chainreactors/cyber/core/extension"
-	"github.com/chainreactors/cyber/core/guardrail"
 	"github.com/chainreactors/cyber/core/namespaces"
 	"github.com/chainreactors/cyber/core/proc"
 	"github.com/chainreactors/cyber/core/telemetry"
@@ -78,7 +80,7 @@ func parseObserve(value string) []observeext.Kind {
 
 // aiscanProfile owns one reference-distribution extension graph.
 type aiscanProfile struct {
-	guardrail  *guardrail.Runtime
+	guardrail  *guardrailext.Runtime
 	extensions *extension.Set
 	providers  *provider.State
 	events     *events.Stream
@@ -149,7 +151,21 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	graph, err := extensions(config.Base, loop, workDir, proxyExtension, *guardrailConfig)
+	// Normalize legacy risk settings once, independently of acceleration mode.
+	guardrailValue := *guardrailConfig
+	if guardrailValue.Provider == "" && (jevConfig.Enabled || strings.TrimSpace(jevConfig.APIKey) != "") {
+		guardrailValue.Provider = "jev"
+		if guardrailValue.JEV.Level == "" {
+			guardrailValue.JEV.Level = jevConfig.Level
+		}
+		if guardrailValue.JEV.OnError == "" {
+			guardrailValue.JEV.OnError = jevConfig.OnError
+		}
+		if guardrailValue.JEV.Criteria == nil {
+			guardrailValue.JEV.Criteria = jevConfig.Criteria
+		}
+	}
+	graph, err := extensions(config.Base, loop, workDir, proxyExtension, guardrailValue)
 	if err != nil {
 		return nil, fmt.Errorf("construct Cyber application: %w", err)
 	}
@@ -157,9 +173,22 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	// The graph publishes the capabilities everything else borrows, so it comes
 	// first. The observers follow it: they subscribe to hooks and to the event
 	// stream, both of which fire at run time rather than during load.
-	values := append([]extension.Extension{nodeext.New()}, graph...)
-	if jevConfig.Enabled {
-		values = append(values, jevext.New(*jevConfig))
+	values := []extension.Extension{nodeext.New()}
+	if guardrailValue.Provider == "jev" || (jevConfig.Mode != "" && jevConfig.Mode != "off") {
+		if strings.TrimSpace(jevConfig.APIKey) == "" {
+			return nil, fmt.Errorf("JEV requires jev.api_key or TYPESAFE_API_KEY")
+		}
+		duration, _ := time.ParseDuration(jevConfig.Timeout)
+		client := jevapi.New(jevConfig.APIKey, jevConfig.Model, duration)
+		values = append(values, extension.Func{LoadFunc: func(scope *extension.Scope) error { return extension.Provide[*jevapi.Client](scope, client) }, CloseFunc: func(context.Context) error { client.Close(); return nil }})
+	}
+	values = append(values, graph...)
+	if jevConfig.Mode != "" && jevConfig.Mode != "off" {
+		value := *jevConfig
+		if value.Directory == "" {
+			value.Directory = filepath.Join(workDir, ".cyber", "jev")
+		}
+		values = append(values, jevext.New(value))
 	}
 	if strings.TrimSpace(config.Output) != "" {
 		output, err := telemetryext.New(telemetryext.Options{Path: config.Output})
@@ -214,7 +243,7 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 		if p.providers, err = extension.Use[*provider.State](scope); err != nil {
 			return err
 		}
-		if p.guardrail, err = extension.Use[*guardrail.Runtime](scope); err != nil {
+		if p.guardrail, err = extension.Use[*guardrailext.Runtime](scope); err != nil {
 			return err
 		}
 		if p.events, err = extension.Use[*events.Stream](scope); err != nil {
@@ -399,5 +428,5 @@ func (p *aiscanProfile) SetGuardrailMode(mode string) error {
 	if !p.Active() || p.guardrail == nil {
 		return fmt.Errorf("guardrail runtime is unavailable")
 	}
-	return p.guardrail.SetMode(guardrail.Mode(mode))
+	return p.guardrail.SetMode(guardrailext.Mode(mode))
 }

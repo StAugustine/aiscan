@@ -5,7 +5,7 @@ import (
 	agentsession "github.com/chainreactors/cyber/agent/session"
 
 	"github.com/chainreactors/cyber/core/extension"
-	core "github.com/chainreactors/cyber/core/guardrail"
+
 	"github.com/chainreactors/cyber/core/operation"
 	"github.com/chainreactors/cyber/pkg/console/api"
 	"github.com/spf13/cobra"
@@ -15,7 +15,7 @@ type ConsoleExtension struct{}
 
 func NewConsole() *ConsoleExtension { return &ConsoleExtension{} }
 func (*ConsoleExtension) Load(scope *extension.Scope) error {
-	runtime, err := extension.Use[*core.Runtime](scope)
+	runtime, err := extension.Use[*Runtime](scope)
 	if err != nil {
 		return err
 	}
@@ -25,7 +25,7 @@ func (*ConsoleExtension) Load(scope *extension.Scope) error {
 	}
 	return extension.Add(scope, consoleBindings(runtime, sessions))
 }
-func consoleBindings(runtime *core.Runtime, sessions *agentsession.Runtime) *api.Bindings {
+func consoleBindings(runtime *Runtime, sessions *agentsession.Runtime) *api.Bindings {
 	return &api.Bindings{Commands: func(view api.View) []*cobra.Command {
 		root := &cobra.Command{Use: "/guardrail", Short: "Inspect and resolve waiting tool approvals"}
 		var session string

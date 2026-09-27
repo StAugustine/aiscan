@@ -1,4 +1,5 @@
-// Package guardrail installs the core admission mechanism and its adapters.
+// Package guardrail implements tool admission as an optional extension over
+// the native JEV API. It has no dependency on Reflex learning or execution.
 package guardrail
 
 import (
@@ -7,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	"github.com/chainreactors/cyber/core/events"
 	"github.com/chainreactors/cyber/core/extension"
-	core "github.com/chainreactors/cyber/core/guardrail"
 	"github.com/chainreactors/cyber/core/hooks"
 	"github.com/chainreactors/cyber/core/resource"
 	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
@@ -19,12 +20,20 @@ import (
 const ConfigKey = "guardrail"
 
 type Config struct {
-	Mode          core.Mode `config:"mode" json:"mode" description:"auto asks the policy provider to assess consequences (default); safe asks a human; screening always applies"`
+	Provider      string    `config:"provider" json:"provider" description:"none or jev; empty retains legacy configuration migration"`
+	JEV           JEVConfig `config:"jev" json:"jev"`
+	Mode          Mode      `config:"mode" json:"mode" description:"auto asks the policy provider to assess consequences (default); safe asks a human; screening always applies"`
 	ReviewTimeout string    `config:"review_timeout" json:"review_timeout" description:"Maximum wait for tool approval (default 5m)"`
 }
 
 func (c Config) timeout() (time.Duration, error) {
-	if c.Mode != "" && c.Mode != core.ModeSafe && c.Mode != core.ModeAuto && c.Mode != core.ModeOff {
+	if c.Provider != "" && c.Provider != "none" && c.Provider != "jev" {
+		return 0, fmt.Errorf("guardrail provider must be none or jev")
+	}
+	if err := c.JEV.validate(); err != nil {
+		return 0, err
+	}
+	if c.Mode != "" && c.Mode != ModeSafe && c.Mode != ModeAuto && c.Mode != ModeOff {
 		return 0, fmt.Errorf("guardrail mode must be safe, auto or off")
 	}
 	if c.ReviewTimeout == "" {
@@ -38,13 +47,13 @@ func (c Config) timeout() (time.Duration, error) {
 }
 
 func Declare(resources *resource.Registry) error {
-	_, err := resource.Add[cfg.Section](resources, cfg.Section{Key: ConfigKey, New: func() any { return &Config{Mode: core.ModeAuto, ReviewTimeout: "5m"} }, Validate: func(v any) error { _, err := v.(*Config).timeout(); return err }})
+	_, err := resource.Add[cfg.Section](resources, cfg.Section{Key: ConfigKey, New: func() any { return &Config{Mode: ModeAuto, ReviewTimeout: "5m"} }, Validate: func(v any) error { _, err := v.(*Config).timeout(); return err }})
 	return err
 }
 
 type Extension struct {
 	config  Config
-	runtime *core.Runtime
+	runtime *Runtime
 	before  *hooks.Subscription
 }
 
@@ -63,9 +72,18 @@ func (e *Extension) Load(scope *extension.Scope) error {
 	if err != nil {
 		return err
 	}
-	e.runtime = core.New(stream, timeout, e.config.Mode)
+	var check, confirm checkFunc
+	if e.config.Provider == "jev" {
+		client, err := extension.Use[*jevapi.Client](scope)
+		if err != nil {
+			return err
+		}
+		policy := newJEVPolicy(e.config.JEV, client)
+		check, confirm = policy.check, policy.confirm
+	}
+	e.runtime = newRuntime(scope.Lifetime(), stream, timeout, e.config.Mode, check, confirm)
 	e.before = toolhooks.Before.On(registry, "guardrail", e.runtime.Admit)
-	return extension.Provide[*core.Runtime](scope, e.runtime)
+	return extension.Provide[*Runtime](scope, e.runtime)
 }
 
 func (e *Extension) Close(ctx context.Context) error {

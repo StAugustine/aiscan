@@ -7,7 +7,7 @@ import (
 
 	"github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/extension"
-	core "github.com/chainreactors/cyber/core/guardrail"
+
 	"github.com/chainreactors/cyber/core/operation"
 	"google.golang.org/protobuf/proto"
 )
@@ -16,7 +16,7 @@ type ProtocolExtension struct{}
 
 func NewProtocol() *ProtocolExtension { return &ProtocolExtension{} }
 func (*ProtocolExtension) Load(scope *extension.Scope) error {
-	runtime, err := extension.Use[*core.Runtime](scope)
+	runtime, err := extension.Use[*Runtime](scope)
 	if err != nil {
 		return err
 	}
@@ -24,12 +24,12 @@ func (*ProtocolExtension) Load(scope *extension.Scope) error {
 	if err != nil {
 		return err
 	}
-	return extension.Add(scope, aop.Binding{Prototype: &core.ProtocolMessage{}, Open: func() aop.NamespaceHandler { return protocolHandler(runtime, sessions) }})
+	return extension.Add(scope, aop.Binding{Prototype: &ProtocolMessage{}, Open: func() aop.NamespaceHandler { return protocolHandler(runtime, sessions) }})
 }
 
-func protocolHandler(runtime *core.Runtime, sessions *agentsession.Runtime) aop.NamespaceHandler {
+func protocolHandler(runtime *Runtime, sessions *agentsession.Runtime) aop.NamespaceHandler {
 	return func(ctx context.Context, envelope *aop.Envelope, message proto.Message, send aop.SendFunc) error {
-		value, ok := message.(*core.ProtocolMessage)
+		value, ok := message.(*ProtocolMessage)
 		if !ok {
 			return fmt.Errorf("unexpected guardrail namespace message")
 		}
@@ -38,7 +38,7 @@ func protocolHandler(runtime *core.Runtime, sessions *agentsession.Runtime) aop.
 			if bound := operation.InvocationFromContext(ctx).SessionID; bound != "" && bound != pending.SessionId {
 				return reply(aop.NewProtocolError("GUARDRAIL_DENIED", "session scope mismatch"))
 			}
-			return reply(&core.ProtocolMessage{Message: &core.ProtocolMessage_PendingResult{PendingResult: &core.PendingResponse{Reviews: sessionReviews(runtime, sessions, pending.SessionId)}}})
+			return reply(&ProtocolMessage{Message: &ProtocolMessage_PendingResult{PendingResult: &PendingResponse{Reviews: sessionReviews(runtime, sessions, pending.SessionId)}}})
 		}
 		if resolve := value.GetResolve(); resolve != nil {
 			if resolve.OperationId == "" {
@@ -58,25 +58,25 @@ func protocolHandler(runtime *core.Runtime, sessions *agentsession.Runtime) aop.
 			if err := runtime.Resolve(operation.ContextWithInvocation(ctx, invocation), resolve.OperationId, resolve.Approve); err != nil {
 				return reply(aop.NewProtocolError("GUARDRAIL_DENIED", err.Error()))
 			}
-			return reply(&core.ProtocolMessage{Message: &core.ProtocolMessage_Resolved{Resolved: &core.ResolveResponse{}}})
+			return reply(&ProtocolMessage{Message: &ProtocolMessage_Resolved{Resolved: &ResolveResponse{}}})
 		}
 		return reply(aop.NewProtocolError("INVALID_ARGUMENT", "pending or resolve request required"))
 	}
 }
 
-func sessionReviews(runtime *core.Runtime, sessions *agentsession.Runtime, root string) []*core.Review {
+func sessionReviews(runtime *Runtime, sessions *agentsession.Runtime, root string) []*Review {
 	ids := []string{root}
 	if sessions != nil {
 		ids = sessions.SessionIDs(root)
 	}
-	var reviews []*core.Review
+	var reviews []*Review
 	for _, id := range ids {
 		reviews = append(reviews, runtime.Pending(id)...)
 	}
 	return reviews
 }
 
-func reviewSession(runtime *core.Runtime, sessions *agentsession.Runtime, root, operationID string) string {
+func reviewSession(runtime *Runtime, sessions *agentsession.Runtime, root, operationID string) string {
 	for _, review := range sessionReviews(runtime, sessions, root) {
 		if review.Operation.GetOperationId() == operationID {
 			return review.SessionId

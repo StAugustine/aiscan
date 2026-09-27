@@ -2,33 +2,26 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/chainreactors/cyber/core/events"
 	"github.com/chainreactors/cyber/core/extension"
-	"github.com/chainreactors/cyber/core/guardrail"
 	"github.com/chainreactors/cyber/core/hooks"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
 )
 
-func TestAutomaticGuardrailKeepsAgentLoopRunning(t *testing.T) {
-	for _, action := range []guardrail.Action{guardrail.Action_ACTION_REVIEW, guardrail.Action_ACTION_BLOCK} {
-		t.Run(action.String(), func(t *testing.T) {
+func TestToolAdmissionDenialKeepsAgentLoopRunning(t *testing.T) {
+	for _, action := range []string{"review", "block"} {
+		t.Run(action, func(t *testing.T) {
 			registry := hooks.New()
-			runtime := guardrail.New(events.New(), time.Second, guardrail.ModeAuto)
-			defer runtime.Close(t.Context())
-			_, _ = runtime.Register("test", func(_ context.Context, ev toolhooks.CallEvent) (*guardrail.Decision, error) {
+			toolhooks.Before.On(registry, "guardrail", func(_ context.Context, ev toolhooks.CallEvent) (toolhooks.Admission, error) {
 				if strings.Contains(string(ev.Call.Arguments.Data), "blocked") {
-					return &guardrail.Decision{Action: action, Reason: "possible business impact"}, nil
+					return toolhooks.Admission{Deny: errors.New("possible business impact; tool was not executed")}, nil
 				}
-				return &guardrail.Decision{Action: guardrail.Action_ACTION_RECORD}, nil
-			}, func(context.Context, toolhooks.CallEvent) (*guardrail.Decision, error) {
-				return &guardrail.Decision{Action: guardrail.Action_ACTION_BLOCK, Reason: "confirmed possible business impact"}, nil
+				return toolhooks.Admission{}, nil
 			})
-			toolhooks.Before.On(registry, "guardrail", runtime.Admit)
 			echo := &recordingTool{name: "echo", output: "safe alternative executed"}
 			tools := coretool.NewToolRegistry()
 			if _, err := tools.Add(echo); err != nil {
@@ -56,9 +49,6 @@ func TestAutomaticGuardrailKeepsAgentLoopRunning(t *testing.T) {
 			}
 			if calls := echo.callsSnapshot(); len(calls) != 1 || calls[0] != `{"command":"safe"}` {
 				t.Fatalf("unexpected executions: %v", calls)
-			}
-			if len(runtime.Pending("guardrail-loop")) != 0 {
-				t.Fatal("automatic mode waited for human approval")
 			}
 		})
 	}

@@ -43,6 +43,7 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 	transcript := newTranscript(cfg.Messages, 8)
 	turn := 0
 	overflowRecoveryAttempted := false
+	decisionPrepared := false
 
 	em := cfg.emitter
 	ib := cfg.Inbox
@@ -103,11 +104,23 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 				}
 			}
 			if len(inboxMsgs) > 0 {
+				decisionPrepared = false
 				cfg.Logger.Debugf("[turn %d] drained %d inbox message(s)", turn, len(inboxMsgs))
 			}
 			if ib.Closed() {
 				ib = nil
 			}
+		}
+		if !decisionPrepared {
+			transcript.append(appendModelHook(ctx, cfg, transcript.messages, turn)...)
+			decisionPrepared = true
+		}
+		if err := ctx.Err(); err != nil {
+			return end(nil, err, StopReasonCanceled)
+		}
+		// A controller may have yielded to new input while executing tools.
+		if ib != nil && ib.Len() > 0 {
+			continue
 		}
 		reqMessages := requestMessages(ctx, cfg, cfg.SystemPrompt, transcript.messages, turn)
 		toolDefinitions := cfg.Tools.ToolDefinitions()
@@ -182,6 +195,7 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 			return end(result, result.Err, StopReasonBudget)
 		}
 		transcript.append(assistant.message)
+		decisionPrepared = false
 
 		if cfg.TokenBudget > 0 {
 			if transcript.totalUsage.GetTotalTokens() >= uint64(cfg.TokenBudget) {

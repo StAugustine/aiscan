@@ -19,7 +19,7 @@ func TestTwoStageAdmission(t *testing.T) {
 				t.Run(string(mode)+risk.String()+consequence.String(), func(t *testing.T) {
 					r, registry, reviews := fixture(t, time.Second, mode)
 					var screens, confirmations, executions atomic.Int32
-					_, err := r.Register("policy", func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
+					r.check, r.confirm = func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
 						screens.Add(1)
 						ev.Call.Arguments.Data = []byte("mutated screening copy")
 						return &Decision{Action: risk, Reason: "risk"}, nil
@@ -29,9 +29,6 @@ func TestTwoStageAdmission(t *testing.T) {
 							t.Error("confirmation did not receive original arguments")
 						}
 						return &Decision{Action: consequence, Reason: "consequences"}, nil
-					})
-					if err != nil {
-						t.Fatal(err)
 					}
 					done := make(chan error, 1)
 					go func() {
@@ -54,7 +51,7 @@ func TestTwoStageAdmission(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					err = <-done
+					err := <-done
 					allowed := !flagged || mode == ModeSafe || consequence == Action_ACTION_RECORD
 					if allowed && (err != nil || executions.Load() != 1) {
 						t.Fatalf("allowed invocation: %v executions=%d", err, executions.Load())
@@ -88,7 +85,7 @@ func TestTwoStageAdmission(t *testing.T) {
 }
 
 func TestConsequenceFailuresCannotExecute(t *testing.T) {
-	for name, confirm := range map[string]CheckFunc{
+	for name, confirm := range map[string]checkFunc{
 		"error": func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 			return nil, errors.New("private secret")
 		},
@@ -98,9 +95,9 @@ func TestConsequenceFailuresCannotExecute(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r, registry, _ := fixture(t, time.Second, ModeAuto)
-			_, _ = r.Register("risk", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+			r.check, r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 				return &Decision{Action: Action_ACTION_REVIEW}, nil
-			}, confirm)
+			}, confirm
 			ctx := callContext()
 			result, err := toolhooks.Execute(ctx, registry, "bash", "{}", func(context.Context, string) (*aop.ToolResult, error) {
 				t.Fatal("failed confirmation executed")
@@ -113,15 +110,19 @@ func TestConsequenceFailuresCannotExecute(t *testing.T) {
 	}
 }
 
-func TestProviderConfirmationCannotOverrideAnotherDenial(t *testing.T) {
+func TestIndependentToolHookDenialCannotBeOverridden(t *testing.T) {
 	r, registry, _ := fixture(t, time.Second, ModeAuto)
-	verdict := func(action Action) CheckFunc {
-		return func(context.Context, toolhooks.CallEvent) (*Decision, error) { return &Decision{Action: action}, nil }
+	r.check = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+		return &Decision{Action: Action_ACTION_BLOCK}, nil
 	}
-	_, _ = r.Register("uncertain", verdict(Action_ACTION_REVIEW), verdict(Action_ACTION_REVIEW))
-	_, _ = r.Register("harmless", verdict(Action_ACTION_BLOCK), verdict(Action_ACTION_RECORD))
+	r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+		return &Decision{Action: Action_ACTION_RECORD}, nil
+	}
+	toolhooks.Before.On(registry, "independent-policy", func(context.Context, toolhooks.CallEvent) (toolhooks.Admission, error) {
+		return denied("independent policy"), nil
+	})
 	_, err := toolhooks.Execute(callContext(), registry, "bash", "{}", func(context.Context, string) (*aop.ToolResult, error) {
-		t.Fatal("another provider's denial was erased")
+		t.Fatal("another hook's denial was erased")
 		return nil, nil
 	})
 	if !errors.Is(err, operation.ErrDenied) {
@@ -134,7 +135,7 @@ func TestConsequenceAssessmentSurvivesModeChangeButNotCancellation(t *testing.T)
 		t.Run(map[bool]string{false: "mode_snapshot", true: "cancellation"}[cancelCall], func(t *testing.T) {
 			r, registry, reviews := fixture(t, time.Second, ModeAuto)
 			entered, release := make(chan struct{}), make(chan struct{})
-			_, _ = r.Register("risk", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+			r.check, r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 				return &Decision{Action: Action_ACTION_REVIEW}, nil
 			}, func(ctx context.Context, _ toolhooks.CallEvent) (*Decision, error) {
 				close(entered)
@@ -143,7 +144,7 @@ func TestConsequenceAssessmentSurvivesModeChangeButNotCancellation(t *testing.T)
 				case <-ctx.Done():
 				}
 				return &Decision{Action: Action_ACTION_RECORD}, nil
-			})
+			}
 			ctx, cancel := context.WithCancel(callContext())
 			defer cancel()
 			var executions atomic.Int32

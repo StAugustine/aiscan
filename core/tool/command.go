@@ -2,9 +2,12 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+
+	aop "github.com/chainreactors/cyber/aop"
 
 	coreregistry "github.com/chainreactors/cyber/core/registry"
 )
@@ -13,6 +16,7 @@ var (
 	ErrInvalidCommand   = errors.New("invalid command registration")
 	ErrDuplicateCommand = coreregistry.ErrDuplicate
 	ErrUnavailable      = coreregistry.ErrUnavailable
+	ErrStaleChoice      = errors.New("observed choice is stale")
 )
 
 // Command is an immutable native command declaration. Its dependencies are
@@ -26,6 +30,12 @@ type Command struct {
 	QuickReference  string
 	DescriptionPath string
 	Run             func(context.Context, *Execution) (any, error)
+	// Choices observes current tool-owned state. It must not execute actions.
+	// Calls are native Executor calls, bounded, session-scoped and checked again
+	// by the tool at execution. Empty choices require ordinary model reasoning.
+	Choices func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error)
+	// Contract invalidates learned decisions when candidate semantics change.
+	Contract string
 }
 
 // StripShellSyntax rejects shell constructs a pseudo-command cannot honor.

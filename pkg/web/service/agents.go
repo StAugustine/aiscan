@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/chainreactors/cyber/core/extension"
-	"github.com/chainreactors/cyber/core/guardrail"
+	"github.com/chainreactors/cyber/pkg/exts/guardrail"
 
 	aop "github.com/chainreactors/cyber/aop"
 	filepb "github.com/chainreactors/cyber/aop/file"

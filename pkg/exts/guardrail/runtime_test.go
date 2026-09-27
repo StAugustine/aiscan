@@ -49,7 +49,7 @@ func fixture(t *testing.T, timeout time.Duration, modes ...Mode) (*Runtime, *hoo
 	if len(modes) > 0 {
 		mode = modes[0]
 	}
-	runtime := New(stream, timeout, mode)
+	runtime := newRuntime(t.Context(), stream, timeout, mode, nil, nil)
 	registry := hooks.New()
 	toolhooks.Before.On(registry, "guardrail", runtime.Admit)
 	t.Cleanup(func() {
@@ -62,16 +62,13 @@ func fixture(t *testing.T, timeout time.Duration, modes ...Mode) (*Runtime, *hoo
 	return runtime, registry, reviews
 }
 
-func register(t *testing.T, r *Runtime, action Action) *hooks.Subscription {
+func register(t *testing.T, r *Runtime, action Action) {
 	t.Helper()
-	s, err := r.Register("test", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+	r.check = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		return &Decision{Action: action, Reason: "policy"}, nil
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
 	}
-	return s
 }
+
 func callContext() context.Context {
 	return operation.ContextWithInvocation(context.Background(), operation.Invocation{SessionID: "session", CallID: "same-call"})
 }
@@ -89,7 +86,7 @@ func nextReview(t *testing.T, c <-chan *Review) *Review {
 func TestAdmissionFailuresNeverExecute(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		check CheckFunc
+		check checkFunc
 	}{
 		{"block", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 			return &Decision{Action: Action_ACTION_BLOCK}, nil
@@ -103,9 +100,7 @@ func TestAdmissionFailuresNeverExecute(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			r, registry, _ := fixture(t, time.Second, ModeAuto)
-			if _, err := r.Register("broken", test.check, nil); err != nil {
-				t.Fatal(err)
-			}
+			r.check, r.confirm = test.check, nil
 			_, err := toolhooks.Execute(callContext(), registry, "shell", "{}", func(context.Context, string) (*aop.ToolResult, error) {
 				t.Fatal("denied invocation executed")
 				return nil, nil
@@ -120,51 +115,41 @@ func TestAdmissionFailuresNeverExecute(t *testing.T) {
 	}
 }
 
-func TestDisabledAndRemovedChecks(t *testing.T) {
+func TestDisabledAndClosedRuntime(t *testing.T) {
 	r, registry, _ := fixture(t, time.Second)
 	calls := 0
 	run := func(context.Context, string) (*aop.ToolResult, error) { calls++; return &aop.ToolResult{}, nil }
 	if _, err := toolhooks.Execute(callContext(), registry, "read", "{}", run); err != nil {
 		t.Fatal(err)
 	}
-	sub := register(t, r, Action_ACTION_RECORD)
+	register(t, r, Action_ACTION_RECORD)
 	if _, err := toolhooks.Execute(callContext(), registry, "read", "{}", run); err != nil {
 		t.Fatal(err)
 	}
-	sub.Cancel()
+	if err := r.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := toolhooks.Execute(callContext(), registry, "read", "{}", run); !errors.Is(err, operation.ErrDenied) {
-		t.Fatalf("removed policy allowed: %v", err)
+		t.Fatalf("closed hook allowed: %v", err)
 	}
 	if calls != 2 {
 		t.Fatalf("executed %d times", calls)
 	}
 }
 
-func TestMergeOrderAndSnapshotIsolation(t *testing.T) {
+func TestPolicySnapshotIsolation(t *testing.T) {
 	r, _, _ := fixture(t, time.Second, ModeAuto)
-	seen := 0
-	_, _ = r.Register("review", func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
+	r.check = func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
 		ev.Call.Name = "mutated"
 		ev.Operation.OperationId = "mutated"
-		return &Decision{Action: Action_ACTION_REVIEW}, nil
-	}, nil)
-	_, _ = r.Register("block", func(_ context.Context, ev toolhooks.CallEvent) (*Decision, error) {
-		seen++
-		if ev.Call.Name != "shell" || ev.Operation.OperationId != "op" {
-			t.Error("shared snapshot")
-		}
-		return &Decision{Action: Action_ACTION_BLOCK, Reason: "first block"}, nil
-	}, nil)
-	_, _ = r.Register("unreachable", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
-		t.Error("block did not short circuit")
-		return nil, nil
-	}, nil)
+		return &Decision{Action: Action_ACTION_BLOCK}, nil
+	}
 	ev := toolhooks.CallEvent{Call: &aop.ToolCall{Name: "shell"}, Operation: &operationpb.Ref{OperationId: "op"}}
 	result, err := r.Admit(callContext(), ev)
-	if err != nil || !errors.Is(result.Deny, operation.ErrDenied) || seen != 1 {
-		t.Fatalf("result=%v err=%v seen=%d", result, err, seen)
+	if err != nil || !errors.Is(result.Deny, operation.ErrDenied) {
+		t.Fatalf("result=%v err=%v", result, err)
 	}
-	if ev.Call.Name != "shell" {
+	if ev.Call.Name != "shell" || ev.Operation.OperationId != "op" {
 		t.Fatal("original call mutated")
 	}
 }
@@ -172,10 +157,10 @@ func TestMergeOrderAndSnapshotIsolation(t *testing.T) {
 func TestApprovalResumesExactlyOneInvocation(t *testing.T) {
 	r, registry, reviews := fixture(t, time.Second)
 	var judged, executed atomic.Int32
-	_, _ = r.Register("review", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+	r.check, r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		judged.Add(1)
 		return &Decision{Action: Action_ACTION_REVIEW}, nil
-	}, nil)
+	}, nil
 	run := func(_ context.Context, args string) (*aop.ToolResult, error) {
 		if args != `{"token":"dummy","command":"read"}` {
 			t.Error("executable arguments changed")
@@ -283,11 +268,11 @@ func TestReviewCancellationExpiryAndClose(t *testing.T) {
 func TestCloseCancelsActiveCheck(t *testing.T) {
 	r, registry, _ := fixture(t, time.Second)
 	started := make(chan struct{})
-	_, _ = r.Register("waiting", func(ctx context.Context, _ toolhooks.CallEvent) (*Decision, error) {
+	r.check, r.confirm = func(ctx context.Context, _ toolhooks.CallEvent) (*Decision, error) {
 		close(started)
 		<-ctx.Done()
 		return &Decision{Action: Action_ACTION_RECORD}, nil
-	}, nil)
+	}, nil
 	done := make(chan error, 1)
 	go func() {
 		_, err := toolhooks.Execute(callContext(), registry, "shell", "{}", func(context.Context, string) (*aop.ToolResult, error) {
@@ -366,27 +351,22 @@ func TestCompetingApprovalsHaveOneWinner(t *testing.T) {
 	}
 }
 
-func TestSynchronousObserverCanResolveAndTieUsesFirstDecision(t *testing.T) {
+func TestSynchronousObserverCanResolve(t *testing.T) {
 	stream := events.New()
-	r := New(stream, time.Second, ModeSafe)
+	r := newRuntime(t.Context(), stream, time.Second, ModeSafe, nil, nil)
 	defer r.Close(t.Context())
 	registry := hooks.New()
 	toolhooks.Before.On(registry, "guardrail", r.Admit)
-	for _, reason := range []string{"first", "second"} {
-		_, err := r.Register(reason, func(context.Context, toolhooks.CallEvent) (*Decision, error) {
-			return &Decision{Action: Action_ACTION_REVIEW, Reason: reason}, nil
-		}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+	r.check = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+		return &Decision{Action: Action_ACTION_REVIEW, Reason: "policy"}, nil
 	}
 	stream.Observe(testObserver(func(event *aop.Event) {
 		var review Review
 		if extension := event.GetExtension(); extension == nil || !extension.MessageIs(&review) || extension.UnmarshalTo(&review) != nil || review.State != ReviewState_REVIEW_STATE_PENDING {
 			return
 		}
-		if review.Decision.Reason != "first" {
-			t.Error("tie did not keep first decision")
+		if review.Decision.Reason != "policy" {
+			t.Error("risk reason was not preserved")
 		}
 		if len(r.Pending("session")) != 1 {
 			t.Error("review not published after insertion")
@@ -465,13 +445,10 @@ func TestModeChangesPreserveWaitingInvocation(t *testing.T) {
 func TestRepeatedAutoInterceptionsAreScopedAndRechecked(t *testing.T) {
 	r, registry, _ := fixture(t, time.Second, ModeAuto)
 	var checks atomic.Int32
-	_, err := r.Register("risk", func(context.Context, toolhooks.CallEvent) (*Decision, error) {
+	r.check, r.confirm = func(context.Context, toolhooks.CallEvent) (*Decision, error) {
 		checks.Add(1)
 		return &Decision{Action: Action_ACTION_BLOCK, Reason: "policy"}, nil
-	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	}, nil
 	run := func(context.Context, string) (*aop.ToolResult, error) { t.Fatal("denied call ran"); return nil, nil }
 	for _, tc := range []struct{ session, turn, args, count string }{
 		{"a", "one", `{"cmd":"echo x","x":1}`, "1 identical"},
