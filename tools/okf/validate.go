@@ -355,6 +355,7 @@ func checkReserved(name, path string, body []byte, report *Report) {
 	})
 	if len(headings) == 0 {
 		add(report, Error, path, "reserved.structure", name+" requires markdown headings")
+		return
 	}
 	if name == "log.md" {
 		for _, heading := range headings[1:] {

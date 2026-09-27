@@ -330,6 +330,9 @@ func (r *runReport) validate(ctx context.Context) error {
 	if strings.Contains(string(body), "# Audit in progress") {
 		return fmt.Errorf("audit report incomplete: index.md is still a draft")
 	}
+	if err := reportEvidence(r.Directory, "log.md"); err != nil {
+		return fmt.Errorf("audit report incomplete: investigation log required: %w", err)
+	}
 	validation, err := okf.Validate(ctx, r.Directory, false)
 	if err != nil {
 		return err

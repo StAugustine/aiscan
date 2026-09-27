@@ -76,7 +76,7 @@ func TestValidationEntrypointsUseFinalReportContract(t *testing.T) {
 }
 
 func TestOneShotReportRepairUsesSameContextAndHasLimit(t *testing.T) {
-	for _, problem := range []string{"status", "evidence", "persistent"} {
+	for _, problem := range []string{"status", "evidence", "empty-log", "missing-log", "persistent"} {
 		t.Run(problem, func(t *testing.T) {
 			workspace := t.TempDir()
 			reportDir := filepath.Join(workspace, "report")
@@ -85,6 +85,12 @@ func TestOneShotReportRepairUsesSameContextAndHasLimit(t *testing.T) {
 			if problem == "evidence" {
 				invalid = strings.Replace(valid, "raw/proton.jsonl", "raw/proton.jsonl (reused output)", 1)
 				wantError = "missing evidence"
+			}
+			if problem == "empty-log" || problem == "missing-log" {
+				invalid, wantError = valid, "log.md requires markdown headings"
+				if problem == "missing-log" {
+					wantError = "investigation log required"
+				}
 			}
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -101,6 +107,18 @@ func TestOneShotReportRepairUsesSameContextAndHasLimit(t *testing.T) {
 							return
 						}
 					}
+					if problem == "empty-log" {
+						if err := os.WriteFile(filepath.Join(reportDir, "log.md"), nil, 0600); err != nil {
+							t.Error(err)
+							return
+						}
+					}
+					if problem == "missing-log" {
+						if err := os.Remove(filepath.Join(reportDir, "log.md")); err != nil {
+							t.Error(err)
+							return
+						}
+					}
 					streamReply(w, "REPORT_CREATED_MARKER")
 					return
 				}
@@ -108,7 +126,11 @@ func TestOneShotReportRepairUsesSameContextAndHasLimit(t *testing.T) {
 					t.Error("repair did not receive error and prior context")
 				}
 				if problem != "persistent" && n == 2 {
-					toolReply(w, "write", map[string]any{"path": "report/coverage.json", "content": valid})
+					path, content := "report/coverage.json", valid
+					if problem == "empty-log" || problem == "missing-log" {
+						path, content = "report/log.md", "# Investigation log\n\n- Repaired the functional report.\n"
+					}
+					toolReply(w, "write", map[string]any{"path": path, "content": content})
 					return
 				}
 				streamReply(w, "Finished repair.")
