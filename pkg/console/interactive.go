@@ -138,9 +138,9 @@ func newAgentConsole(ctx context.Context, rt *agentsession.Runtime, session *age
 		stdout:       stdout,
 		stderr:       stderr,
 	}
-	if isTerminal && isLocalAgentTerminal(t) && resolveRenderMode(renderModeValue(option)) == ModeInteractive {
+	if isTerminal && !repl.fastInputEnabled() && resolveRenderMode(renderModeValue(option)) == ModeInteractive {
 		bridge := newReadlineConsoleBridge(c.Shell(), t.Out)
-		output.SetReadlineMode(bridge)
+		output.recapWriter = bridge
 		repl.readlineBridge = bridge
 		c.Shell().OnReadlineReady = func() {
 			bridge.SetReady(true)
@@ -148,8 +148,11 @@ func newAgentConsole(ctx context.Context, rt *agentsession.Runtime, session *age
 		c.Shell().OnReadlineDone = func() {
 			bridge.SetReady(false)
 		}
-		repl.stdout = bridge
-		repl.stderr = bridge
+		if isLocalAgentTerminal(t) {
+			output.SetReadlineMode(bridge)
+			repl.stdout = bridge
+			repl.stderr = bridge
+		}
 	}
 	menu.Prompt().Primary = func() string {
 		return agentComposerPrompt(output, repl.readlineBridge)
@@ -570,7 +573,7 @@ func (r *AgentConsole) ensureOutput() *AgentOutput {
 }
 
 func (r *AgentConsole) refreshPromptAfterAsyncRun() {
-	if r == nil || r.readlineBridge != nil || !r.readlineActive.Load() {
+	if r == nil || !r.readlineActive.Load() || (r.output != nil && r.output.readline) {
 		return
 	}
 	if r.ctx != nil && r.ctx.Err() != nil {

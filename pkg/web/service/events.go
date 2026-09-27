@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"strconv"
 
@@ -72,6 +74,12 @@ func (s *Service) acceptAOPEvent(sessionID string, event *aop.Event) (bool, erro
 		var err error
 		cursor, persisted, err = s.store.AppendAOPEvent(context.Background(), sessionID, event)
 		if err != nil {
+			// Deleting a session also deletes its history. Its remote close and
+			// optional recap may still be in flight; they must not recreate it
+			// or report a persistence failure for an intentionally removed row.
+			if _, sessionErr := s.store.GetSession(context.Background(), sessionID); errors.Is(sessionErr, sql.ErrNoRows) {
+				return false, nil
+			}
 			return false, err
 		}
 		if cursor > 0 && !persisted {

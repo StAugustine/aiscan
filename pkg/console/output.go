@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/agent/provider"
@@ -66,6 +67,13 @@ type AgentOutput struct {
 	turnToolCalls int
 	contextTokens int
 	runCount      int
+	recapSession  string
+	recapTurn     string
+	recapText     string
+	recapEnded    bool
+	recapShown    bool
+	recapElapsed  time.Duration
+	recapWriter   io.Writer // Async recaps share the prompt's readline writer.
 
 	// Transient UI.
 	mode                   RenderMode
@@ -342,10 +350,19 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		o.beginRun()
 	}
 	switch payload := event.Payload.(type) {
+	case *aop.Event_Extension:
+		var recap types.Recap
+		if payload.Extension != nil && payload.Extension.MessageIs(&recap) && payload.Extension.UnmarshalTo(&recap) == nil && event.TurnId != "" && event.TurnId == o.recapTurn && event.SessionId == o.recapSession {
+			o.recapText = recap.Text
+			o.renderRecap()
+		}
 	case *aop.Event_SessionStarted:
 		o.agentStart = time.Now()
 
 	case *aop.Event_TurnStarted:
+		o.recapSession, o.recapTurn = event.SessionId, event.TurnId
+		o.recapText, o.recapEnded, o.recapShown = "", false, false
+		o.recapElapsed = 0
 		o.agentStart = time.Now()
 		o.runCount++
 		o.stream.NewTurn()
@@ -364,6 +381,10 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		}
 		acc := o.deltas[data.MessageId]
 		if acc == nil {
+			// Each model response has its own cumulative deltas. A task can
+			// contain several responses separated by tool calls.
+			o.stream.Flush()
+			o.stream.NewTurn()
 			acc = &deltaAccumulator{}
 			o.deltas[data.MessageId] = acc
 		}
@@ -517,6 +538,9 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 
 	case *aop.Event_TurnEnded:
 		data := payload.TurnEnded
+		if event.TurnId == o.recapTurn && event.SessionId == o.recapSession && !o.recapEnded {
+			o.recapElapsed = time.Since(o.agentStart)
+		}
 		o.contextTokens = int(data.ContextTokens)
 		o.live.FinishTurn(o.contextTokens)
 		o.stopLive()
@@ -531,6 +555,10 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 			fmt.Fprintf(o.Stderr(), "error: %s\n", data.Error.Message)
 		case !o.quiet() && o.stream.ContentPrinted() == 0 && strings.TrimSpace(messagePartText(o.lastAssistant, false)) == "":
 			fmt.Fprintln(o.Stderr(), o.dim("No output."))
+		}
+		if event.TurnId == o.recapTurn && event.SessionId == o.recapSession {
+			o.recapEnded = true
+			o.renderRecap()
 		}
 	case *aop.Event_SessionEnded:
 		o.stopLive()
@@ -561,6 +589,28 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 			o.compactError()
 		}
 	}
+}
+
+func (o *AgentOutput) renderRecap() {
+	if !o.recapEnded || o.recapShown || o.quiet() || o.mode != ModeInteractive || strings.TrimSpace(o.recapText) == "" {
+		return
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, output.StripANSI(o.recapText))
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return
+	}
+	w := o.recapWriter
+	if w == nil {
+		w = o.Stderr()
+	}
+	fmt.Fprintf(w, "\n%s\n\n", o.dim("  ✻ "+text+" · "+truncate.FormatDuration(o.recapElapsed)))
+	o.recapShown = true
 }
 
 func estimateStreamTokens(parts ...string) int {

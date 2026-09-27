@@ -22,6 +22,7 @@ export {
   BudgetWarningSchema,
   CommandDetailSchema,
   CompactDetailSchema,
+  RecapSchema,
   EvalDetailSchema,
   WebMessageMetadataSchema,
   type AgentListMetadata,

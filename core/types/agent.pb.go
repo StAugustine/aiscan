@@ -362,6 +362,51 @@ func (x *CompactDetail) GetTokensBefore() uint64 {
 	return 0
 }
 
+// Display-only task recap. Correlation and time belong to the AOP envelope.
+type Recap struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Recap) Reset() {
+	*x = Recap{}
+	mi := &file_types_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Recap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Recap) ProtoMessage() {}
+
+func (x *Recap) ProtoReflect() protoreflect.Message {
+	mi := &file_types_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Recap.ProtoReflect.Descriptor instead.
+func (*Recap) Descriptor() ([]byte, []int) {
+	return file_types_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Recap) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 type DelegationDetail struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -376,7 +421,7 @@ type DelegationDetail struct {
 
 func (x *DelegationDetail) Reset() {
 	*x = DelegationDetail{}
-	mi := &file_types_agent_proto_msgTypes[6]
+	mi := &file_types_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +433,7 @@ func (x *DelegationDetail) String() string {
 func (*DelegationDetail) ProtoMessage() {}
 
 func (x *DelegationDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[6]
+	mi := &file_types_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -401,7 +446,7 @@ func (x *DelegationDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DelegationDetail.ProtoReflect.Descriptor instead.
 func (*DelegationDetail) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{6}
+	return file_types_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DelegationDetail) GetAgentId() string {
@@ -456,7 +501,7 @@ type EvalControl struct {
 
 func (x *EvalControl) Reset() {
 	*x = EvalControl{}
-	mi := &file_types_agent_proto_msgTypes[7]
+	mi := &file_types_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -468,7 +513,7 @@ func (x *EvalControl) String() string {
 func (*EvalControl) ProtoMessage() {}
 
 func (x *EvalControl) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[7]
+	mi := &file_types_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -481,7 +526,7 @@ func (x *EvalControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvalControl.ProtoReflect.Descriptor instead.
 func (*EvalControl) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{7}
+	return file_types_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *EvalControl) GetCriteria() string {
@@ -511,7 +556,7 @@ type EvalDetail struct {
 
 func (x *EvalDetail) Reset() {
 	*x = EvalDetail{}
-	mi := &file_types_agent_proto_msgTypes[8]
+	mi := &file_types_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -523,7 +568,7 @@ func (x *EvalDetail) String() string {
 func (*EvalDetail) ProtoMessage() {}
 
 func (x *EvalDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[8]
+	mi := &file_types_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -536,7 +581,7 @@ func (x *EvalDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EvalDetail.ProtoReflect.Descriptor instead.
 func (*EvalDetail) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{8}
+	return file_types_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EvalDetail) GetError() string {
@@ -584,7 +629,7 @@ type BudgetWarning struct {
 
 func (x *BudgetWarning) Reset() {
 	*x = BudgetWarning{}
-	mi := &file_types_agent_proto_msgTypes[9]
+	mi := &file_types_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -596,7 +641,7 @@ func (x *BudgetWarning) String() string {
 func (*BudgetWarning) ProtoMessage() {}
 
 func (x *BudgetWarning) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[9]
+	mi := &file_types_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -609,7 +654,7 @@ func (x *BudgetWarning) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BudgetWarning.ProtoReflect.Descriptor instead.
 func (*BudgetWarning) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{9}
+	return file_types_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *BudgetWarning) GetContextTokens() uint64 {
@@ -638,7 +683,7 @@ type LLMRequestDetail struct {
 
 func (x *LLMRequestDetail) Reset() {
 	*x = LLMRequestDetail{}
-	mi := &file_types_agent_proto_msgTypes[10]
+	mi := &file_types_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -650,7 +695,7 @@ func (x *LLMRequestDetail) String() string {
 func (*LLMRequestDetail) ProtoMessage() {}
 
 func (x *LLMRequestDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[10]
+	mi := &file_types_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -663,7 +708,7 @@ func (x *LLMRequestDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LLMRequestDetail.ProtoReflect.Descriptor instead.
 func (*LLMRequestDetail) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{10}
+	return file_types_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *LLMRequestDetail) GetModel() string {
@@ -707,7 +752,7 @@ type AgentListEntry struct {
 
 func (x *AgentListEntry) Reset() {
 	*x = AgentListEntry{}
-	mi := &file_types_agent_proto_msgTypes[11]
+	mi := &file_types_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -719,7 +764,7 @@ func (x *AgentListEntry) String() string {
 func (*AgentListEntry) ProtoMessage() {}
 
 func (x *AgentListEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[11]
+	mi := &file_types_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -732,7 +777,7 @@ func (x *AgentListEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentListEntry.ProtoReflect.Descriptor instead.
 func (*AgentListEntry) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{11}
+	return file_types_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *AgentListEntry) GetName() string {
@@ -779,7 +824,7 @@ type AgentListMetadata struct {
 
 func (x *AgentListMetadata) Reset() {
 	*x = AgentListMetadata{}
-	mi := &file_types_agent_proto_msgTypes[12]
+	mi := &file_types_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -791,7 +836,7 @@ func (x *AgentListMetadata) String() string {
 func (*AgentListMetadata) ProtoMessage() {}
 
 func (x *AgentListMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[12]
+	mi := &file_types_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -804,7 +849,7 @@ func (x *AgentListMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentListMetadata.ProtoReflect.Descriptor instead.
 func (*AgentListMetadata) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{12}
+	return file_types_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *AgentListMetadata) GetAgents() []*AgentListEntry {
@@ -830,7 +875,7 @@ type WebMessageMetadata struct {
 
 func (x *WebMessageMetadata) Reset() {
 	*x = WebMessageMetadata{}
-	mi := &file_types_agent_proto_msgTypes[13]
+	mi := &file_types_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -842,7 +887,7 @@ func (x *WebMessageMetadata) String() string {
 func (*WebMessageMetadata) ProtoMessage() {}
 
 func (x *WebMessageMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[13]
+	mi := &file_types_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -855,7 +900,7 @@ func (x *WebMessageMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WebMessageMetadata.ProtoReflect.Descriptor instead.
 func (*WebMessageMetadata) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{13}
+	return file_types_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *WebMessageMetadata) GetNodeId() string {
@@ -919,7 +964,9 @@ const file_types_agent_proto_rawDesc = "" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12#\n" +
 	"\rkept_messages\x18\x02 \x01(\x04R\fkeptMessages\x12!\n" +
 	"\ftokens_after\x18\x03 \x01(\x04R\vtokensAfter\x12#\n" +
-	"\rtokens_before\x18\x04 \x01(\x04R\ftokensBefore\"\xbd\x01\n" +
+	"\rtokens_before\x18\x04 \x01(\x04R\ftokensBefore\"\x1b\n" +
+	"\x05Recap\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"\xbd\x01\n" +
 	"\x10DelegationDetail\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
@@ -978,7 +1025,7 @@ func file_types_agent_proto_rawDescGZIP() []byte {
 	return file_types_agent_proto_rawDescData
 }
 
-var file_types_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_types_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_types_agent_proto_goTypes = []any{
 	(*AgentView)(nil),             // 0: cyber.agent.AgentView
 	(*ListAgentsRequest)(nil),     // 1: cyber.agent.ListAgentsRequest
@@ -986,32 +1033,33 @@ var file_types_agent_proto_goTypes = []any{
 	(*AgentRunOptions)(nil),       // 3: cyber.agent.AgentRunOptions
 	(*CommandDetail)(nil),         // 4: cyber.agent.CommandDetail
 	(*CompactDetail)(nil),         // 5: cyber.agent.CompactDetail
-	(*DelegationDetail)(nil),      // 6: cyber.agent.DelegationDetail
-	(*EvalControl)(nil),           // 7: cyber.agent.EvalControl
-	(*EvalDetail)(nil),            // 8: cyber.agent.EvalDetail
-	(*BudgetWarning)(nil),         // 9: cyber.agent.BudgetWarning
-	(*LLMRequestDetail)(nil),      // 10: cyber.agent.LLMRequestDetail
-	(*AgentListEntry)(nil),        // 11: cyber.agent.AgentListEntry
-	(*AgentListMetadata)(nil),     // 12: cyber.agent.AgentListMetadata
-	(*WebMessageMetadata)(nil),    // 13: cyber.agent.WebMessageMetadata
-	(*aop.AgentHello)(nil),        // 14: aop.AgentHello
-	(*aop.AgentStatus)(nil),       // 15: aop.AgentStatus
-	(*aop.AgentStats)(nil),        // 16: aop.AgentStats
-	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
-	(*CommandSpec)(nil),           // 18: cyber.command.CommandSpec
-	(*structpb.Struct)(nil),       // 19: google.protobuf.Struct
+	(*Recap)(nil),                 // 6: cyber.agent.Recap
+	(*DelegationDetail)(nil),      // 7: cyber.agent.DelegationDetail
+	(*EvalControl)(nil),           // 8: cyber.agent.EvalControl
+	(*EvalDetail)(nil),            // 9: cyber.agent.EvalDetail
+	(*BudgetWarning)(nil),         // 10: cyber.agent.BudgetWarning
+	(*LLMRequestDetail)(nil),      // 11: cyber.agent.LLMRequestDetail
+	(*AgentListEntry)(nil),        // 12: cyber.agent.AgentListEntry
+	(*AgentListMetadata)(nil),     // 13: cyber.agent.AgentListMetadata
+	(*WebMessageMetadata)(nil),    // 14: cyber.agent.WebMessageMetadata
+	(*aop.AgentHello)(nil),        // 15: aop.AgentHello
+	(*aop.AgentStatus)(nil),       // 16: aop.AgentStatus
+	(*aop.AgentStats)(nil),        // 17: aop.AgentStats
+	(*timestamppb.Timestamp)(nil), // 18: google.protobuf.Timestamp
+	(*CommandSpec)(nil),           // 19: cyber.command.CommandSpec
+	(*structpb.Struct)(nil),       // 20: google.protobuf.Struct
 }
 var file_types_agent_proto_depIdxs = []int32{
-	14, // 0: cyber.agent.AgentView.hello:type_name -> aop.AgentHello
-	15, // 1: cyber.agent.AgentView.status:type_name -> aop.AgentStatus
-	16, // 2: cyber.agent.AgentView.stats:type_name -> aop.AgentStats
-	17, // 3: cyber.agent.AgentView.connected_at:type_name -> google.protobuf.Timestamp
-	18, // 4: cyber.agent.AgentView.commands:type_name -> cyber.command.CommandSpec
+	15, // 0: cyber.agent.AgentView.hello:type_name -> aop.AgentHello
+	16, // 1: cyber.agent.AgentView.status:type_name -> aop.AgentStatus
+	17, // 2: cyber.agent.AgentView.stats:type_name -> aop.AgentStats
+	18, // 3: cyber.agent.AgentView.connected_at:type_name -> google.protobuf.Timestamp
+	19, // 4: cyber.agent.AgentView.commands:type_name -> cyber.command.CommandSpec
 	0,  // 5: cyber.agent.ListAgentsResponse.agents:type_name -> cyber.agent.AgentView
-	11, // 6: cyber.agent.AgentListMetadata.agents:type_name -> cyber.agent.AgentListEntry
-	19, // 7: cyber.agent.WebMessageMetadata.params:type_name -> google.protobuf.Struct
-	12, // 8: cyber.agent.WebMessageMetadata.agent_list:type_name -> cyber.agent.AgentListMetadata
-	18, // 9: cyber.agent.WebMessageMetadata.commands:type_name -> cyber.command.CommandSpec
+	12, // 6: cyber.agent.AgentListMetadata.agents:type_name -> cyber.agent.AgentListEntry
+	20, // 7: cyber.agent.WebMessageMetadata.params:type_name -> google.protobuf.Struct
+	13, // 8: cyber.agent.WebMessageMetadata.agent_list:type_name -> cyber.agent.AgentListMetadata
+	19, // 9: cyber.agent.WebMessageMetadata.commands:type_name -> cyber.command.CommandSpec
 	10, // [10:10] is the sub-list for method output_type
 	10, // [10:10] is the sub-list for method input_type
 	10, // [10:10] is the sub-list for extension type_name
@@ -1031,7 +1079,7 @@ func file_types_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_types_agent_proto_rawDesc), len(file_types_agent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

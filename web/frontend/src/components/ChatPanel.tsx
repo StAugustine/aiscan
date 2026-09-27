@@ -55,6 +55,7 @@ import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
 import ScannerToolCall from './chat/ScannerToolCall'
 import SubagentRunCard from './chat/SubagentRunCard'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
+import { withRecaps } from '../lib/recap-view'
 
 const webUserAgent = 'cyber.web'
 
@@ -499,9 +500,9 @@ export default function ChatPanel({
     }
     const visibleAopItems = aopItems.filter((item) => !matchedEchoes.has(item))
 
-    return [...platformItems, ...visibleAopItems].sort(
+    return withRecaps([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
-    )
+    ), aopEvents)
   }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
@@ -1120,6 +1121,8 @@ function AssistantResponseEntry({
         </div>
       ) : undefined}
       labels={{ tools: toolsLabel, thinking: t('thinkingLabel'), response: t('responseLabel') }}
+      footer={typeof message?.metadata?.recap === 'string'
+        ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}
       showResponseLabel={false}
