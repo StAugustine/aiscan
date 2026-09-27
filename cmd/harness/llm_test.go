@@ -5,7 +5,6 @@ package harness_test
 import (
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -13,12 +12,12 @@ import (
 
 func liveLLMRequest(t *testing.T) map[string]any {
 	t.Helper()
-	key := strings.TrimSpace(os.Getenv("CYBER_HARNESS_LLM_API_KEY"))
-	model := strings.TrimSpace(os.Getenv("CYBER_HARNESS_LLM_MODEL"))
-	provider := strings.TrimSpace(os.Getenv("CYBER_HARNESS_LLM_PROVIDER"))
-	baseURL := strings.TrimSpace(os.Getenv("CYBER_HARNESS_LLM_BASE_URL"))
+	key := liveLLMEnv("API_KEY")
+	model := liveLLMEnv("MODEL")
+	provider := liveLLMEnv("PROVIDER")
+	baseURL := liveLLMEnv("BASE_URL")
 	if key == "" || model == "" || baseURL == "" {
-		t.Fatal("live_llm requires CYBER_HARNESS_LLM_API_KEY, CYBER_HARNESS_LLM_MODEL and CYBER_HARNESS_LLM_BASE_URL")
+		t.Fatal("live_llm requires CYBER_API_KEY, CYBER_MODEL and CYBER_BASE_URL (legacy CYBER_HARNESS_LLM_* aliases are also supported)")
 	}
 	endpoint, err := url.Parse(baseURL)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "https" && endpoint.Scheme != "http") || endpoint.User != nil || endpoint.RawQuery != "" {

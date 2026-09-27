@@ -37,7 +37,7 @@ this workflow; they do not replace its audit and evidence requirements.
    not drop negative results. Track examined scope, excluded and unsupported
    areas, incomplete checks and unresolved limits. When a report directory is
    assigned, update its findings and coverage files, produce the OKF bundle and
-   validate it. Otherwise return the findings, evidence and coverage in the task
+   validate it with `audit validate` through bash. Otherwise return the findings, evidence and coverage in the task
    response. A run with no confirmed findings can still be incomplete.
 
 Use subagents for bounded investigations when useful, with explicit scope,

@@ -68,6 +68,7 @@ cyber-audit --workdir /path/to/repository --task-file audit-task.txt
 cyber-audit --workdir /path/to/repository --resume /path/to/report/session.jsonl
 cyber-audit tools install
 cyber-audit doctor
+cyber-audit validate /path/to/report
 ```
 
 Reuse harness configuration/model commands and `--provider`, `--base-url`,
@@ -75,6 +76,21 @@ Reuse harness configuration/model commands and `--provider`, `--base-url`,
 `-p`, `--task-file`, or `-i` starts a one-shot run. `--resume` restores recorded
 history; without a new task it opens the REPL. `--timeout` and Ctrl-C cancel runs.
 Use `--output-format json` or `stream-json` for machine-readable session output.
+
+All Cyber binaries share `CYBER_API_KEY`, `CYBER_BASE_URL`, `CYBER_MODEL` and
+`CYBER_PROVIDER`; no per-binary model key is needed. Explicit CLI settings take
+precedence over `CYBER_*`, then configuration files, then legacy `LLM_*` and
+provider variables such as `OPENAI_API_KEY`. For an OpenAI-compatible endpoint:
+
+```sh
+export CYBER_API_KEY="your-key"
+export CYBER_BASE_URL="https://api.chainreactors.cn/v1"
+export CYBER_MODEL="deepseek-v4.1-flash"
+export CYBER_PROVIDER="openai"
+cyber-audit --workdir /path/to/repository --task-file audit-task.txt
+```
+
+PowerShell uses `$env:CYBER_API_KEY = 'your-key'` and the same variable names.
 
 Project configuration and skills are discovered automatically. Audit takes model
 settings from user configuration, environment variables or explicit CLI options;
@@ -155,10 +171,20 @@ the canonical session. One-shot success requires coverage, SCA/leak check outcom
 valid finding states/evidence paths, a final report and passing OKF validation.
 An empty findings list or interrupted run is not a clean bill of health.
 REPL and one-shot runs use the same report and OKF validation when closing.
+The model can run `audit validate` through bash before completing. One-shot runs
+feed validation errors back into the same session for at most two repair rounds;
+provider failures and cancellation do not trigger report repair. The external
+`cyber-audit validate <report-directory>` command uses the same validation, is
+read-only, and needs neither model credentials nor tool installation.
 An unfinished or invalid report is marked incomplete and returns a nonzero exit
 status. JSON results are emitted after report finalization; stream-json includes
 an AOP error event if finalization fails. The overall timeout includes tool
 preparation, model startup and report validation.
+
+Git metadata records the enclosing root, audited subdirectory and tracked file
+count. Revision is omitted for an untracked imported snapshot; a parent checkout's
+commit does not identify those files. For tracked scopes, revision is the Git
+base and dirty indicates local changes within the audited directory.
 
 File tools use repository-relative paths. A report directory outside the workdir
 is writable through bash. Ripgrep receives a default exclusion config, proton

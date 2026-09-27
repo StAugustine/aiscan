@@ -14,23 +14,27 @@ import (
 	"time"
 
 	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/pkg/console"
 	"github.com/chainreactors/cyber/tools/okf"
 )
 
 type runReport struct {
-	Directory string             `json:"-"`
-	ID        string             `json:"id"`
-	Workspace string             `json:"workspace"`
-	Goal      string             `json:"goal,omitempty"`
-	Revision  string             `json:"revision,omitempty"`
-	Dirty     *bool              `json:"dirty,omitempty"`
-	GitError  string             `json:"git_error,omitempty"`
-	Resume    string             `json:"resume,omitempty"`
-	Started   time.Time          `json:"started"`
-	Finished  *time.Time         `json:"finished,omitempty"`
-	Status    string             `json:"status"`
-	Error     string             `json:"error,omitempty"`
-	Tools     []toolchain.Status `json:"tools"`
+	Directory       string             `json:"-"`
+	ID              string             `json:"id"`
+	Workspace       string             `json:"workspace"`
+	Goal            string             `json:"goal,omitempty"`
+	Revision        string             `json:"revision,omitempty"`
+	Dirty           *bool              `json:"dirty,omitempty"`
+	GitError        string             `json:"git_error,omitempty"`
+	GitRoot         string             `json:"git_root,omitempty"`
+	GitSubdir       string             `json:"git_subdir,omitempty"`
+	GitTrackedFiles int                `json:"git_tracked_files"`
+	Resume          string             `json:"resume,omitempty"`
+	Started         time.Time          `json:"started"`
+	Finished        *time.Time         `json:"finished,omitempty"`
+	Status          string             `json:"status"`
+	Error           string             `json:"error,omitempty"`
+	Tools           []toolchain.Status `json:"tools"`
 }
 type coverage struct {
 	Reviewed    bool          `json:"reviewed"`
@@ -83,21 +87,7 @@ func newReport(ctx context.Context, workDir, requested, task, resume string, too
 	}
 	dir = filepath.Clean(dir)
 	r := &runReport{Directory: dir, ID: id, Workspace: workDir, Goal: task, Resume: resume, Started: now, Status: "running", Tools: tools}
-	gitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(gitCtx, "git", "-C", workDir, "rev-parse", "HEAD")
-	if out, err := cmd.Output(); err == nil {
-		r.Revision = strings.TrimSpace(string(out))
-		status, err := exec.CommandContext(gitCtx, "git", "-C", workDir, "status", "--porcelain", "--untracked-files=normal").Output()
-		if err == nil {
-			dirty := strings.TrimSpace(string(status)) != ""
-			r.Dirty = &dirty
-		} else {
-			r.GitError = "could not read worktree status"
-		}
-	} else {
-		r.GitError = "Git/revision unavailable; auditing supplied files"
-	}
+	r.captureGit(ctx)
 	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return nil, err
 	}
@@ -129,6 +119,55 @@ func newReport(ctx context.Context, workDir, requested, task, resume string, too
 	}
 	return r, nil
 }
+
+// A parent repository's HEAD is not provenance for an imported, untracked tree.
+// Even for tracked scopes, revision identifies the Git base; dirty is scoped to
+// the audited directory and captures local modifications before report creation.
+func (r *runReport) captureGit(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	git := func(args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, "git", append([]string{"-C", r.Workspace}, args...)...).Output()
+	}
+	root, err := git("rev-parse", "--show-toplevel")
+	if err != nil {
+		r.GitError = "Git/revision unavailable; auditing supplied files"
+		return
+	}
+	r.GitRoot = strings.TrimSpace(string(root))
+	prefix, err := git("rev-parse", "--show-prefix")
+	if err != nil {
+		r.GitError = "could not identify audited Git subdirectory"
+		return
+	}
+	r.GitSubdir = strings.TrimSuffix(strings.TrimSpace(string(prefix)), "/")
+	if r.GitSubdir == "" {
+		r.GitSubdir = "."
+	}
+	tracked, err := git("ls-files", "-z", "--", ".")
+	if err != nil {
+		r.GitError = "could not identify tracked audit files"
+		return
+	}
+	r.GitTrackedFiles = strings.Count(string(tracked), "\x00")
+	if r.GitTrackedFiles == 0 {
+		r.GitError = "audited directory has no Git-tracked files; parent repository revision does not identify this snapshot"
+		return
+	}
+	revision, err := git("rev-parse", "HEAD")
+	if err != nil {
+		r.GitError = "Git revision unavailable; auditing supplied files"
+		return
+	}
+	r.Revision = strings.TrimSpace(string(revision))
+	status, err := git("status", "--porcelain", "--untracked-files=normal", "--", ".")
+	if err != nil {
+		r.GitError = "could not read audited worktree status"
+		return
+	}
+	dirty := strings.TrimSpace(string(status)) != ""
+	r.Dirty = &dirty
+}
 func (r *runReport) save() error { return writeJSON(filepath.Join(r.Directory, "run.json"), r) }
 func (r *runReport) finish(ctx context.Context, runErr error) error {
 	runErr = errors.Join(runErr, ctx.Err())
@@ -140,6 +179,10 @@ func (r *runReport) finish(ctx context.Context, runErr error) error {
 		}
 	} else {
 		r.Status = "failed"
+		var invalid *console.TaskValidationError
+		if errors.As(runErr, &invalid) {
+			r.Status = "incomplete"
+		}
 	}
 	if runErr != nil {
 		r.Error = runErr.Error()

@@ -3,21 +3,42 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chainreactors/cyber/agent"
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	aop "github.com/chainreactors/cyber/aop"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 )
 
+// TaskValidation lets a product check deliverables before the session closes.
+// Failed checks are returned to the same model context for bounded repair.
+type TaskValidation struct {
+	Check             func(context.Context) error
+	MaxRepairRounds   int
+	RepairInstruction string
+}
+
+// TaskValidationError means execution finished but its deliverable is incomplete.
+type TaskValidationError struct{ Err error }
+
+func (e *TaskValidationError) Error() string { return e.Err.Error() }
+func (e *TaskValidationError) Unwrap() error { return e.Err }
+
 // RunTask owns static presentation and its event subscription. Runtime only
 // executes the session and publishes events; Console owns presentation.
 // finish, when supplied, runs once after session closure and before final output.
 // It returns the final error, preserving any execution error it receives.
-func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, sessionID, label, display string, input agentsession.RunInput, finish func(error) error) (err error) {
+func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, sessionID, label, display string, input agentsession.RunInput, finish func(error) error, validations ...TaskValidation) (err error) {
+	// A presentation label such as task/scanner must not create an empty session
+	// when the runtime has restored the primary session's history.
+	if option != nil && option.Resume != "" {
+		sessionID = rt.PrimarySessionID()
+	}
 	format := "text"
 	if option != nil && strings.TrimSpace(option.OutputFormat) != "" {
 		format = strings.ToLower(strings.TrimSpace(option.OutputFormat))
@@ -90,11 +111,36 @@ func RunTask(ctx context.Context, rt *agentsession.Runtime, option *cfg.Option, 
 	if textOutput != nil {
 		textOutput.Start(label, display)
 	}
-	run, err := session.Run(ctx, input)
-	if err == nil {
-		_, err = run.Wait()
+	var validation TaskValidation
+	if len(validations) > 0 {
+		validation = validations[0]
 	}
-	return err
+	for attempt := 0; ; attempt++ {
+		run, runErr := session.Run(ctx, input)
+		if runErr != nil {
+			return runErr
+		}
+		result, runErr := run.Wait()
+		if runErr != nil {
+			return runErr
+		}
+		if validation.Check == nil || result == nil || result.Stop != agent.StopReasonCompleted {
+			return nil
+		}
+		checkErr := validation.Check(ctx)
+		if checkErr == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if attempt >= validation.MaxRepairRounds {
+			return &TaskValidationError{Err: checkErr}
+		}
+		input = agentsession.RunInput{Content: []*aop.Content{aop.Text(fmt.Sprintf(
+			"Deliverable validation failed (repair %d/%d):\n%s\n\n%s",
+			attempt+1, validation.MaxRepairRounds, checkErr, validation.RepairInstruction))}}
+	}
 }
 
 // taskEventSelector subscribes before OpenSession so stream-json includes the

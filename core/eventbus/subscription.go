@@ -20,6 +20,10 @@ type SubscribeOptions[T any] struct {
 	MaxBytes int64
 	Size     func(T) int64
 	Clone    func(T) T
+	// BlockOnOverflow applies bounded backpressure instead of discarding events.
+	// Only use for independent durable consumers: their handlers must not publish
+	// to this bus or wait for a producer. Close/Cancel unblock waiting producers.
+	BlockOnOverflow bool
 }
 
 type queued[T any] struct {
@@ -36,6 +40,7 @@ type queued[T any] struct {
 type Subscription[T any] struct {
 	mu                   sync.Mutex
 	wake                 *sync.Cond
+	space                *sync.Cond
 	queue                []queued[T]
 	head, count, pending int
 	bytes                int64
@@ -65,6 +70,7 @@ func (b *Bus[T]) SubscribeAsync(opts SubscribeOptions[T], handler func(T) error)
 	close(idle)
 	s := &Subscription[T]{bus: b, opts: opts, handler: handler, done: make(chan struct{}), stopped: make(chan struct{}), idle: idle, queue: make([]queued[T], opts.Buffer)}
 	s.wake = sync.NewCond(&s.mu)
+	s.space = sync.NewCond(&s.mu)
 	b.subscribe(s)
 	go s.run()
 	return s, nil
@@ -116,6 +122,7 @@ func (s *Subscription[T]) stopLocked() {
 	}
 	if s.wake != nil {
 		s.wake.Broadcast()
+		s.space.Broadcast()
 	}
 }
 
@@ -144,6 +151,16 @@ func (s *Subscription[T]) enqueue(event T) {
 		}
 		if size < 0 {
 			return errors.New("eventbus: negative event size")
+		}
+		if s.opts.MaxBytes > 0 && size > s.opts.MaxBytes {
+			s.dropped++
+			return ErrOverflow
+		}
+		for s.opts.BlockOnOverflow && !s.closing && (s.pending >= len(s.queue) || (s.opts.MaxBytes > 0 && size > s.opts.MaxBytes-s.bytes)) {
+			s.space.Wait()
+		}
+		if s.closing {
+			return nil
 		}
 		if s.pending >= len(s.queue) || (s.opts.MaxBytes > 0 && size > s.opts.MaxBytes-s.bytes) {
 			s.dropped++
@@ -212,6 +229,7 @@ func (s *Subscription[T]) run() {
 		s.mu.Lock()
 		s.finishLocked()
 		s.bytes -= event.bytes
+		s.space.Broadcast()
 		if err != nil {
 			s.abortLocked(err)
 		}
