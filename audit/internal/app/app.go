@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -60,6 +61,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return run(ctx, args, stdout, stderr, (*toolchain.Manager).Ensure)
 }
 func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) error {
+	args = toolCommandFirst(args)
 	if len(args) > 0 && args[0] == "validate" {
 		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
 			_, err := fmt.Fprintln(stdout, "Usage: cyber-audit validate <report-directory>\nRead-only check of coverage, findings, evidence paths and OKF; no model credentials or tool installation required.")
@@ -131,6 +133,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
 		defer cancel()
 	}
+	if option.Timeout < 0 {
+		return fmt.Errorf("--timeout must be nonnegative (0 disables it)")
+	}
+	if parsed.BashTimeout <= 0 {
+		return fmt.Errorf("--bash-timeout must be positive")
+	}
+	if transport == cfg.AgentTransportWeb && (oneShot || option.Resume != "") {
+		return fmt.Errorf("node mode receives audit tasks from the server; omit --prompt, --input, --task-file and --resume")
+	}
 	manager, err := toolchain.New(option.DataDir)
 	if err != nil {
 		return err
@@ -141,9 +152,6 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	}
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
 	if transport == cfg.AgentTransportWeb {
-		if oneShot || option.Resume != "" {
-			return fmt.Errorf("node mode receives audit tasks from the server; omit --prompt, --input, --task-file and --resume")
-		}
 		build := func(request profile.Request) (profile.Profile, error) {
 			return newAuditProfile(request, workDir, parsed.BashTimeout, nil, manager.Manager, statuses)
 		}
@@ -267,8 +275,18 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	if err != nil {
 		return true, err
 	}
-	if _, err := cfg.ResolveRuntimeConfig(&option); err != nil {
+	if _, err := cfg.ResolveToolRuntimeConfig(&option); err != nil {
 		return true, err
+	}
+	if option.Timeout < 0 {
+		return true, fmt.Errorf("--timeout must be nonnegative (0 disables it)")
+	}
+	format := strings.ToLower(strings.TrimSpace(option.OutputFormat))
+	if option.JSON {
+		format = "json"
+	}
+	if format != "text" && format != "json" {
+		return true, fmt.Errorf("tool commands support --output-format text or json")
 	}
 	if option.Timeout > 0 {
 		var cancel context.CancelFunc
@@ -287,18 +305,57 @@ func runToolCommand(ctx context.Context, args []string, stdout, stderr io.Writer
 	}
 	failed := false
 	for _, status := range statuses {
+		failed = failed || status.Error != ""
+	}
+	if failed && err == nil {
+		err = fmt.Errorf("required tools unavailable; run cyber-audit tools install")
+	}
+	err = errors.Join(err, ctx.Err())
+	if format == "json" {
+		result := struct {
+			Tools   []toolchain.Status `json:"tools"`
+			IsError bool               `json:"is_error"`
+			Error   string             `json:"error,omitempty"`
+		}{Tools: statuses, IsError: err != nil}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		return true, errors.Join(err, json.NewEncoder(stdout).Encode(result))
+	}
+	for _, status := range statuses {
+		var writeErr error
 		if status.Error != "" {
-			fmt.Fprintf(stdout, "%s: %s\n", status.Name, status.Error)
-			failed = true
+			_, writeErr = fmt.Fprintf(stdout, "%s: %s\n", status.Name, status.Error)
 		} else {
-			fmt.Fprintf(stdout, "%s %s: %s\n", status.Name, status.Version, status.Path)
+			_, writeErr = fmt.Fprintf(stdout, "%s %s: %s\n", status.Name, status.Version, status.Path)
+		}
+		if writeErr != nil {
+			return true, errors.Join(err, writeErr)
 		}
 	}
-	if err != nil {
-		return true, err
+	return true, err
+}
+
+// Otherwise --data-dir X doctor falls into the shared config doctor's route,
+// while doctor --data-dir X checks audit's installed tools.
+func toolCommandFirst(args []string) []string {
+	var parsed options
+	parser := flags.NewParser(&parsed, flags.PassAfterNonOption)
+	rest, err := parser.ParseArgs(args)
+	if err != nil || len(rest) == 0 {
+		return args
 	}
-	if failed {
-		return true, fmt.Errorf("required tools unavailable; run cyber-audit tools install")
+	index := len(args) - len(rest)
+	if index == 0 {
+		return args
 	}
-	return true, nil
+	switch rest[0] {
+	case "doctor":
+		return append(append([]string{"doctor"}, args[:index]...), rest[1:]...)
+	case "tools":
+		if len(rest) > 1 && rest[1] == "install" {
+			return append(append([]string{"tools", "install"}, args[:index]...), rest[2:]...)
+		}
+	}
+	return args
 }
