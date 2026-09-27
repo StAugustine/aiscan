@@ -11,6 +11,46 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
+func TestMachineOutputAggregatesRepairTurnsWithoutDoubleCounting(t *testing.T) {
+	var output bytes.Buffer
+	renderer := newMachineOutput(&output, "json")
+	for _, id := range []string{"initial", "repair"} {
+		renderer.HandleEvent(&aop.Event{TurnId: id, Payload: &aop.Event_TurnStarted{TurnStarted: &aop.TurnStarted{}}})
+		usage := &aop.TokenUsage{InputTokens: 10, OutputTokens: 3, TotalTokens: 13, Model: "fixture", Detail: map[string]uint64{"cached_tokens": 4}}
+		// TurnEnded repeats totals already represented by provider usage events.
+		renderer.HandleEvent(&aop.Event{TurnId: id, Payload: &aop.Event_Usage{Usage: usage}})
+		renderer.HandleEvent(&aop.Event{TurnId: id, Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed", Usage: usage}}})
+	}
+	if err := renderer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var result machineResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage == nil || result.Usage.TotalTokens != 26 || result.Usage.InputTokens != 20 || result.Usage.Detail["cached_tokens"] != 8 {
+		t.Fatalf("usage=%+v", result.Usage)
+	}
+}
+
+func TestMachineOutputDoesNotCarryPreviousAnswerIntoFailedRepair(t *testing.T) {
+	var output bytes.Buffer
+	renderer := newMachineOutput(&output, "json")
+	renderer.HandleEvent(&aop.Event{TurnId: "initial", Payload: &aop.Event_Message{Message: &aop.Message{Role: "assistant", Content: []*aop.Content{aop.Text("obsolete success")}}}})
+	renderer.HandleEvent(&aop.Event{TurnId: "repair", Payload: &aop.Event_TurnStarted{TurnStarted: &aop.TurnStarted{}}})
+	renderer.SetError(io.ErrUnexpectedEOF)
+	if err := renderer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var result machineResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || result.Result != "" {
+		t.Fatalf("stale result: %+v", result)
+	}
+}
+
 func TestMachineOutputJSONProducesOneResultDocument(t *testing.T) {
 	var output bytes.Buffer
 	renderer := newMachineOutput(&output, "json")

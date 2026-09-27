@@ -179,8 +179,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	}
 	return console.RunTask(ctx, profile.runtime, &option, "task", "audit", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
-	}, finish, console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
-		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."})
+	}, finish, console.TaskOptions{Stdout: stdout, Stderr: stderr, Validation: console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
+		RepairInstruction: "Repair only the assigned audit report and its evidence. Read cyber://skills/audit/report.md and run `audit validate` for the complete contract (including JSON, evidence paths and OKF). Preserve source code and existing findings; do not restart investigation or repeat successful scans. Explain reused evidence in notes; check status remains completed, incomplete or not_applicable."}})
 }
 
 func parseOptions(args []string, helpOutput io.Writer) (options, cfg.Option, error) {
