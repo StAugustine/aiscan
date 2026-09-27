@@ -12,6 +12,8 @@ code in adjacent evidence notes. An interrupted run remains incomplete.
 
 Update coverage.json using this structure. All arrays are required; empty arrays
 mean explicitly no items. Set reviewed=true only after recording what was examined.
+Scope and array items must contain meaningful text, not whitespace. Each tool
+appears once in checks; combine its outcome and limitations in that record.
 
 ```json
 {"reviewed":true,"scope":"requested repository and goal","examined":["entry points and exact paths reviewed"],"excluded":[],"unsupported":[],"unresolved":[],"checks":[{"tool":"osv-scanner","status":"completed","evidence":"raw/osv.json"},{"tool":"proton","status":"completed","evidence":"raw/proton.jsonl"}]}
@@ -23,6 +25,9 @@ the evidence field. Lack of a supported ecosystem belongs in unsupported.
 For completed checks, evidence must be exactly one existing report-relative file
 path, without explanations appended. Record notes and evidence reuse in log.md
 or unresolved; reuse does not introduce a new status such as `reused`.
+Evidence must remain in the report bundle. Relative symlinks within the bundle
+are allowed; copy files instead of using absolute symlinks or Windows junctions
+so the evidence remains portable.
 
 findings.json is an array of objects:
 

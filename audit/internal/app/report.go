@@ -179,8 +179,7 @@ func (r *runReport) finish(ctx context.Context, runErr error) error {
 		}
 	} else {
 		r.Status = "failed"
-		var invalid *console.TaskValidationError
-		if errors.As(runErr, &invalid) {
+		if onlyReportValidationErrors(runErr) {
 			r.Status = "incomplete"
 		}
 	}
@@ -193,6 +192,30 @@ func (r *runReport) finish(ctx context.Context, runErr error) error {
 	now := time.Now().UTC()
 	r.Finished = &now
 	return errors.Join(runErr, r.save())
+}
+
+// Cleanup failures can be joined with a validation error. They still mean the
+// run failed, even though its deliverable also needs repair.
+func onlyReportValidationErrors(err error) bool {
+	if _, ok := err.(*console.TaskValidationError); ok {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !onlyReportValidationErrors(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return onlyReportValidationErrors(wrapped.Unwrap())
+	}
+	return false
 }
 
 // searchExclusions is shared by rg's default config and the model's AST recipes.
@@ -226,17 +249,26 @@ func (r *runReport) validate(ctx context.Context) error {
 	if err = json.Unmarshal(body, &c); err != nil {
 		return fmt.Errorf("coverage.json: %w", err)
 	}
-	if !c.Reviewed || c.Scope == "" || len(c.Examined) == 0 || c.Excluded == nil || c.Unsupported == nil || c.Unresolved == nil {
+	if !c.Reviewed || strings.TrimSpace(c.Scope) == "" || len(c.Examined) == 0 || c.Excluded == nil || c.Unsupported == nil || c.Unresolved == nil {
 		return fmt.Errorf("audit report incomplete: coverage must identify examined scope and remaining limits")
+	}
+	for field, values := range map[string][]string{"examined": c.Examined, "excluded": c.Excluded, "unsupported": c.Unsupported, "unresolved": c.Unresolved} {
+		if !nonblankItems(values) {
+			return fmt.Errorf("coverage.json: %s contains a blank entry", field)
+		}
 	}
 	checks := map[string]bool{}
 	for _, check := range c.Checks {
+		name := strings.TrimSpace(check.Tool)
+		if name == "" || checks[name] {
+			return fmt.Errorf("coverage.json: check requires a unique non-empty tool name: %q", check.Tool)
+		}
 		switch check.Status {
 		case "completed", "incomplete", "not_applicable":
 		default:
-			return fmt.Errorf("invalid check status %q", check.Status)
+			return fmt.Errorf("coverage.json: %s: invalid check status %q (expected completed, incomplete or not_applicable)", name, check.Status)
 		}
-		if check.Evidence == "" {
+		if strings.TrimSpace(check.Evidence) == "" {
 			return fmt.Errorf("%s check requires evidence or a reason", check.Tool)
 		}
 		if check.Status == "completed" {
@@ -247,7 +279,7 @@ func (r *runReport) validate(ctx context.Context) error {
 		if check.Status == "incomplete" && len(c.Unresolved) == 0 {
 			return fmt.Errorf("incomplete check %s requires an unresolved limitation", check.Tool)
 		}
-		checks[check.Tool] = true
+		checks[name] = true
 	}
 	if !checks["osv-scanner"] || !checks["proton"] {
 		return fmt.Errorf("coverage must record SCA and leak checks, including skipped/incomplete reasons")
@@ -265,7 +297,7 @@ func (r *runReport) validate(ctx context.Context) error {
 	}
 	ids := map[string]bool{}
 	for _, f := range findings {
-		if f.ID == "" || f.Title == "" || ids[f.ID] {
+		if strings.TrimSpace(f.ID) == "" || strings.TrimSpace(f.Title) == "" || ids[f.ID] {
 			return fmt.Errorf("finding requires a unique id and title")
 		}
 		ids[f.ID] = true
@@ -279,10 +311,10 @@ func (r *runReport) validate(ctx context.Context) error {
 		default:
 			return fmt.Errorf("%s: invalid verification", f.ID)
 		}
-		if f.Status == "confirmed" && (f.Location == "" || f.Preconditions == "" || f.Impact == "" || len(f.Trace) == 0 || len(f.Evidence) == 0 || f.Verification == "not_attempted") {
+		if f.Status == "confirmed" && (strings.TrimSpace(f.Location) == "" || strings.TrimSpace(f.Preconditions) == "" || strings.TrimSpace(f.Impact) == "" || len(f.Trace) == 0 || !nonblankItems(f.Trace) || len(f.Evidence) == 0 || f.Verification == "not_attempted") {
 			return fmt.Errorf("%s: confirmed finding lacks trace/evidence", f.ID)
 		}
-		if f.Verification == "reproduced" && (f.Reproduction == "" || len(f.Evidence) == 0) {
+		if f.Verification == "reproduced" && (strings.TrimSpace(f.Reproduction) == "" || len(f.Evidence) == 0) {
 			return fmt.Errorf("%s: reproduction evidence required", f.ID)
 		}
 		for _, path := range f.Evidence {
@@ -309,17 +341,29 @@ func (r *runReport) validate(ctx context.Context) error {
 	}
 	return ctx.Err()
 }
+
+func nonblankItems(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 func reportEvidence(dir, path string) error {
-	if filepath.IsAbs(path) {
+	if !filepath.IsLocal(filepath.FromSlash(path)) {
 		return fmt.Errorf("evidence must use a report-relative path: %s", path)
 	}
 	rel := filepath.Clean(filepath.FromSlash(path))
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("evidence must remain in the report: %s", path)
-	}
-	info, err := os.Stat(filepath.Join(dir, rel))
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("missing evidence %s: %w", path, err)
+		return fmt.Errorf("resolve report directory: %w", err)
+	}
+	defer root.Close()
+	info, err := root.Stat(rel)
+	if err != nil {
+		return fmt.Errorf("missing evidence %s (requires a report-local file or contained relative symlink): %w", path, err)
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("evidence is not a file: %s", path)
