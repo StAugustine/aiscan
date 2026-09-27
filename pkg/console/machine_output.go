@@ -12,6 +12,7 @@ import (
 
 	"github.com/chainreactors/cyber/agent"
 	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/events"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -65,6 +66,27 @@ func newMachineOutput(writer io.Writer, format string) *machineOutput {
 		writer = io.Discard
 	}
 	return &machineOutput{writer: writer, format: strings.ToLower(strings.TrimSpace(format))}
+}
+
+// WriteStartupError preserves the one-shot output contract before RunTask owns
+// presentation. No session has started, so the failure has no session/turn ID.
+// Text-mode errors remain the caller's responsibility.
+func WriteStartupError(writer io.Writer, format string, err error) error {
+	format = strings.ToLower(strings.TrimSpace(format))
+	if err == nil || format != "json" && format != "stream-json" {
+		return nil
+	}
+	output := newMachineOutput(writer, format)
+	if format == "stream-json" {
+		event := &aop.Event{Payload: &aop.Event_Error{Error: &aop.ProtocolError{Code: "startup_error", Message: err.Error()}}}
+		// A standalone stream stamps this pre-session failure's envelope.
+		events.New().Publish(event)
+		output.HandleEvent(event)
+	} else {
+		output.SetError(err)
+		output.failure.Code = "startup_error"
+	}
+	return output.Close()
 }
 
 func (o *machineOutput) HandleEvent(event *aop.Event) {

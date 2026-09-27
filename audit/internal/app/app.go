@@ -60,7 +60,7 @@ type options struct {
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return run(ctx, args, stdout, stderr, (*toolchain.Manager).Ensure)
 }
-func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) error {
+func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure func(*toolchain.Manager, context.Context, io.Writer) ([]toolchain.Status, error)) (err error) {
 	args = toolCommandFirst(args)
 	if len(args) > 0 && args[0] == "validate" {
 		if len(args) == 2 && (args[1] == "--help" || args[1] == "-h") {
@@ -79,6 +79,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 		return err
 	}
 	parsed, option, err := parseOptions(args, stdout)
+	taskOwnsOutput := false
+	defer func() {
+		var flagErr *flags.Error
+		if err == nil || taskOwnsOutput || errors.As(err, &flagErr) && flagErr.Type == flags.ErrHelp {
+			return
+		}
+		format := option.OutputFormat
+		if format == "" {
+			format = parsed.Format
+		}
+		if parsed.JSON || option.JSON {
+			format = "json"
+		}
+		err = errors.Join(err, console.WriteStartupError(stdout, format, err))
+	}()
 	if err != nil {
 		return err
 	}
@@ -185,6 +200,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer, ensure fu
 	if err != nil {
 		return finish(err)
 	}
+	taskOwnsOutput = true
 	return console.RunTask(ctx, profile.runtime, &option, "task", "audit", task, agentsession.RunInput{
 		Content: []*aop.Content{aop.Text(task)}, EvalCriteria: option.EvalCriteria, EvalRounds: option.EvalRounds,
 	}, finish, console.TaskOptions{Stdout: stdout, Stderr: stderr, Validation: console.TaskValidation{Check: report.validate, MaxRepairRounds: 2,
