@@ -1,6 +1,7 @@
 export default {
   guardrailChoice_unconfigured: 'Guardrail not configured',
-  guardrailConfigureHint: 'Configure a JEV key in Settings → Guardrail.',
+  guardrailConfigureHint: 'Configure a JEV key in Settings → LLM.',
+  guardrailConfigureAction: 'Configure JEV key',
   guardrailSource_auto: 'JEV automatic assessment',
   guardrailAutoState_approved: 'Automatically allowed · once',
   guardrailAutoState_rejected: 'Automatically denied · not executed',

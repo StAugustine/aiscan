@@ -69,6 +69,7 @@ export default function App() {
   const [activeLLMProfile, setActiveLLMProfile] = useState('')
   const [switchingLLM, setSwitchingLLM] = useState(false)
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel | null>(null)
+  const [settingsSection, setSettingsSection] = useState<'llm' | 'jev'>('llm')
   const [ioaConsoleTarget, setIOAConsoleTarget] = useState<IOAConsoleTarget | null>(null)
   const [agentPanelFocusNodeID, setAgentPanelFocusNodeID] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(getInitialSidebarOpen)
@@ -77,6 +78,11 @@ export default function App() {
 
   const toggleToolPanel = useCallback((panel: ToolPanel) => {
     setActiveToolPanel((current) => current === panel ? null : panel)
+  }, [])
+
+  const openSettings = useCallback((section: 'llm' | 'jev' = 'llm') => {
+    setSettingsSection(section)
+    setActiveToolPanel('settings')
   }, [])
 
   const openIOAConsole = useCallback((target?: IOAConsoleTarget) => {
@@ -175,11 +181,11 @@ export default function App() {
       await refreshStatus()
       setHealthNonce((nonce) => nonce + 1)
     } catch {
-      setActiveToolPanel('settings')
+      openSettings()
     } finally {
       setSwitchingLLM(false)
     }
-  }, [activeLLMProfile, refreshStatus])
+  }, [activeLLMProfile, refreshStatus, openSettings])
   const activeSession = chat.activeSessionRecord?.session?.id === chat.activeSessionID ? chat.activeSessionRecord : chat.sessions.find((s) => s.session?.id === chat.activeSessionID) || null
   const executionNode = chat.agents.find((a) => a.hello?.nodeId === (activeSession?.session?.nodeId || chat.selectedNodeID))
   // The open session's bound agent has dropped off the live roster (its node
@@ -263,11 +269,11 @@ export default function App() {
               onChange={handleSwitchLLM}
             />
             <span className="hidden sm:contents">
-              <LLMHealth onOpenSettings={() => setActiveToolPanel('settings')} reloadSignal={healthNonce} />
+              <LLMHealth onOpenSettings={() => openSettings()} reloadSignal={healthNonce} />
             </span>
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
-            <GuardrailToggle disabled={activeToolPanel === 'settings'} />
+            <GuardrailToggle disabled={activeToolPanel === 'settings'} onConfigure={() => openSettings('jev')} />
             <AssetPoolButton count={scoNodes.length} open={activeToolPanel === 'assets'} onClick={() => toggleToolPanel('assets')} />
             <IOAConsoleButton open={activeToolPanel === 'ioa'} onClick={() => {
               setIOAConsoleTarget(null)
@@ -341,6 +347,7 @@ export default function App() {
       <ConfigPanel
         open={activeToolPanel === 'settings'}
         status={serverStatus}
+        initialSection={settingsSection}
         onClose={() => setActiveToolPanel(null)}
         onSaved={() => { refreshStatus(); setHealthNonce((n) => n + 1) }}
       />

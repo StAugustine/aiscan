@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, ShieldCheck, ShieldOff, Loader2 } from 'lucide-react'
-import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
+import { ChevronDown, ShieldCheck, ShieldOff, Loader2, Settings } from 'lucide-react'
+import { Button, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuRadioGroup, DropdownMenuRadioItem, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
 import { cn } from '@cyber/theme'
 import { CONFIG_CHANGED_EVENT, getConfigStatus, setGuardrailMode } from '../api'
 
-export function GuardrailToggle({ disabled = false }: { disabled?: boolean }) {
+export function GuardrailToggle({ disabled = false, onConfigure }: { disabled?: boolean; onConfigure: () => void }) {
   const { t } = useTranslation('app')
   const [enabled, setEnabled] = useState<boolean | null>(null)
   const [mode, setMode] = useState<'safe' | 'auto'>('auto')
@@ -62,6 +62,10 @@ export function GuardrailToggle({ disabled = false }: { disabled?: boolean }) {
           <DropdownMenuRadioItem value="auto" disabled={!enabled}>{t('guardrailMode_auto')}</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="safe" disabled={!enabled}>{t('guardrailMode_safe')}</DropdownMenuRadioItem>
         </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => { setOpen(false); onConfigure() }}>
+          <Settings className="mr-2 h-3.5 w-3.5" aria-hidden="true" />{t('guardrailConfigureAction')}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
     {error && <div role="alert" className="absolute right-0 top-9 z-[80] w-80 rounded-md border border-destructive/40 bg-background p-3 text-xs text-destructive shadow-lg">

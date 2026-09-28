@@ -1,6 +1,7 @@
 export default {
   guardrailChoice_unconfigured: '护栏未配置',
-  guardrailConfigureHint: '在设置 → 护栏中配置 JEV 密钥。',
+  guardrailConfigureHint: '在设置 → LLM 中配置 JEV 密钥。',
+  guardrailConfigureAction: '配置 JEV 密钥',
   guardrailSource_auto: 'JEV 自动复核',
   guardrailAutoState_approved: '自动放行 · 仅本次',
   guardrailAutoState_rejected: '自动拒绝 · 未执行',
@@ -53,7 +54,7 @@ export default {
 
   guardrailMode_safe: '安全模式',
   guardrailMode_auto: '自动模式',
-  guardrailModeSwitch: '切换护栏模式：当前{{mode}}',
+  guardrailModeSwitch: '切换护栏模式：当前 {{mode}}',
   guardrailModeHint_safe: 'JEV 先筛查风险，有风险时由人工评估实际后果并授权。',
   guardrailModeHint_auto: '默认自动模式：JEV 先筛查风险，再复核实际后果；确认无害才执行，否则返回 Agent 继续处理。',
   guardrailReviewHint: 'JEV 已识别潜在风险，请确认实际后果。本次调用尚未执行；授权后继续原调用，拒绝后返回 Agent。',

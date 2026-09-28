@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus, Settings, Trash2, Zap } from 'lucide-react'
 import { create } from '@bufbuild/protobuf'
@@ -86,21 +86,22 @@ function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
 interface ConfigPanelProps {
   open: boolean
   status: ServerStatus | null
+  initialSection?: 'llm' | 'jev'
   onClose: () => void
   onSaved: () => void
 }
 
 type TabKey = 'llm' | 'guardrail' | 'cyberhub' | 'recon' | 'scan' | 'search' | 'ioa' | 'agent'
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'llm', label: 'LLM' },
-  { key: 'guardrail', label: 'Guardrail' },
-  { key: 'cyberhub', label: 'Cyberhub' },
-  { key: 'recon', label: 'Recon' },
-  { key: 'scan', label: 'Scan' },
-  { key: 'search', label: 'Search' },
-  { key: 'ioa', label: 'Server' },
-  { key: 'agent', label: 'Agent' },
+const TABS: { key: TabKey; labelKey: string }[] = [
+  { key: 'llm', labelKey: 'tabLLM' },
+  { key: 'guardrail', labelKey: 'tabGuardrail' },
+  { key: 'cyberhub', labelKey: 'tabCyberhub' },
+  { key: 'recon', labelKey: 'tabRecon' },
+  { key: 'scan', labelKey: 'tabScan' },
+  { key: 'search', labelKey: 'tabSearch' },
+  { key: 'ioa', labelKey: 'tabServer' },
+  { key: 'agent', labelKey: 'tabAgent' },
 ]
 
 type LLMProtocol = 'openai' | 'anthropic'
@@ -224,7 +225,10 @@ function sectionStatus(
   switch (tab) {
     case 'llm':
       const ok = llmConfigured(status)
-      return [{ key: 'llm', label: ok ? t('llmConfigured') : t('llmNotConfigured'), ok }]
+      return [
+        { key: 'llm', label: ok ? t('llmConfigured') : t('llmNotConfigured'), ok },
+        ...(cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []),
+      ]
     case 'cyberhub':
       return [tag('Cyberhub', !!(cs?.extensions.cyberhub?.values?.url && cs?.extensions.cyberhub?.configuredSecrets.includes('key')))]
     case 'recon':
@@ -246,7 +250,7 @@ function sectionStatus(
   }
 }
 
-export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPanelProps) {
+export default function ConfigPanel({ open, status, initialSection = 'llm', onClose, onSaved }: ConfigPanelProps) {
   const { t } = useTranslation('config')
   const [cs, setCs] = useState<ConfigView | null>(null)
   const [form, setForm] = useState<ConfigFormState>(() => emptyForm(t('newProfileName')))
@@ -256,9 +260,13 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
   const [activeTab, setActiveTab] = useState<TabKey>('llm')
   const [selectedLLMProfileID, setSelectedLLMProfileID] = useState('default')
   const [invalidModelProfileID, setInvalidModelProfileID] = useState('')
+  const jevInputRef = useRef<HTMLInputElement>(null)
+  const [focusJEV, setFocusJEV] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    setActiveTab('llm')
+    setFocusJEV(initialSection === 'jev')
     setLoading(true)
     setError('')
     setInvalidModelProfileID('')
@@ -271,7 +279,14 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
       })
       .catch((err: Error) => setError(err.message || t('failedLoad')))
       .finally(() => setLoading(false))
-  }, [open])
+  }, [open, initialSection])
+
+  useEffect(() => {
+    if (!open || loading || activeTab !== 'llm' || !focusJEV || !jevInputRef.current) return
+    jevInputRef.current.focus()
+    jevInputRef.current.scrollIntoView({ block: 'center' })
+    setFocusJEV(false)
+  }, [open, loading, activeTab, focusJEV])
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault()
@@ -315,7 +330,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               key={tab.key} type="button" variant="ghost" size="sm"
               active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)}
               className={cn('h-8 text-xs', activeTab !== tab.key && 'text-muted-foreground')}
-            >{tab.key === 'guardrail' ? t('guardrail') : tab.label}</Button>
+            >{t(tab.labelKey)}</Button>
           ))}
         </div>
 
@@ -337,6 +352,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               <div className="min-h-[12rem]">
                 {activeTab === 'llm' && (
                   <LLMTab
+                    jevInputRef={jevInputRef}
                     form={form}
                     setForm={setForm}
                     cs={cs}
@@ -356,7 +372,10 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
                   />
                 )}
                 {activeTab === 'cyberhub' && <CyberhubTab form={form} setForm={setForm} cs={cs} />}
-                {activeTab === 'guardrail' && <GuardrailTab form={form} setForm={setForm} cs={cs} />}
+                {activeTab === 'guardrail' && <GuardrailTab form={form} setForm={setForm} onConfigureJEV={() => {
+                  setActiveTab('llm')
+                  setFocusJEV(true)
+                }} />}
                 {activeTab === 'recon' && <ReconTab form={form} setForm={setForm} cs={cs} />}
                 {activeTab === 'scan' && <ScanTab form={form} setForm={setForm} />}
                 {activeTab === 'search' && <SearchTab form={form} setForm={setForm} cs={cs} />}
@@ -381,6 +400,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
 type TabProps = { form: ConfigFormState; setForm: React.Dispatch<React.SetStateAction<ConfigFormState>>; cs?: ConfigView | null }
 
 function LLMTab({
+  jevInputRef,
   form,
   setForm,
   cs,
@@ -390,6 +410,7 @@ function LLMTab({
   onInvalidModel,
   onModelChange,
 }: TabProps & {
+  jevInputRef: RefObject<HTMLInputElement>
   selectedProfileID: string
   onSelectProfile: (id: string) => void
   invalidModelProfileID: string
@@ -628,6 +649,22 @@ function LLMTab({
             placeholder={configuredProfile?.apiKeyConfigured ? t('configuredKeep') : t('apiKeyRequired')} />
         </Field>
       </div>
+      <div className="sm:col-span-2">
+        <Field label={t('jevApiKey')} hint={t('jevKeyInLLMHint')}>
+          <Input
+            ref={jevInputRef}
+            aria-label={t('jevApiKey')}
+            type="password"
+            autoComplete="new-password"
+            value={typeof form.extensions.jev?.api_key === 'string' ? form.extensions.jev.api_key : ''}
+            onChange={(e) => setForm(current => ({
+              ...current,
+              extensions: { ...current.extensions, jev: { ...current.extensions.jev, api_key: e.target.value } },
+            }))}
+            placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'}
+          />
+        </Field>
+      </div>
       <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" onClick={handleTest} disabled={testing || !profile.model.trim()}>
           {testing ? <ProbePulse /> : <Zap className="h-4 w-4" />}
@@ -737,7 +774,7 @@ function IOATab({ form, setForm, cs }: TabProps) {
   )
 }
 
-function GuardrailTab({ form, setForm, cs }: TabProps) {
+function GuardrailTab({ form, setForm, onConfigureJEV }: TabProps & { onConfigureJEV: () => void }) {
   const { t } = useTranslation('config')
   const jev = form.extensions.jev ?? {}
   const update = (key: string, value: string | boolean) => setForm(f => ({
@@ -747,6 +784,11 @@ function GuardrailTab({ form, setForm, cs }: TabProps) {
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <Callout className="sm:col-span-2">{t('guardrailReloadHint')}</Callout>
+      <div className="sm:col-span-2">
+        <Button type="button" variant="outline" size="sm" onClick={onConfigureJEV}>
+          <Settings className="h-4 w-4" />{t('configureJEV')}
+        </Button>
+      </div>
       <Field label={t('guardrailMode')}>
         <Select value={form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'} onValueChange={mode => {
           setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, mode } } }))
@@ -756,10 +798,6 @@ function GuardrailTab({ form, setForm, cs }: TabProps) {
         </Select>
       </Field>
       <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'))}</p>
-      <Field label={t('jevApiKey')}>
-        <Input type="password" autoComplete="new-password" value={value('api_key')} onChange={e => update('api_key', e.target.value)}
-          placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'} />
-      </Field>
       <Field label={t('guardrailLevel')}>
         <Select value={value('level', 'standard')} onValueChange={v => update('level', v)}>
           <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
