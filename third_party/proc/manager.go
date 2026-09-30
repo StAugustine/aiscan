@@ -661,6 +661,14 @@ func (m *Manager) SnapshotBytes(id string, n int) ([]byte, int64, error) {
 	return data, offset, nil
 }
 
+func (m *Manager) OutputFile(id string) (string, error) {
+	session, err := m.lookup(id)
+	if err != nil {
+		return "", err
+	}
+	return session.output.OutputFile()
+}
+
 func (m *Manager) OutputLen(id string) (int64, error) {
 	s, err := m.lookup(id)
 	if err != nil {
@@ -843,12 +851,14 @@ func (m *Manager) newBuffer(spec Spec) (*OutputBuffer, error) {
 		cap:       size,
 		stripANSI: spec.StripANSI,
 	}
-	if spec.OutputFile != "" {
+	buffer.filePath = spec.OutputFile
+	buffer.fileAfterBytes, buffer.fileAfterLines = spec.OutputFileAfterBytes, spec.OutputFileAfterLines
+	if spec.OutputFile != "" && spec.OutputFileAfterBytes == 0 && spec.OutputFileAfterLines == 0 {
 		file, err := os.OpenFile(spec.OutputFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 		if err != nil {
 			return nil, fmt.Errorf("open output file: %w", err)
 		}
-		buffer.file = file
+		buffer.file, buffer.fileOpened = file, true
 	}
 	return buffer, nil
 }

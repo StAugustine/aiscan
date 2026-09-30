@@ -39,7 +39,7 @@ export { default as AssistantResponse } from '../../cyber-ui/packages/viewer/src
 export { default as ChatInput } from '../../cyber-ui/packages/viewer/src/components/chat/ChatInput'
 export { AgentVoiceCard } from '../../cyber-ui/packages/viewer/src/components/chat/AgentVoiceCard'
 export { ChatPanel } from '../../cyber-ui/packages/viewer/src/components/chat/ChatPanel'
-export { reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
+export { createAOPTimelineReducer, reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
 
 export type {
   TimelineRendererConfig,

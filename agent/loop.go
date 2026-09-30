@@ -19,6 +19,7 @@ import (
 	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/core/truncate"
 	types "github.com/chainreactors/cyber/core/types"
+	"google.golang.org/protobuf/proto"
 )
 
 func requireProvider(cfg Config) error {
@@ -481,11 +482,7 @@ type toolBatchResult struct {
 
 func executeToolCalls(ctx context.Context, cfg Config, em *aopEmitter, assistant *assistantTurn, turn int) (toolBatchResult, error) {
 	toolCalls := assistant.toolCalls
-	slots := make([]toolCallSlot, len(toolCalls))
-
-	for i, tc := range toolCalls {
-		slots[i] = toolCallSlot{tc: tc, rejectedReason: assistant.rejected[i]}
-	}
+	results := make([]*aop.ToolResult, len(toolCalls))
 	for _, tc := range toolCalls {
 		em.toolCall(tc)
 	}
@@ -496,14 +493,10 @@ func executeToolCalls(ctx context.Context, cfg Config, em *aopEmitter, assistant
 	if cfg.Inbox != nil {
 		interrupt = cfg.Inbox.InterruptSignal()
 	}
-	for i := range slots {
-		if slots[i].rejectedReason != "" {
-			slots[i].startedAt = time.Now()
-			slots[i].result = toolExecution{
-				result: slots[i].rejectedReason, rawResult: slots[i].rejectedReason, isError: true,
-			}
-			cfg.Logger.Warnf("[turn %d] rejected unsafe tool call name=%s reason=%s",
-				turn, slots[i].tc.Name, slots[i].rejectedReason)
+	for i, tc := range toolCalls {
+		if reason := assistant.rejected[i]; reason != "" {
+			results[i] = rejectedToolResult(tc, reason)
+			cfg.Logger.Warnf("[turn %d] rejected unsafe tool call name=%s reason=%s", turn, tc.Name, reason)
 			continue
 		}
 		wg.Add(1)
@@ -511,30 +504,28 @@ func executeToolCalls(ctx context.Context, cfg Config, em *aopEmitter, assistant
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			slots[i].startedAt = time.Now()
 			select {
 			case <-interrupt:
-				slots[i].result = toolExecution{result: "Tool was not executed because an interrupting Inbox message arrived.", isError: true}
+				results[i] = rejectedToolResult(tc, "Tool was not executed because an interrupting Inbox message arrived.")
 				return
 			case <-ctx.Done():
-				slots[i].result = toolExecution{result: "Tool was not executed because the task was canceled.", isError: true}
+				results[i] = rejectedToolResult(tc, "Tool was not executed because the task was canceled.")
 				return
 			default:
 			}
-			slots[i].result = runToolCallSafely(ctx, cfg, assistant.message, slots[i].tc, turn)
+			results[i] = runToolCallSafely(ctx, cfg, tc, turn)
 		}()
 	}
 	wg.Wait()
 
 	// Emit results in original order.
-	messages := make([]*aop.Message, 0, len(slots))
+	messages := make([]*aop.Message, 0, len(results))
 	terminations := 0
-	for _, s := range slots {
-		em.toolResult(s.tc, s.result.eventContent(), s.result.fullResult, s.result.flow == ToolFlowTerminate, s.result.isError,
-			int(time.Since(s.startedAt).Milliseconds()))
-		cfg.Logger.Debugf("[turn %d] tool_result name=%s bytes=%d", turn, s.tc.Name, len(s.result.result))
-		messages = append(messages, s.result.toMessage(s.tc.Id))
-		if s.result.flow == ToolFlowTerminate {
+	for i, result := range results {
+		em.toolResult(result)
+		cfg.Logger.Debugf("[turn %d] tool_result name=%s bytes=%d", turn, toolCalls[i].Name, len(coretool.ResultText(result)))
+		messages = append(messages, modelToolResultMessage(result, cfg.MaxResultSize))
+		if result.Terminate {
 			terminations++
 		}
 	}
@@ -557,122 +548,75 @@ func isOutputLimitFinishReason(reason string) bool {
 	}
 }
 
-type toolCallSlot struct {
-	tc             *aop.ToolCall
-	rejectedReason string
-	result         toolExecution
-	startedAt      time.Time
+func rejectedToolResult(call *aop.ToolCall, message string) *aop.ToolResult {
+	result := coretool.ErrorResult(message)
+	result.CallId, result.Name = call.Id, call.Name
+	return result
 }
 
-type toolExecution struct {
-	result     string
-	rawResult  string
-	fullResult *coretool.Result
-	isError    bool
-	err        error
-	flow       ToolFlowDecision
-}
-
-func runToolCallSafely(ctx context.Context, cfg Config, assistantMsg *aop.Message, tc *aop.ToolCall, turn int) (execution toolExecution) {
+func runToolCallSafely(ctx context.Context, cfg Config, tc *aop.ToolCall, turn int) (result *aop.ToolResult) {
+	startedAt := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			cfg.Logger.Errorf(
 				"tool call panic turn=%d name=%s call_id=%s session_id=%s panic=%v\n%s",
 				turn, tc.Name, tc.Id, cfg.SessionID, recovered, debug.Stack(),
 			)
-			message := fmt.Sprintf("tool %s failed unexpectedly (call_id=%s)", tc.Name, tc.Id)
-			execution = toolExecution{
-				result: message, rawResult: message, isError: true,
-				err: fmt.Errorf("tool call failed unexpectedly"),
-			}
+			result = rejectedToolResult(tc, fmt.Sprintf("tool %s failed unexpectedly (call_id=%s)", tc.Name, tc.Id))
+			result.DurationMs = uint64(time.Since(startedAt).Milliseconds())
 		}
+		if result == nil {
+			result = &aop.ToolResult{}
+		}
+		// Registry/remote executors already stamp their actual execution time.
+		// Only a bare executor needs metadata supplied at this boundary.
+		if result.CallId == "" {
+			result.DurationMs = uint64(time.Since(startedAt).Milliseconds())
+		}
+		result.CallId, result.Name = tc.Id, tc.Name
+		coretool.SanitizeResultUTF8(result)
 	}()
-	return runToolCall(ctx, cfg, assistantMsg, tc, turn)
-}
-
-func runToolCall(ctx context.Context, cfg Config, assistantMsg *aop.Message, tc *aop.ToolCall, turn int) toolExecution {
 	toolCtx := operation.ContextWithInvocation(ctx, operation.Invocation{
 		CallID: tc.Id, SessionID: cfg.SessionID, TurnID: cfg.TurnID, Emitter: cfg.AgentName,
 	})
 	toolCtx = ContextWithToolAgentConfig(toolCtx, cfg)
 	toolCtx = inbox.ContextWithInbox(toolCtx, cfg.Inbox)
-	execution := toolExecution{}
-	if execution.result == "" && !execution.isError {
-		arguments := ""
-		if tc.Arguments != nil {
-			arguments = string(tc.Arguments.Data)
-		}
-		toolResult, execErr := cfg.Tools.ExecuteTool(toolCtx, tc.Name, arguments)
-		if toolResult == nil {
-			toolResult = &coretool.Result{}
-		}
-		execution.result = coretool.ResultText(toolResult)
-		execution.err = execErr
-		execution.isError = execErr != nil || toolResult.IsError
-		if execErr != nil {
-			execution.result = fmt.Sprintf("error: %s", execErr.Error())
-			cfg.Logger.Warnf("[turn %d] tool_error name=%s error=%q", turn, tc.Name, execErr.Error())
-		}
-		if toolResult.Terminate {
-			execution.flow = ToolFlowTerminate
-		}
-		if coretool.ResultHasMedia(toolResult) || toolResult.Terminate {
-			execution.fullResult = toolResult
-		}
+	arguments := string(tc.GetArguments().GetData())
+	result, err := cfg.Tools.ExecuteTool(toolCtx, tc.Name, arguments)
+	if result == nil {
+		result = &aop.ToolResult{}
 	}
-	if execution.rawResult == "" {
-		execution.rawResult = execution.result
+	if err != nil {
+		result.IsError = true
+		if len(result.Output) == 0 {
+			result.Output = []*aop.Content{aop.Text(err.Error())}
+		}
+		cfg.Logger.Warnf("[turn %d] tool_error name=%s error=%q", turn, tc.Name, err.Error())
 	}
-	if tr := truncate.Head(execution.result, truncate.Options{MaxBytes: cfg.MaxResultSize}); tr.Truncated {
-		execution.result = tr.Content + fmt.Sprintf(
+	return result
+}
+
+// The event keeps the canonical result. Only the model-facing projection is
+// bounded, and its media and terminal flags remain intact.
+func modelToolResultMessage(result *aop.ToolResult, maxBytes int) *aop.Message {
+	if tr := truncate.Head(coretool.ResultText(result), truncate.Options{MaxBytes: maxBytes}); tr.Truncated {
+		result = proto.CloneOf(result)
+		preview := tr.Content + fmt.Sprintf(
 			"\n\n[truncated: showing %d/%d lines (%s of %s). Refine your query or use filter/parse tools to access specific parts.]",
 			tr.OutputLines, tr.TotalLines, truncate.FormatSize(tr.OutputBytes), truncate.FormatSize(tr.TotalBytes))
-	}
-	return execution
-}
-
-func (e toolExecution) eventContent() []*aop.Content {
-	content := []*aop.Content{aop.Text(e.eventResultText())}
-	if e.fullResult == nil {
-		return content
-	}
-	for _, block := range e.fullResult.Output {
-		media := block.GetMedia()
-		if media == nil || media.Resource == nil {
-			continue
-		}
-		content = append(content, block)
-	}
-	return content
-}
-
-func (e toolExecution) eventResultText() string {
-	if e.rawResult != "" {
-		return e.rawResult
-	}
-	return e.result
-}
-
-// toMessage converts the execution into the tool-role message appended to the
-// transcript. Image outputs ride along as media parts; the result text is
-// always present so text-only providers keep working.
-func (e toolExecution) toMessage(toolCallID string) *aop.Message {
-	result := &aop.ToolResult{
-		CallId:    toolCallID,
-		IsError:   e.isError,
-		Terminate: e.flow == ToolFlowTerminate,
-	}
-	if e.fullResult != nil && coretool.ResultHasImages(e.fullResult) {
-		for _, block := range e.fullResult.Output {
-			if text := block.GetText(); text != nil {
-				result.Output = append(result.Output, aop.Text(text.Text))
-			}
-			if media := block.GetMedia(); media != nil && media.Kind == "image" && media.Resource != nil {
-				result.Output = append(result.Output, block)
+		output := make([]*aop.Content, 0, len(result.Output))
+		addedText := false
+		for _, block := range result.Output {
+			if block.GetText() != nil {
+				if !addedText {
+					output = append(output, aop.Text(preview))
+					addedText = true
+				}
+			} else {
+				output = append(output, block)
 			}
 		}
-	} else {
-		result.Output = []*aop.Content{aop.Text(e.result)}
+		result.Output = output
 	}
 	return &aop.Message{Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: result}}}}
 }

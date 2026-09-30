@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chainreactors/cyber/agent/inbox"
 	"github.com/chainreactors/cyber/core/operation"
@@ -20,6 +21,79 @@ import (
 
 	"github.com/chainreactors/utils/proc"
 )
+
+func TestBackgroundOutputPublishesBoundedCompletionAndOriginalFile(t *testing.T) {
+	dir := t.TempDir()
+	tool := NewBashTool(dir, 5, nil)
+	defer tool.Close()
+	scoped := inbox.NewBuffered(64)
+	defer scoped.Close()
+	release := make(chan struct{})
+	full := "FIRST " + strings.Repeat("中", 1<<20) + " LAST"
+	path := filepath.Join(dir, "command.log")
+	info, err := tool.tasks.Start(t.Context(), proc.Spec{Name: "large-background", OutputFile: path, OutputFileAfterBytes: 50 << 10},
+		proc.Func(func(_ context.Context, output io.Writer) error {
+			<-release
+			_, err := io.WriteString(output, full)
+			return err
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool.startMonitor(info, dir, scoped)
+	close(release)
+	deadline := time.Now().Add(2 * time.Second)
+	for scoped.ActiveProducers() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if scoped.ActiveProducers() != 0 {
+		t.Fatal("background completion did not arrive")
+	}
+	var completion string
+	for _, message := range scoped.Drain() {
+		text := message.Message.GetContent()[0].GetText().GetText()
+		if !utf8.ValidString(text) || len(text) > 60<<10 {
+			t.Fatalf("unbounded/invalid background preview: %d bytes", len(text))
+		}
+		if message.Meta["type"] == "completion" {
+			completion = text
+		}
+	}
+	if !strings.Contains(completion, "command.log") || !strings.Contains(completion, "LAST") {
+		t.Fatal("completion lost the original output path or tail")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != full {
+		t.Fatalf("background output was lost: %d bytes, %v", len(data), err)
+	}
+}
+
+func TestLargeShellOutputRemainsReadableAfterBufferEviction(t *testing.T) {
+	dir := t.TempDir()
+	bash := NewBashTool(dir, 10, nil)
+	defer bash.Close()
+	full := "FIRST " + strings.Repeat("中", 1<<20) + " LAST"
+	result, err := bash.RunForegroundTool(t.Context(), "printf '%s' '"+full+"'", BashExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview := coretool.ResultText(result)
+	if !utf8.ValidString(preview) || len(preview) > 60<<10 || !strings.Contains(preview, "LAST") {
+		t.Fatalf("invalid preview: %d bytes", len(preview))
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, ".cyber", "output", "*.log"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("saved output files = %v, %v", paths, err)
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil || string(data) != full {
+		t.Fatalf("saved output lost the discarded prefix: %d bytes, %v", len(data), err)
+	}
+	relative, _ := filepath.Rel(dir, paths[0])
+	if !strings.Contains(preview, relative) {
+		t.Fatal("preview did not name the original output file")
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -792,7 +866,7 @@ func TestBashBackgroundMonitorUsesInvocationInbox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tool.startMonitor(info, scoped)
+	tool.startMonitor(info, "", scoped)
 	if scoped.ActiveProducers() != 1 {
 		t.Fatalf("active producers = %d, want 1", scoped.ActiveProducers())
 	}
@@ -834,7 +908,7 @@ func TestBashBackgroundMonitorDeliversConcurrentCompletions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tool.startMonitor(info, scoped)
+		tool.startMonitor(info, "", scoped)
 	}
 	if scoped.ActiveProducers() != jobs {
 		t.Fatalf("active producers = %d, want %d", scoped.ActiveProducers(), jobs)

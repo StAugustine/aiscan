@@ -41,11 +41,11 @@ func scannerSubagent(name, description string, systemTarget, requestTarget promp
 				}
 				return cfg, input.Prompt, nil
 			}
-			payload, ok := input.Payload.(scan.WorkerPromptPayload)
+			payload, ok := input.Payload.(parsers.Loot)
 			if !ok {
-				return cfg, "", fmt.Errorf("scanner subagent %q requires scan.WorkerPromptPayload", name)
+				return cfg, "", fmt.Errorf("scanner subagent %q requires parsers.Loot", name)
 			}
-			if strings.TrimSpace(payload.Loot.Target) == "" {
+			if strings.TrimSpace(payload.Target) == "" {
 				return cfg, "", fmt.Errorf("scanner subagent %q requires a loot target", name)
 			}
 			request, err := resolveWorkerPrompt(ctx, cfg.PromptResolver, prompt.Context{
@@ -68,7 +68,7 @@ func scannerWorker(executor subagent.Executor, defaults agent.Config) scan.Worke
 		if cfg.Provider == nil {
 			return "", fmt.Errorf("scanner subagent %q requires a model provider", name)
 		}
-		result, err := executor.Execute(ctx, cfg, subagent.Request{Name: name, Input: subagent.Input{Payload: scan.WorkerPromptPayload{Loot: loot}}})
+		result, err := executor.Execute(ctx, cfg, subagent.Request{Name: name, Input: subagent.Input{Payload: loot}})
 		if err != nil {
 			return "", err
 		}

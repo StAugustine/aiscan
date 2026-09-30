@@ -53,15 +53,17 @@ func ExecuteToolRequest(ctx context.Context, operationID string, request *toolpb
 	}
 	if execErr != nil {
 		result.IsError = true
-		result.Output = []*aop.Content{aop.Text(execErr.Error())}
+		if len(result.Output) == 0 {
+			result.Output = []*aop.Content{aop.Text(execErr.Error())}
+		}
 	}
-	result.CallId = call.Id
-	result.Name = call.Name
-	result.DurationMs = uint64(time.Since(started).Milliseconds())
-	sanitizeToolResultUTF8(result)
-	// Bound inline output to the model-context budget; oversized results are
-	// spilled to disk and replaced with a preview plus a reference.
-	boundToolResultOutput(ctx, result)
+	if result.CallId == "" {
+		result.DurationMs = uint64(time.Since(started).Milliseconds())
+	}
+	result.CallId, result.Name = call.Id, call.Name
+	SanitizeResultUTF8(result)
+	// Bound only the transport representation; tools own their recoverable sources.
+	boundToolResultOutput(result)
 	return &aop.Event{
 		Id: aop.EnvelopeID(), EmittedAt: timestamppb.Now(), SessionId: request.SessionId,
 		TurnId: request.TurnId, Emitter: emitter, Payload: &aop.Event_ToolResult{ToolResult: result},
@@ -113,9 +115,9 @@ func sanitizeUTF8(value string) string {
 	return strings.ToValidUTF8(value, "\uFFFD")
 }
 
-// sanitizeToolResultUTF8 protects the AOP boundary from arbitrary command
+// SanitizeResultUTF8 protects the AOP boundary from arbitrary command
 // bytes and tools that construct protobuf content directly.
-func sanitizeToolResultUTF8(result *aop.ToolResult) {
+func SanitizeResultUTF8(result *aop.ToolResult) {
 	if result == nil {
 		return
 	}
@@ -137,7 +139,7 @@ func sanitizeToolResultUTF8(result *aop.ToolResult) {
 		case *aop.Content_Refusal:
 			value.Refusal = sanitizeUTF8(value.Refusal)
 		case *aop.Content_ToolResult:
-			sanitizeToolResultUTF8(value.ToolResult)
+			SanitizeResultUTF8(value.ToolResult)
 		}
 	}
 }

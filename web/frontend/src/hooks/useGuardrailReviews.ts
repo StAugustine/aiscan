@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { anyUnpack, timestampDate } from '@bufbuild/protobuf/wkt'
-import { aopClient, pendingGuardrailReviews, resolveGuardrailReview, subscribeAOPEvents } from '../api'
+import { aopClient, pendingGuardrailReviews, resolveGuardrailReview, type AOPEvent } from '../api'
 import { ReviewSchema, ReviewState, type Review } from '../cyber-proto'
 
 // Transcript and sidebar share current runtime state, never replayed approvals.
-export function useGuardrailReviews(sessionIds: string[], activeSessionId: string | null) {
+export function useGuardrailReviews(sessionIds: string[], activeSessionId: string | null, events: AOPEvent[]) {
   const [bySession, setBySession] = useState<Record<string, Review[]>>({})
   const [unavailable, setUnavailable] = useState<Record<string, boolean>>({})
   const disconnected = useRef(new Set<string>())
@@ -66,16 +66,17 @@ export function useGuardrailReviews(sessionIds: string[], activeSessionId: strin
     return () => { disposed = true; unsubscribeConnection(); window.clearInterval(timer); document.removeEventListener('visibilitychange', visible) }
   }, [sessionKey])
 
+  // The conversation already owns this subscription. Review events only
+  // trigger a fresh runtime query; historical approvals never enable actions.
+  const latestReview = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index--) {
+      const event = events[index]
+      if (event.payload.case === 'extension' && anyUnpack(event.payload.value, ReviewSchema)) return event
+    }
+  }, [events])
   useEffect(() => {
-    if (!activeSessionId) return
-    const load = () => { void reload.current(activeSessionId) }
-    load()
-    const timer = window.setInterval(() => { if (!document.hidden) load() }, 2000)
-    const unsubscribe = subscribeAOPEvents(activeSessionId, event => {
-      if (event.payload.case === 'extension' && anyUnpack(event.payload.value, ReviewSchema)) load()
-    }, load)
-    return () => { window.clearInterval(timer); unsubscribe() }
-  }, [activeSessionId, sessionKey])
+    if (activeSessionId) void reload.current(activeSessionId)
+  }, [activeSessionId, sessionKey, latestReview])
 
   const resolve = useCallback(async (sessionId: string, review: Review, approve: boolean) => {
     const operationId = review.operation?.operationId

@@ -13,7 +13,6 @@ import (
 	"github.com/chainreactors/cyber/core/types"
 	"github.com/chainreactors/cyber/internal/testutil/hosttest"
 	subagentext "github.com/chainreactors/cyber/pkg/exts/subagent"
-	"github.com/chainreactors/cyber/tools/scan"
 	"github.com/chainreactors/utils/parsers"
 )
 
@@ -83,7 +82,7 @@ func TestScannerNamedWorkersSharePreparation(t *testing.T) {
 func TestScannerPreparationRejectsInvalidInput(t *testing.T) {
 	cfg := agent.Config{PromptResolver: &workerPromptResolver{}}
 	worker := scannerSubagents(func(string) string { return "instructions" })[0]
-	for _, input := range []subagent.Input{{}, {Prompt: "text", Payload: "bad"}, {Payload: scan.WorkerPromptPayload{}}} {
+	for _, input := range []subagent.Input{{}, {Prompt: "text", Payload: "bad"}, {Payload: parsers.Loot{}}} {
 		if _, _, err := worker.Prepare(t.Context(), cfg, input); err == nil {
 			t.Fatalf("accepted %#v", input)
 		}

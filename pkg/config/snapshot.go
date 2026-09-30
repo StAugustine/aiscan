@@ -138,51 +138,63 @@ func LoadSnapshot(context *Context, explicit string, sections *Sections) (*Snaps
 		if doc == nil {
 			doc = map[string]any{}
 		}
-		if err = validateDocument(doc, sections); err != nil {
-			return nil, fmt.Errorf("config file %s: %w", layer.Path, err)
+		if err := s.applyLayer(layer, doc, sections); err != nil {
+			return nil, err
 		}
-		if sections != nil {
-			canonical := CloneDocument(doc)
-			unknown := map[string]any{}
-			if exts, ok := canonical["extensions"].(map[string]any); ok {
-				for key, value := range exts {
-					if !sections.Has(key) {
-						unknown[key] = value
-						delete(exts, key)
-					}
+	}
+	s.finishFileSnapshot(sections)
+	return s, nil
+}
+
+func (s *Snapshot) applyLayer(layer *Layer, doc map[string]any, sections *Sections) error {
+	if err := validateDocument(doc, sections); err != nil {
+		return fmt.Errorf("config file %s: %w", layer.Path, err)
+	}
+	if sections != nil {
+		canonical := CloneDocument(doc)
+		unknown := map[string]any{}
+		if exts, ok := canonical["extensions"].(map[string]any); ok {
+			for key, value := range exts {
+				if !sections.Has(key) {
+					unknown[key] = value
+					delete(exts, key)
 				}
 			}
-			normalized, e := sections.Normalize(canonical)
-			if e != nil {
-				return nil, fmt.Errorf("config file %s: %w", layer.Path, e)
-			}
-			for key, value := range normalized {
-				unknown[key] = map[string]any(value)
-			}
-			for _, alias := range sections.Aliases() {
-				delete(doc, alias)
-			}
-			if len(unknown) > 0 {
-				doc["extensions"] = unknown
-			}
 		}
-		layer.Document = CloneDocument(doc)
-		if s.Context.UserLLMOnly && layer.Scope == "project" {
-			if _, exists := doc["llm"]; exists {
-				delete(doc, "llm")
-				s.Diagnostics = append(s.Diagnostics, fmt.Sprintf("ignoring llm from %s configuration %s; use --config to select it explicitly", layer.Scope, layer.Path))
-			}
+		normalized, e := sections.Normalize(canonical)
+		if e != nil {
+			return fmt.Errorf("config file %s: %w", layer.Path, e)
 		}
-		if err = normalizeProfileDocument(doc); err != nil {
-			return nil, fmt.Errorf("config file %s: %w", layer.Path, err)
+		for key, value := range normalized {
+			unknown[key] = map[string]any(value)
 		}
-		if misc, ok := doc["misc"].(map[string]any); ok {
-			if value, ok := misc["data_dir"].(string); ok && value != "" && !filepath.IsAbs(value) {
-				misc["data_dir"] = filepath.Join(filepath.Dir(layer.Path), value)
-			}
+		for _, alias := range sections.Aliases() {
+			delete(doc, alias)
 		}
-		mergeDocumentLayer(s.Document, doc, "", layer.Path, s.Sources)
+		if len(unknown) > 0 {
+			doc["extensions"] = unknown
+		}
 	}
+	layer.Document = CloneDocument(doc)
+	if s.Context.UserLLMOnly && layer.Scope == "project" {
+		if _, exists := doc["llm"]; exists {
+			delete(doc, "llm")
+			s.Diagnostics = append(s.Diagnostics, fmt.Sprintf("ignoring llm from %s configuration %s; use --config to select it explicitly", layer.Scope, layer.Path))
+		}
+	}
+	if err := normalizeProfileDocument(doc); err != nil {
+		return fmt.Errorf("config file %s: %w", layer.Path, err)
+	}
+	if misc, ok := doc["misc"].(map[string]any); ok {
+		if value, ok := misc["data_dir"].(string); ok && value != "" && !filepath.IsAbs(value) {
+			misc["data_dir"] = filepath.Join(filepath.Dir(layer.Path), value)
+		}
+	}
+	mergeDocumentLayer(s.Document, doc, "", layer.Path, s.Sources)
+	return nil
+}
+
+func (s *Snapshot) finishFileSnapshot(sections *Sections) {
 	if exts, ok := s.Document["extensions"].(map[string]any); ok {
 		for key := range exts {
 			if sections == nil || !sections.Has(key) {
@@ -191,30 +203,62 @@ func LoadSnapshot(context *Context, explicit string, sections *Sections) (*Snaps
 		}
 	}
 	s.fileSources = maps.Clone(s.Sources)
-	return s, nil
+}
+
+// WithTargetDocument recomposes the existing file layers for an editor's
+// candidate. The candidate stays in memory until its final YAML file commit.
+func (s *Snapshot) WithTargetDocument(document map[string]any, sections *Sections) (*Snapshot, error) {
+	candidate := &Snapshot{
+		Context: s.Context, Target: s.Target, Sources: map[string]string{}, Document: map[string]any{},
+		Layers: append([]Layer(nil), s.Layers...),
+	}
+	found := false
+	for i := range candidate.Layers {
+		if samePath(candidate.Layers[i].Path, s.Target) {
+			candidate.Layers[i].Document = document
+			found = true
+		}
+	}
+	if !found {
+		candidate.Layers = append(candidate.Layers, Layer{Path: s.Target, Scope: "user", Document: document})
+	}
+	for i := range candidate.Layers {
+		layer := &candidate.Layers[i]
+		if err := candidate.applyLayer(layer, CloneDocument(layer.Document), sections); err != nil {
+			return nil, err
+		}
+	}
+	candidate.finishFileSnapshot(sections)
+	return candidate, nil
 }
 
 func CloneDocument(in map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range in {
-		switch x := v.(type) {
-		case map[string]any:
-			out[k] = CloneDocument(x)
-		case []any:
-			a := make([]any, len(x))
-			for i, e := range x {
-				if m, ok := e.(map[string]any); ok {
-					a[i] = CloneDocument(m)
-				} else {
-					a[i] = e
-				}
-			}
-			out[k] = a
-		default:
-			out[k] = v
-		}
+	out := make(map[string]any, len(in))
+	for key, value := range in {
+		out[key] = cloneDocumentValue(value)
 	}
 	return out
+}
+
+func cloneDocumentValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		return CloneDocument(value)
+	case Values:
+		return CloneValues(value)
+	case []any:
+		out := make([]any, len(value))
+		for i, item := range value {
+			out[i] = cloneDocumentValue(item)
+		}
+		return out
+	case []string:
+		return append([]string(nil), value...)
+	case map[string]string:
+		return maps.Clone(value)
+	default:
+		return value
+	}
 }
 
 func normalizeProfileDocument(doc map[string]any) error {
@@ -342,12 +386,15 @@ func validateMapping(doc map[string]any, t reflect.Type, prefix string, sections
 				return err
 			}
 		case reflect.Slice:
-			a, ok := v.([]any)
-			if !ok {
+			// File YAML uses []any; programmatic edits also carry typed slices
+			// such as []string from protobuf repeated fields.
+			list := reflect.ValueOf(v)
+			if list.Kind() != reflect.Slice {
 				return fmt.Errorf("%s: expected list", path)
 			}
 			if ft.Elem().Kind() == reflect.Struct {
-				for i, e := range a {
+				for i := 0; i < list.Len(); i++ {
+					e := list.Index(i).Interface()
 					m, ok := e.(map[string]any)
 					if !ok {
 						return fmt.Errorf("%s[%d]: expected mapping", path, i)
@@ -397,10 +444,6 @@ func (s *Snapshot) RuntimeDocument(sections *Sections) map[string]any {
 // FileOptions resolves profiles from file layers only, without environment or
 // compiled defaults. Editors use it to avoid persisting runtime-only values.
 func (s *Snapshot) FileOptions(sections *Sections) (*Option, error) {
-	data, err := yaml.Marshal(s.RuntimeDocument(sections))
-	if err != nil {
-		return nil, err
-	}
 	file := *s
 	file.Sources = maps.Clone(s.fileSources)
 	if file.Sources == nil {
@@ -410,7 +453,7 @@ func (s *Snapshot) FileOptions(sections *Sections) (*Option, error) {
 		file.Sources = map[string]string{}
 	}
 	option := &Option{Sections: sections, Explicit: map[string]bool{}, Snapshot: &file}
-	if err := LoadConfigBytes(data, option); err != nil {
+	if err := LoadConfigDocument(s.RuntimeDocument(sections), option); err != nil {
 		return nil, err
 	}
 	if err := seedProviderProfile(option, &Option{Explicit: map[string]bool{}}); err != nil {

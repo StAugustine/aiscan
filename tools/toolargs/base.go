@@ -34,15 +34,26 @@ func (b *Base) InitLogger(logger telemetry.Logger) {
 }
 
 func (b *Base) EmitArtifactCtx(ctx context.Context, tool, kind, target string, data any) {
-	b.EmitArtifactResultCtx(ctx, ArtifactResultID(tool, kind, target, data), tool, kind, target, data)
+	raw, err := json.Marshal(data)
+	if err != nil {
+		b.Logger.Warnf("marshal %s artifact: %s", tool, err)
+		return
+	}
+	_ = b.EmitArtifactJSONCtx(ctx, ArtifactResultIDFromJSON(tool, kind, target, raw), tool, kind, target, raw)
 }
 
 // ArtifactResultID returns a stable identity for one scanner-native record.
 // The same value is carried by its aop.tool.Loot marker.
 func ArtifactResultID(tool, kind, target string, data any) string {
 	raw, _ := json.Marshal(data)
-	digest := sha256.Sum256(append([]byte(tool+"\x00"+kind+"\x00"+target+"\x00"), raw...))
-	return fmt.Sprintf("%x", digest[:16])
+	return ArtifactResultIDFromJSON(tool, kind, target, raw)
+}
+
+func ArtifactResultIDFromJSON(tool, kind, target string, raw []byte) string {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(tool + "\x00" + kind + "\x00" + target + "\x00"))
+	_, _ = digest.Write(raw)
+	return fmt.Sprintf("%x", digest.Sum(nil)[:16])
 }
 
 func (b *Base) EmitArtifactResultCtx(ctx context.Context, resultID, tool, kind, target string, data any) error {
@@ -56,6 +67,17 @@ func (b *Base) EmitArtifactResultCtx(ctx context.Context, resultID, tool, kind, 
 	if err != nil {
 		b.Logger.Warnf("marshal %s artifact: %s", tool, err)
 		return err
+	}
+	return b.EmitArtifactJSONCtx(ctx, resultID, tool, kind, target, raw)
+}
+
+// EmitArtifactJSONCtx publishes a native record already encoded by its producer.
+func (b *Base) EmitArtifactJSONCtx(ctx context.Context, resultID, tool, kind, target string, raw []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if b.Events == nil || len(raw) == 0 {
+		return nil
 	}
 	// One artifact event is one control-plane frame. A record that outgrows the
 	// frame is trimmed to fit here, at the sole point every tool's artifact is

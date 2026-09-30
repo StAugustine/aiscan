@@ -7,10 +7,9 @@ import "google/protobuf/struct.proto";
 option go_package = "github.com/chainreactors/cyber/core/types;types";
 
 message DistributeConfig {
-  reserved 2, 3, 4, 6;
-  reserved "ioa";
+  reserved 2, 3, 4, 5, 6;
+  reserved "ioa", "search";
   LLMConfig llm = 1;
-  SearchConfig search = 5;
   AgentConfig agent = 7;
   map<string, google.protobuf.Struct> extensions = 8;
   NodeConfig node = 9;
@@ -39,10 +38,6 @@ message LLMProviderConfig {
   int32 context_window = 9;
   int32 timeout = 10;
   optional bool images = 11;
-}
-
-message SearchConfig {
-  string tavily_keys = 1;
 }
 
 message AgentConfig {
@@ -82,15 +77,12 @@ message LLMView {
   repeated LLMProviderView providers = 3;
 }
 
-message SearchView { bool tavily_keys_configured = 1; }
-
 message ConfigView {
-  reserved 4, 5, 6, 8;
-  reserved "ioa";
+  reserved 4, 5, 6, 7, 8;
+  reserved "ioa", "search";
   string path = 1;
   bool loaded = 2;
   LLMView llm = 3;
-  SearchView search = 7;
   AgentConfig agent = 9;
   map<string, ExtensionView> extensions = 10;
   TrafficConfig traffic = 11;

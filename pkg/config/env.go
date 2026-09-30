@@ -34,6 +34,25 @@ func ResolveAgentRuntimeConfig(option *Option) (string, error) {
 	return resolveRuntimeConfig(option, true, nil)
 }
 
+// ResolveRuntimeSnapshot resolves an already loaded candidate with the same
+// precedence and defaults as startup, without rereading a staged file.
+func ResolveRuntimeSnapshot(option *Option, snapshot *Snapshot) error {
+	if snapshot == nil {
+		return fmt.Errorf("configuration snapshot is required")
+	}
+	if option.Sections == nil {
+		option.Sections = NewSections()
+	}
+	explicit := explicitOptions(option)
+	loaded := Option{Sections: option.Sections}
+	if err := LoadConfigDocument(snapshot.RuntimeDocument(option.Sections), &loaded); err != nil {
+		return err
+	}
+	option.Snapshot = snapshot
+	mergeOption(option, &loaded)
+	return finishRuntimeConfig(option, &explicit)
+}
+
 func resolveRuntimeConfig(option *Option, agentMode bool, usesModel func(*Option) (bool, error)) (string, error) {
 	if option.Sections == nil {
 		option.Sections = NewSections()

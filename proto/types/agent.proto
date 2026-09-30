@@ -52,11 +52,6 @@ message DelegationDetail {
   string task = 6;
 }
 
-message EvalControl {
-  string criteria = 1;
-  uint32 max_rounds = 2;
-}
-
 message EvalDetail {
   string error = 1;
   uint32 max_rounds = 2;

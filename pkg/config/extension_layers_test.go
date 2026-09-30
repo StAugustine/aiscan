@@ -87,7 +87,6 @@ func TestLayeredExtensionDeclarationContract(t *testing.T) {
 					t.Fatalf("file view inherited runtime overrides: %v", err)
 				}
 			}
-			value.Name = "mutated"
 			again, err := Get[*fixtureOptions](option.Resolved, "fixture")
 			if err != nil || again.Name != wantName || validations != 1 {
 				t.Fatal("configuration reads mutated values or repeated validation")

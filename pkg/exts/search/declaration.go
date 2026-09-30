@@ -22,7 +22,7 @@ func Declare(resources *resource.Registry) error {
 }
 
 func testConnection(ctx context.Context, in, stored *types.DistributeConfig) []*types.ConnectionCheck {
-	keys := fallbackString(in.GetSearch().GetTavilyKeys(), stored.GetSearch().GetTavilyKeys())
+	keys := fallbackString(in.GetExtensions()[ConfigKey].GetFields()["tavily_keys"].GetStringValue(), stored.GetExtensions()[ConfigKey].GetFields()["tavily_keys"].GetStringValue())
 	return []*types.ConnectionCheck{connectionCheck("tavily", func() (string, error) {
 		key := firstCSV(keys)
 		if key == "" {

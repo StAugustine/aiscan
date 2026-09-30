@@ -8,6 +8,7 @@ import (
 	operationpb "github.com/chainreactors/cyber/aop/operation"
 	ptypb "github.com/chainreactors/cyber/aop/pty"
 	toolpb "github.com/chainreactors/cyber/aop/tool"
+	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
 	webstatic "github.com/chainreactors/cyber/web"
 	"github.com/go-rod/rod"
@@ -160,7 +161,7 @@ func TestArchiveFailureWaitsForExecutionTerminal(t *testing.T) {
 	_ = store.Close() // Simulate storage failure after dispatch.
 	pool := NewAgentPool(NewHub(), store)
 	agent := &remoteAgent{nodeState: newNodeState()}
-	result := make(chan taskResult, 1)
+	result := make(chan protobuf.Message, 1)
 	agent.tasks["scan-call"] = result
 	agent.toolCalls["scan-call"] = struct{}{}
 	extension, err := anypb.New(&toolpb.Artifact{Tool: "gogo", Kind: toolpb.ArtifactKindService, Data: []byte(`{"ip":"127.0.0.1","port":"80"}`), MediaType: aop.JSONMediaType})
@@ -178,7 +179,7 @@ func TestArchiveFailureWaitsForExecutionTerminal(t *testing.T) {
 	}
 	pool.forwardAOPFrame(agent, "scan-call", &aop.Event{Payload: &aop.Event_ToolResult{ToolResult: &aop.ToolResult{}}})
 	got := <-result
-	if got.Code != "RESULT_ARCHIVE_FAILED" || got.Err == "" || agent.busy() {
+	if taskError(got).GetCode() != "RESULT_ARCHIVE_FAILED" || taskError(got).GetMessage() == "" || agent.busy() {
 		t.Fatalf("terminal lost archive failure: %+v", got)
 	}
 }
@@ -403,7 +404,7 @@ func TestWSDispatchAndComplete(t *testing.T) {
 	}}}))
 	select {
 	case res := <-resultCh:
-		if res.Err != "" || res.Output != "done" {
+		if taskError(res).GetMessage() != "" || coretool.ResultText(res.(*aop.ToolResult)) != "done" {
 			t.Fatalf("unexpected result: %+v", res)
 		}
 	case <-time.After(time.Second):
@@ -462,7 +463,7 @@ func TestWSDispatchChatUsesAOPMessage(t *testing.T) {
 	writeAgentEnvelope(t, conn, turnEndEnvelope(t, "task-chat", "sess-chat", "completed"))
 	select {
 	case res := <-resultCh:
-		if res.Err != "" {
+		if taskError(res).GetMessage() != "" {
 			t.Fatalf("unexpected result: %+v", res)
 		}
 	case <-time.After(time.Second):
@@ -1240,11 +1241,11 @@ func runE2ETerminalResize(t *testing.T) { //nolint:unused // referenced by agent
 
 func TestCancelTaskConvergesPendingTaskImmediately(t *testing.T) {
 	pool := NewAgentPool(nil, nil)
-	resultCh := make(chan taskResult, 1)
+	resultCh := make(chan protobuf.Message, 1)
 	remote := &remoteAgent{
 		nodeState: &nodeState{
-			tasks: map[string]chan taskResult{"task-1": resultCh}, turns: map[string]int{"task-1": 1},
-			openSessions: make(map[string]struct{}), toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{}),
+			tasks:        map[string]chan protobuf.Message{"task-1": resultCh},
+			openSessions: make(map[string]struct{}), toolCalls: make(map[string]struct{}),
 		},
 		nodeID: "agent-1",
 	}
@@ -1294,19 +1295,18 @@ func forwardEvent(t *testing.T, pool *AgentPool, remote *remoteAgent, taskID str
 	pool.forwardAOPFrame(remote, taskID, event)
 }
 
-func newChatTaskRemote() (*remoteAgent, chan taskResult) {
+func newChatTaskRemote() (*remoteAgent, chan protobuf.Message) {
 	remote := &remoteAgent{
 		nodeState: newNodeState(),
 		nodeID:    "agent-1",
 		name:      "worker",
 	}
-	ch := make(chan taskResult, 1)
+	ch := make(chan protobuf.Message, 1)
 	remote.tasks["task-1"] = ch
-	remote.turns["task-1"] = 0
 	return remote, ch
 }
 
-func readResult(t *testing.T, ch chan taskResult) taskResult {
+func readResult(t *testing.T, ch chan protobuf.Message) protobuf.Message {
 	t.Helper()
 	select {
 	case res, ok := <-ch:
@@ -1316,11 +1316,11 @@ func readResult(t *testing.T, ch chan taskResult) taskResult {
 		return res
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for task result")
-		return taskResult{}
+		return nil
 	}
 }
 
-func assertTaskOpen(t *testing.T, remote *remoteAgent, ch chan taskResult) {
+func assertTaskOpen(t *testing.T, remote *remoteAgent, ch chan protobuf.Message) {
 	t.Helper()
 	select {
 	case res, ok := <-ch:
@@ -1344,8 +1344,8 @@ func TestChatTaskConvergesOnTurnEnd(t *testing.T) {
 	forwardEvent(t, pool, remote, "task-1", sessionEvent(t, "agent-session", &aop.Event{TurnId: "task-1", Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}}}))
 
 	res := readResult(t, ch)
-	if res.Err != "" {
-		t.Fatalf("err = %q, want empty", res.Err)
+	if taskError(res).GetMessage() != "" {
+		t.Fatalf("err = %q, want empty", taskError(res).GetMessage())
 	}
 	if _, ok := <-ch; ok {
 		t.Fatal("channel should be closed after the result")
@@ -1369,8 +1369,8 @@ func TestChatTaskTurnEndErrorIsNotRepublishedByWaiter(t *testing.T) {
 		}},
 	}))
 	res := readResult(t, ch)
-	if res.Err != "" {
-		t.Fatalf("waiter would synthesize a second terminal: %q", res.Err)
+	if taskError(res).GetMessage() != "" {
+		t.Fatalf("waiter would synthesize a second terminal: %q", taskError(res).GetMessage())
 	}
 }
 
@@ -1387,8 +1387,8 @@ func TestChatTaskCanceledTurnEndHasNoErr(t *testing.T) {
 		}},
 	}))
 	res := readResult(t, ch)
-	if res.Err != "" {
-		t.Fatalf("err = %q, want empty for canceled run", res.Err)
+	if taskError(res).GetMessage() != "" {
+		t.Fatalf("err = %q, want empty for canceled run", taskError(res).GetMessage())
 	}
 }
 
@@ -1413,8 +1413,8 @@ func TestTaskConvergesOnceWhenTurnEndAndCompleteArrive(t *testing.T) {
 	event := sessionEvent(t, "agent-session", &aop.Event{TurnId: "task-1", Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}}})
 	forwardEvent(t, pool, remote, "task-1", event)
 	res := readResult(t, ch)
-	if res.Err != "" {
-		t.Fatalf("err = %q, want empty", res.Err)
+	if taskError(res).GetMessage() != "" {
+		t.Fatalf("err = %q, want empty", taskError(res).GetMessage())
 	}
 
 	// Duplicate terminal events must be idempotent.
@@ -1811,7 +1811,7 @@ func TestWSSessionBindingSurvivesReconnect(t *testing.T) {
 	writeAgentEnvelope(t, conn2, turnEndEnvelope(t, "turn-after-reconnect", session.GetSession().GetId(), "completed"))
 	select {
 	case res := <-resultCh:
-		if res.Err != "" {
+		if taskError(res).GetMessage() != "" {
 			t.Fatalf("run result = %+v", res)
 		}
 	case <-time.After(time.Second):

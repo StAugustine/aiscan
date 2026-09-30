@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus, Settings, Trash2, Zap } from 'lucide-react'
-import { create } from '@bufbuild/protobuf'
+import { create, equals } from '@bufbuild/protobuf'
 import { AgentConfigSchema, ConnectionCheckSchema, DistributeConfigSchema, LLMProbeResultSchema } from '../cyber-proto'
 import { getConfigStatus, llmConfigured, saveConfig, testLLM, testConn, listLLMModels } from '../api'
 import type { ConfigView, ConnectionCheck, DistributeConfig, LLMProbeResult, ServerStatus } from '../api'
@@ -39,7 +39,22 @@ interface ConfigFormState {
   extensions: DistributeConfig['extensions']
 }
 
-function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
+function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormState): DistributeConfig {
+  // Opening LLM settings must not materialize empty defaults in every other
+  // extension. Those apparent graph changes used to cancel active sessions.
+  const extensions = { ...form.extensions }
+  const editSection = (key: string, values: object, previous: object | undefined, serialized = values) => {
+    if (!original || JSON.stringify(values) !== JSON.stringify(previous)) {
+      extensions[key] = { ...extensions[key], ...Object.fromEntries(Object.entries(serialized).filter(([, value]) => value !== undefined)) }
+    }
+  }
+  editSection('cyberhub', form.cyberhub, original?.cyberhub)
+  editSection('recon', form.recon, original?.recon, { ...form.recon, limit: form.recon.limit ?? 0 })
+  editSection('scan', form.scan, original?.scan)
+  editSection('search', form.search, original?.search)
+  editSection('ioa.client', form.ioa, original?.ioa, {
+    url: form.ioa.url, token: form.ioa.token, node_name: form.ioa.node_name, space: form.ioa.space,
+  })
   return create(DistributeConfigSchema, {
     llm: {
       activeProfile: form.llm.active_profile,
@@ -57,28 +72,8 @@ function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
         images: profile.images,
       })),
     },
-    search: { tavilyKeys: form.search.tavily_keys },
-    extensions: {
-      ...form.extensions,
-      cyberhub: {
-        ...form.extensions.cyberhub,
-        url: form.cyberhub.url,
-        key: form.cyberhub.key,
-        mode: form.cyberhub.mode,
-        proxy: form.cyberhub.proxy,
-        ...(form.cyberhub.mitm === undefined ? {} : { mitm: form.cyberhub.mitm }),
-      },
-      recon: { ...form.extensions.recon, ...form.recon, limit: form.recon.limit ?? 0 },
-      scan: { ...form.extensions.scan, ...form.scan },
-      'ioa.client': {
-        ...form.extensions['ioa.client'],
-        url: form.ioa.url,
-        token: form.ioa.token,
-        node_name: form.ioa.node_name,
-        space: form.ioa.space,
-      },
-    },
-    agent: form.agent,
+    extensions,
+    agent: original && equals(AgentConfigSchema, original.agent, form.agent) ? undefined : form.agent,
     traffic: form.traffic,
   })
 }
@@ -237,7 +232,7 @@ function sectionStatus(
         tag('Hunter', !!cs?.extensions.recon?.configuredSecrets.includes('hunter_api_key')),
       ]
     case 'search':
-      return [tag('Tavily', !!cs?.search?.tavilyKeysConfigured)]
+      return [tag('Tavily', !!cs?.extensions.search?.configuredSecrets.includes('tavily_keys'))]
     case 'guardrail':
       // The settings view contains stored values; an environment key stays server-side.
       return cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []
@@ -303,7 +298,7 @@ export default function ConfigPanel({ open, status, initialSection = 'llm', onCl
     setSaving(true)
     setError('')
     try {
-      await saveConfig(formToDistributeConfig(form))
+      await saveConfig(formToDistributeConfig(form, cs ? statusToForm(cs) : undefined))
       onSaved()
       onClose()
     } catch (err: unknown) {
@@ -753,7 +748,7 @@ function SearchTab({ form, setForm, cs }: TabProps) {
     <div className="grid gap-3">
       <Field label={t('tavilyKeys')}>
         <Input type="password" value={form.search.tavily_keys} onChange={(e) => setForm((f) => ({ ...f, search: { tavily_keys: e.target.value } }))}
-          placeholder={cs?.search?.tavilyKeysConfigured ? t('configuredKeep') : t('tavilyHint')} />
+          placeholder={cs?.extensions.search?.configuredSecrets.includes('tavily_keys') ? t('configuredKeep') : t('tavilyHint')} />
       </Field>
       <ConnTest section="search" form={form} />
     </div>

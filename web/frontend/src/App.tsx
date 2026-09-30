@@ -62,7 +62,7 @@ export default function App() {
     if (chat.activeSessionID && !ids.includes(chat.activeSessionID)) ids.push(chat.activeSessionID)
     return ids
   }, [chat.agents, chat.sessions, chat.activeSessionID])
-  const guardrails = useGuardrailReviews(guardrailSessions, chat.activeSessionID)
+  const guardrails = useGuardrailReviews(guardrailSessions, chat.activeSessionID, chat.aopEvents)
   const pendingReviewCounts = useMemo(() => Object.fromEntries(Object.entries(guardrails.bySession).map(([id, reviews]) => [id, reviews.length])), [guardrails.bySession])
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null)
   const [llmProfiles, setLLMProfiles] = useState<LLMProviderView[]>([])

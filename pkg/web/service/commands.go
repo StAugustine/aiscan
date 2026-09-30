@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"strings"
 
 	aop "github.com/chainreactors/cyber/aop"
@@ -189,7 +190,7 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 	s.work.Add(1)
 	go func() {
 		defer s.work.Done()
-		var res taskResult
+		var res proto.Message
 		var ok bool
 		select {
 		case res, ok = <-resultCh:
@@ -204,8 +205,8 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 			s.broadcastHubTurnEnded(sessionID, taskID, "agent_disconnected", "agent disconnected")
 			return
 		}
-		if res.Err != "" {
-			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", res.Err)
+		if failure := taskError(res); failure != nil {
+			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", failure.Message)
 		}
 	}()
 }
@@ -260,7 +261,7 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 	s.work.Add(1)
 	go func() {
 		defer s.work.Done()
-		var res taskResult
+		var res proto.Message
 		var ok bool
 		select {
 		case res, ok = <-resultCh:
@@ -274,11 +275,11 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 		if !ok {
 			return
 		}
-		if res.Err != "" {
+		if failure := taskError(res); failure != nil {
 			// The agent's error text is a raw Go string ("context canceled" and
 			// friends). Code it so the client frames it in the reader's language
 			// instead of rendering the string bare.
-			s.broadcastHubError(sessionID, "command_failed", res.Err, map[string]any{"error": res.Err})
+			s.broadcastHubError(sessionID, "command_failed", failure.Message, map[string]any{"error": failure.Message})
 		}
 	}()
 	return taskID, nil

@@ -3,8 +3,8 @@ package service
 import "github.com/uptrace/bun"
 
 // Relational columns are the queryable projection of each domain message.
-// The complete protobuf value is stored as protojson in the *_json column, so
-// protobuf-only additions need no schema change unless they must be indexed.
+// Complete events use protobuf bytes; session and receipt documents retain
+// their existing protojson format. Only indexed fields need schema columns.
 
 type sessionModel struct {
 	bun.BaseModel `bun:"table:chat_sessions,alias:session"`
@@ -23,16 +23,16 @@ type sessionModel struct {
 type aopEventModel struct {
 	bun.BaseModel `bun:"table:chat_aop_events,alias:event"`
 
-	ID        string        `bun:"id,pk"`
-	SessionID string        `bun:"session_id,notnull,unique:aop_event_cursor"`
-	EventID   string        `bun:"event_id,notnull"`
-	Cursor    int64         `bun:"cursor,notnull,unique:aop_event_cursor"`
-	TurnID    string        `bun:"turn_id,notnull"`
-	Emitter   string        `bun:"emitter,notnull"`
-	Sequence  uint64        `bun:"sequence,notnull"`
-	EventJSON string        `bun:"event_json,type:text,notnull"`
-	CreatedAt string        `bun:"created_at,notnull"`
-	Session   *sessionModel `bun:"rel:belongs-to,join:session_id=id,on_delete:cascade"`
+	ID         string        `bun:"id,pk"`
+	SessionID  string        `bun:"session_id,notnull,unique:aop_event_cursor"`
+	EventID    string        `bun:"event_id,notnull"`
+	Cursor     int64         `bun:"cursor,notnull,unique:aop_event_cursor"`
+	TurnID     string        `bun:"turn_id,notnull"`
+	Emitter    string        `bun:"emitter,notnull"`
+	Sequence   uint64        `bun:"sequence,notnull"`
+	EventProto []byte        `bun:"event_proto,type:blob,notnull"`
+	CreatedAt  string        `bun:"created_at,notnull"`
+	Session    *sessionModel `bun:"rel:belongs-to,join:session_id=id,on_delete:cascade"`
 }
 
 type requestLedgerModel struct {

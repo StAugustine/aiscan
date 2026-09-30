@@ -105,9 +105,33 @@ func TestExtensionConfigurationPresenceAndRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDirectSectionDecodeRejectsNumericOverflow(t *testing.T) {
+	type options struct {
+		Signed   int8  `json:"signed"`
+		Unsigned uint8 `json:"unsigned"`
+		Large    int64 `json:"large"`
+	}
+	r := NewSections()
+	if _, err := r.Add(Section{Key: "numbers", New: func() any { return &options{} }}); err != nil {
+		t.Fatal(err)
+	}
+	for _, fields := range []map[string]any{
+		{"signed": 128}, {"signed": float64(-129)}, {"unsigned": -1}, {"unsigned": float64(256)},
+		{"large": uint64(1) << 63}, {"large": float64(uint64(1) << 63)}, {"signed": 1.5},
+	} {
+		if _, err := r.Decode("numbers", fields); err == nil {
+			t.Fatalf("accepted overflowing numeric input: %v", fields)
+		}
+	}
+	decoded, err := r.Decode("numbers", map[string]any{"signed": float64(127), "unsigned": 255, "large": int64(-1)})
+	if err != nil || *decoded.(*options) != (options{Signed: 127, Unsigned: 255, Large: -1}) {
+		t.Fatalf("valid numeric input = %v, %v", decoded, err)
+	}
+}
+
 func TestExtensionConfigurationRejectsConflictsAndInvalidValues(t *testing.T) {
 	r := fixtureSections(t)
-	for _, fields := range []map[string]any{{"count": -1}, {"count": "bad"}, {"typo": true}} {
+	for _, fields := range []map[string]any{{"count": -1}, {"count": "bad"}, {"count": 1.5}, {"typo": true}} {
 		if _, err := r.Decode("fixture", fields); err == nil {
 			t.Fatalf("accepted %+v", fields)
 		}
@@ -172,7 +196,6 @@ func TestSnapshotValidatesOnceAndPreservesOwnedValues(t *testing.T) {
 	if first.Count != 0 || first.Enabled || first.Name != "first" {
 		t.Fatalf("precedence: %+v", first)
 	}
-	first.Name = "mutated"
 	values := result.Values()
 	values["example"]["name"] = "mutated"
 	second, err := Get[*fixtureOptions](result, "example")

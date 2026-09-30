@@ -28,7 +28,7 @@ func TestGuardrailRoutesToSessionNodeWhileTurnIsBusy(t *testing.T) {
 	pool.register(other)
 	session := createTestSession(t, service, "owner", "guardrail")
 	// A live turn waiter remains installed while a second control request flows.
-	active := make(chan taskResult, 1)
+	active := make(chan proto.Message, 1)
 	agent.tasks["running-turn"] = active
 	for _, resolve := range []bool{false, true} {
 		request := &guardrail.ProtocolMessage{Message: &guardrail.ProtocolMessage_Pending{Pending: &guardrail.PendingRequest{SessionId: session.Session.Id}}}

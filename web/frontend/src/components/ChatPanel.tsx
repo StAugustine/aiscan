@@ -35,7 +35,7 @@ import {
   ChatPanel as ViewerChatPanel,
   ChatThinking,
   MessageBubble as ChatMessageBubble,
-  reduceAOPToTimeline,
+  createAOPTimelineReducer,
   resolveTimelineRenderer,
   summarizeArgs,
   type ChatAttachment,
@@ -49,7 +49,7 @@ import {
   type AOPEvent,
 } from '@/viewer'
 import { fetchSessionCommands, uploadChatFile } from '../api'
-import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
+import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, DelegationDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
 import type { AgentListMetadata, CommandSpec, SCONode } from '../api'
 import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
@@ -62,7 +62,7 @@ import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
 const webUserAgent = 'cyber.web'
 
-function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
+function toExtensionItem(item: TimelineItem, scanResults: Map<string, SCONode[]>): ExtensionTimelineItem | null {
   switch (item.kind) {
     case 'scan_complete':
       return {
@@ -70,7 +70,7 @@ function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
         kind: 'extension',
         timestamp: item.timestamp,
         extensionType: 'scan_complete',
-        data: { scanID: item.scanID || '', nodes: item.scanNodes },
+        data: { scanID: item.scanID || '', nodes: scanResults.get(item.scanID || '') },
       }
     default:
       return null
@@ -92,14 +92,6 @@ function eventText(event: AOPEvent): string {
     .filter((part) => part.value.case === 'text')
     .map((part) => part.value.case === 'text' ? part.value.value.text : '')
     .join('\n')
-}
-
-function presentAOPEvent(event: AOPEvent): AOPEvent {
-  return event
-}
-
-function extensionBlock(event: AOPEvent): Record<string, unknown> {
-  return Object.fromEntries(event.extensions.map((extension) => [extension.typeUrl, extension.typeUrl]))
 }
 
 function eventTimestamp(event: AOPEvent): number {
@@ -277,18 +269,36 @@ function reduceConversationAOP(
   events: AOPEvent[],
   sourceEvents: AOPEvent[],
   streaming: boolean,
+  reducers: Map<string, ReturnType<typeof createAOPTimelineReducer>>,
 ): ViewerTimelineItem[] {
+  const reduce = (key: string, batch: AOPEvent[], live: boolean) => {
+    let reducer = reducers.get(key)
+    if (!reducer) {
+      reducer = createAOPTimelineReducer({ lifecycle: 'errors', responseBoundary: isGuardrailBoundary })
+      reducers.set(key, reducer)
+    }
+    return reducer(guardrailTimelineEvents(batch), live) as ViewerTimelineItem[]
+  }
   const childStarts = new Map<string, AOPEvent>()
-  const visibleSessionIDs = new Set(events.map((event) => event.sessionId))
+  const bySession = new Map<string, AOPEvent[]>()
+  const endBySession = new Map<string, AOPEvent>()
+  const promptBySession = new Map<string, AOPEvent>()
+  for (const event of events) {
+    let group = bySession.get(event.sessionId)
+    if (!group) bySession.set(event.sessionId, group = [])
+    group.push(event)
+    if (event.payload.case === 'sessionEnded') endBySession.set(event.sessionId, event)
+  }
+  for (const event of sourceEvents) {
+    if (isInternalUserEvent(event) && !promptBySession.has(event.sessionId)) promptBySession.set(event.sessionId, event)
+  }
   for (const event of events) {
     if (event.payload.case !== 'sessionStarted') continue
     const data = event.payload.value
-    const ext = extensionBlock(event)
-    const delegated = !!data.parentToolCallId
-      || (ext.delegation !== null && typeof ext.delegation === 'object')
+    const delegated = !!data.parentToolCallId || event.extensions.some(extension => anyUnpack(extension, DelegationDetailSchema))
     // The root agent also points at the platform chat session, which is not an
     // AOP stream. Only fold a run when its parent is another visible AOP session.
-    if (delegated && data.parentSessionId && visibleSessionIDs.has(data.parentSessionId)) {
+    if (delegated && data.parentSessionId && bySession.has(data.parentSessionId)) {
       childStarts.set(event.sessionId, event)
     }
   }
@@ -297,25 +307,17 @@ function reduceConversationAOP(
   const topLevelEvents = events.filter((event) => !childIDs.has(event.sessionId))
   const topLevelSplit = splitCommandResults(topLevelEvents)
   const topLevel = collapseRepeatedDividers(mergeTimelineItems(
-    reduceAOPToTimeline(
-      guardrailTimelineEvents(topLevelSplit.messages.map(presentAOPEvent)),
-      { streaming, lifecycle: 'errors', responseBoundary: isGuardrailBoundary },
-    ) as ViewerTimelineItem[],
+    reduce('', topLevelSplit.messages, streaming),
     orderedTimelineItems(statusTimelineItems(topLevelSplit.messages), topLevelSplit.commands),
   ))
 
   const childRuns: ViewerTimelineItem[] = []
   for (const [sessionID, start] of childStarts) {
-    const childEvents = events.filter((event) => event.sessionId === sessionID)
-    const end = [...childEvents].reverse().find((event) => event.payload.case === 'sessionEnded')
+    const childEvents = bySession.get(sessionID) || []
+    const end = endBySession.get(sessionID)
     const endReason = end?.payload.case === 'sessionEnded' ? end.payload.value.reason : undefined
-    const ext = extensionBlock(start)
-    const delegation = ext.delegation && typeof ext.delegation === 'object'
-      ? ext.delegation as Record<string, unknown>
-      : ext
-    const promptEvent = sourceEvents.find(
-      (event) => event.sessionId === sessionID && isInternalUserEvent(event),
-    )
+    const delegation = start.extensions.map(extension => anyUnpack(extension, DelegationDetailSchema)).find(Boolean)
+    const promptEvent = promptBySession.get(sessionID)
     const stop = endReason
     const status = !end
       ? 'running'
@@ -327,11 +329,8 @@ function reduceConversationAOP(
     const timestamp = eventTimestamp(start)
     const childSplit = splitCommandResults(childEvents)
     const items = collapseRepeatedDividers(mergeTimelineItems(
-      reduceAOPToTimeline(guardrailTimelineEvents(childSplit.messages.map(presentAOPEvent)), {
-        streaming: streaming && !end,
-        lifecycle: 'errors',
-        responseBoundary: isGuardrailBoundary,
-      }).filter((item) => item.kind !== 'divider' || item.variant === 'warning') as ViewerTimelineItem[],
+      reduce(sessionID, childSplit.messages, streaming && !end)
+        .filter((item) => item.kind !== 'divider' || item.variant === 'warning'),
       orderedTimelineItems(statusTimelineItems(childSplit.messages), childSplit.commands),
     ))
 
@@ -340,9 +339,9 @@ function reduceConversationAOP(
       kind: 'subagent_run',
       timestamp: Number.isFinite(timestamp) ? timestamp : 0,
       actorName: start.emitter,
-      name: typeof delegation.agent_name === 'string' ? delegation.agent_name : start.emitter || 'Sub-agent',
-      prompt: typeof delegation.task === 'string' ? delegation.task : (promptEvent ? eventText(promptEvent) : ''),
-      mode: typeof delegation.run_mode === 'string' ? delegation.run_mode : undefined,
+      name: delegation?.agentName || start.emitter || 'Sub-agent',
+      prompt: delegation?.task || (promptEvent ? eventText(promptEvent) : ''),
+      mode: delegation?.runMode || undefined,
       sessionID,
       status,
       items,
@@ -393,7 +392,7 @@ function toViewerTimelineItem(
         content: item.content || '',
       }
     case 'scan_complete':
-      return toExtensionItem(item)
+      return toExtensionItem(item, scanResults)
     default:
       return null
   }
@@ -457,6 +456,7 @@ export default function ChatPanel({
   onClearError,
 }: Props) {
   const { t, i18n } = useTranslation('chat')
+  const aopReducers = useMemo(() => new Map<string, ReturnType<typeof createAOPTimelineReducer>>(), [activeSessionID])
   const agentEvents = useMemo(
     () => aopEvents.filter((event) => !isInternalUserEvent(event)),
     [aopEvents],
@@ -473,7 +473,7 @@ export default function ChatPanel({
       .filter((item) => agentEvents.length === 0
         || item.kind === 'extension'
         || (item.kind === 'message' && item.role === 'user'))
-    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy)
+    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy, aopReducers)
     const systemMetadata = systemMetadataByMessageID(agentEvents)
     for (const item of aopItems) {
       if (item.kind !== 'message' || item.role !== 'system') continue
@@ -481,21 +481,12 @@ export default function ChatPanel({
       if (metadata) item.metadata = metadata
     }
 
-    // The optimistic user bubble is stamped with the browser clock (Date.now at
-    // send time); every agent event is stamped by the agent host. This merged
-    // transcript is ordered purely by timestamp, so a browser running even a few
-    // seconds ahead of the agent host would sort the user's own message *after*
-    // the reply it triggered. The hub re-emits each user message into the AOP
-    // stream stamped with the server clock — the same clock domain as the agent's
-    // turn — so pair each optimistic bubble with that echo, adopt its timestamp,
-    // and drop the echo as a duplicate. User and assistant then share one clock
-    // and stay in causal order regardless of browser/host skew.
+    // Match the pending bubble to its canonical message ID and server clock.
     const matchedEchoes = new Set<ViewerTimelineItem>()
+    const userMessages = new Map(aopItems.filter(isUserMessageItem).map(item => [item.id, item]))
     for (const platform of platformItems) {
       if (!isUserMessageItem(platform)) continue
-      const echo = aopItems.find(
-        (item) => isUserMessageItem(item) && item.content === platform.content && !matchedEchoes.has(item),
-      )
+      const echo = userMessages.get(platform.id)
       if (echo) {
         platform.timestamp = echo.timestamp
         matchedEchoes.add(echo)
@@ -506,7 +497,7 @@ export default function ChatPanel({
     return groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
     ), guardrailReviews, aopEvents, !guardrailUnavailable))
-  }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline, guardrailReviews, guardrailUnavailable])
+  }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, scanResults, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
   // activity, so the conversation and composer never jump horizontally.
@@ -768,8 +759,9 @@ export default function ChatPanel({
               </div>
             )}
             <div className={workspaceClass}>
-              <div className={inputFormClass} ref={composerRootRef}>
+              <div className={inputFormClass} ref={composerRootRef} data-session-id={activeSessionID || ''}>
                 <ViewerChatPanel.Input
+                  key={activeSessionID || 'new-session'}
                   className="!border-t-0 !bg-transparent !backdrop-blur-none"
                   leading={
                     <Tooltip>

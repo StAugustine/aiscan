@@ -2,10 +2,9 @@ package config
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"gopkg.in/yaml.v3"
-	"maps"
+	"math"
 	"os"
 	"reflect"
 	"sort"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/chainreactors/cyber/core/resource"
 	types "github.com/chainreactors/cyber/core/types"
+	"github.com/go-viper/mapstructure/v2"
 )
 
 // Values is configuration data, never a registry of running services.
@@ -127,18 +127,13 @@ func (r *Sections) Has(key string) bool {
 	return ok
 }
 func CloneValues(values Values) Values {
-	out := Values{}
+	out := make(Values, len(values))
 	for key, fields := range values {
-		raw, err := json.Marshal(fields)
-		if err != nil {
-			// Keep invalid values so Decode can return their actual error. Dropping
-			// them here would silently replace bad configuration with defaults.
-			out[key] = maps.Clone(fields)
-			continue
+		if fields == nil {
+			out[key] = nil
+		} else {
+			out[key] = CloneDocument(fields)
 		}
-		var copy map[string]any
-		_ = json.Unmarshal(raw, &copy)
-		out[key] = copy
 	}
 	return out
 }
@@ -158,28 +153,30 @@ func mergeFields(dst, src map[string]any) {
 }
 func (r *Sections) Normalize(document map[string]any) (Values, error) {
 	out := Values{}
-	if raw, ok := document["extensions"]; ok {
-		b, err := json.Marshal(raw)
-		if err != nil {
-			return nil, err
+	if raw := document["extensions"]; raw != nil {
+		switch values := raw.(type) {
+		case Values:
+			out = CloneValues(values)
+		case map[string]any:
+			for key, raw := range values {
+				fields, ok := raw.(map[string]any)
+				if raw != nil && !ok {
+					return nil, fmt.Errorf("extensions.%s must be an object", key)
+				}
+				out[key] = CloneDocument(fields)
+			}
+		default:
+			return nil, fmt.Errorf("extensions must be an object")
 		}
-		if err = json.Unmarshal(b, &out); err != nil {
-			return nil, fmt.Errorf("extensions: %w", err)
-		}
-	}
-	if out == nil {
-		out = Values{}
 	}
 	for alias, key := range r.aliases {
 		if raw, ok := document[alias]; ok {
-			b, err := json.Marshal(raw)
-			if err != nil {
-				return nil, err
+			fields, ok := raw.(map[string]any)
+			if raw != nil && !ok {
+				return nil, fmt.Errorf("configuration %s must be an object", alias)
 			}
-			var fields map[string]any
-			if err = json.Unmarshal(b, &fields); err != nil {
-				return nil, err
-			}
+			fields = CloneDocument(fields)
+			var err error
 			if transform := r.declarations[key].AliasFields; transform != nil {
 				fields, err = transform(fields)
 				if err != nil {
@@ -238,13 +235,50 @@ func (r *Sections) Decode(key string, fields map[string]any) (any, error) {
 		return nil, fmt.Errorf("unregistered extension configuration %q", key)
 	}
 	value := s.New()
-	b, err := json.Marshal(fields)
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		TagName: "json", Result: value, ErrorUnused: true,
+		DecodeHook: func(from, to reflect.Type, value any) (any, error) {
+			kind := to.Kind()
+			if kind < reflect.Int || kind > reflect.Uint64 {
+				return value, nil
+			}
+			number := reflect.ValueOf(value)
+			target := reflect.New(to).Elem()
+			unsigned := kind >= reflect.Uint
+			overflow := false
+			switch from.Kind() {
+			case reflect.Float32, reflect.Float64:
+				f := number.Float()
+				lower, upper := -math.Ldexp(1, to.Bits()-1), math.Ldexp(1, to.Bits()-1)
+				if unsigned {
+					lower, upper = 0, math.Ldexp(1, to.Bits())
+				}
+				overflow = math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f || f < lower || f >= upper
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				i := number.Int()
+				if unsigned {
+					overflow = i < 0 || target.OverflowUint(uint64(i))
+				} else {
+					overflow = target.OverflowInt(i)
+				}
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				u := number.Uint()
+				if unsigned {
+					overflow = target.OverflowUint(u)
+				} else {
+					overflow = u > (uint64(1)<<(to.Bits()-1))-1
+				}
+			}
+			if overflow {
+				return nil, fmt.Errorf("expected %s integer in range, got %v", to, value)
+			}
+			return value, nil
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(b)))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(value); err != nil {
+	if err := decoder.Decode(fields); err != nil {
 		return nil, fmt.Errorf("extension %s: %w", key, err)
 	}
 	if s.Normalize != nil {
@@ -253,7 +287,7 @@ func (r *Sections) Decode(key string, fields map[string]any) (any, error) {
 		}
 	}
 	if s.Validate != nil {
-		if err = s.Validate(value); err != nil {
+		if err := s.Validate(value); err != nil {
 			return nil, fmt.Errorf("extension %s: %w", key, err)
 		}
 	}
@@ -280,9 +314,14 @@ func (r *Sections) Aliases() []string {
 func (r *Sections) Defaults() Values {
 	out := Values{}
 	for _, key := range r.Keys() {
-		b, _ := json.Marshal(r.declarations[key].New())
-		var fields map[string]any
-		_ = json.Unmarshal(b, &fields)
+		fields := map[string]any{}
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{TagName: "json", Result: &fields})
+		if err != nil {
+			panic(err)
+		}
+		if err := decoder.Decode(r.declarations[key].New()); err != nil {
+			panic(fmt.Errorf("configuration %s defaults: %w", key, err))
+		}
 		out[key] = fields
 	}
 	return out

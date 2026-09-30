@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	toolpb "github.com/chainreactors/cyber/aop/tool"
-	"github.com/chainreactors/cyber/core/eventbus"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/tools/scan/engine"
@@ -100,7 +98,7 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	if !slices.Contains(args, "--no-color") {
 		args = append(slices.Clone(args), "--no-color")
 	}
-	out, _, err := c.execute(ctx, args, execution.Stdout)
+	out, err := c.execute(ctx, args, execution.Stdout)
 	if out != "" {
 		fmt.Fprint(execution.Stdout, out)
 	}
@@ -110,17 +108,17 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	return nil, err
 }
 
-func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) (string, *scanResult, error) {
+func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) (string, error) {
 	var flags flags
 	parser := toolargs.NewGoFlagsParser("scan", &flags)
 	if _, err := parser.ParseArgs(args); err != nil {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
-			return c.Usage() + "\n", nil, nil
+			return c.Usage() + "\n", nil
 		}
-		return "", nil, fmt.Errorf("scan: %w", err)
+		return "", fmt.Errorf("scan: %w", err)
 	}
 	if c.executionOnly && (flags.Sniper || (flags.Verify != "" && flags.Verify != "off")) {
-		return "", nil, fmt.Errorf("scan: AI modes are unavailable in execution-only mode")
+		return "", fmt.Errorf("scan: AI modes are unavailable in execution-only mode")
 	}
 	if flags.Debug {
 		flags.Trace = true
@@ -128,19 +126,19 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 		defer restoreDebug()
 		c.Logger.Debugf("scanner debug enabled")
 	}
-	profile, err := profileForFlags(flags)
+	profile, err := profileForMode(flags.Mode)
 	if err != nil {
-		return "", nil, fmt.Errorf("scan: %w", err)
+		return "", fmt.Errorf("scan: %w", err)
 	}
 	if parser.FindOptionByLongName("verify").IsSet() && flags.Verify == "" {
-		return "", nil, fmt.Errorf("scan: --verify requires on or off")
+		return "", fmt.Errorf("scan: --verify requires on or off")
 	}
 	verify := flags.Verify
 	if verify == "" {
 		verify = c.verifyDefault
 	}
 	if err := ValidateVerify(verify); err != nil {
-		return "", nil, err
+		return "", err
 	}
 	available := !c.executionOnly && c.worker != nil && c.hasModel != nil && c.hasModel(ctx)
 	if verify == "" {
@@ -151,16 +149,14 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 		}
 	}
 	if (verify == "on" || flags.Sniper) && !available {
-		return "", nil, fmt.Errorf("scan: AI verification and sniper require a configured model provider")
+		return "", fmt.Errorf("scan: AI verification and sniper require a configured model provider")
 	}
-	options := resolveScanOptions(flags)
-
 	rawInputs, err := readInputs(flags.Inputs, flags.ListFile)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if len(rawInputs) == 0 {
-		return "", nil, fmt.Errorf("scan: no input targets")
+		return "", fmt.Errorf("scan: no input targets")
 	}
 
 	if flags.JSON {
@@ -168,21 +164,36 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 	}
 
 	trace := flags.Trace || flags.Debug
-	pipelineBus := eventbus.New[pipeline.Observation[event]]()
 	coll := newCollector(rawInputs, stream, stream != nil && !flags.NoColor, trace)
-	subscribePipeline(pipelineBus, coll, trace, stream)
+	coll.json = flags.JSON
+	acceptedCtx := context.WithoutCancel(ctx)
+	observe := func(observation pipeline.Observation[event]) {
+		if observation.Action == pipeline.ActionAccept && observation.Event.Artifact != nil {
+			if err := c.emitAcceptedArtifact(acceptedCtx, observation.Event.Artifact); err != nil {
+				coll.mu.Lock()
+				coll.errors = append(coll.errors, err.Error())
+				coll.mu.Unlock()
+			}
+		}
+		coll.Observe(observation)
+		if trace && stream != nil {
+			if traceLine := formatTraceEvent(observation); traceLine != "" {
+				fmt.Fprintln(stream, traceLine)
+			}
+		}
+	}
 
 	seeds := buildSeedEvents(rawInputs, func(raw string) {
-		pipelineBus.Emit(pipeline.Observation[event]{
+		observe(pipeline.Observation[event]{
 			Action: pipeline.ActionAccept,
 			Event:  errorEventOf("", fmt.Sprintf("skip invalid input: %s", raw)),
 		})
 	})
 	if len(seeds) == 0 {
-		return "", nil, fmt.Errorf("scan: no valid inputs")
+		return "", fmt.Errorf("scan: no valid inputs")
 	}
 
-	capabilities := c.buildCapabilities(flags, options, profile)
+	capabilities := c.buildCapabilities(flags, profile)
 	selected := make([]string, 0, len(capabilities))
 	for _, capability := range capabilities {
 		selected = append(selected, capability.Name)
@@ -207,14 +218,11 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 		}
 	}
 	if len(capabilities) == 0 {
-		return "", nil, fmt.Errorf("scan: no scanning capabilities available")
+		return "", fmt.Errorf("scan: no scanning capabilities available")
 	}
-	p, err := pipeline.New(ctx, pipeline.Config[event]{
-		Capabilities: capabilities,
-		Bus:          pipelineBus,
-	})
+	p, err := pipeline.New(ctx, capabilities, observe)
 	if err != nil {
-		return "", nil, fmt.Errorf("scan: %w", err)
+		return "", fmt.Errorf("scan: %w", err)
 	}
 	p.Run(seeds)
 
@@ -232,66 +240,35 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 		coll.canceled = true
 	}
 	coll.Finish()
-	result := coll.StructuredResult()
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if emitErr := c.emitStructuredData(finishCtx, result); emitErr != nil {
+	if emitErr := c.emitLoots(finishCtx, coll); emitErr != nil {
 		coll.errors = append(coll.errors, emitErr.Error())
-		result = coll.StructuredResult()
 	}
 	if runErr == nil && len(coll.errors) > 0 {
 		runErr = errors.New(strings.Join(coll.errors, "; "))
 	}
 	var out string
 	if flags.JSON {
-		out, err = coll.JSONLines()
+		out = formatJSONLines(coll)
 	} else {
-		out = coll.TerminalString(stream != nil && !flags.NoColor)
+		out = formatSummary(coll, stream != nil && !flags.NoColor)
 	}
-	return out, result, errors.Join(runErr, err)
+	return out, runErr
 }
 
-func subscribePipeline(bus *eventbus.Bus[pipeline.Observation[event]], coll *collector, debug bool, writer io.Writer) {
-	if coll != nil {
-		bus.Subscribe(coll.Observe)
-	}
-	if debug && writer != nil {
-		bus.Subscribe(func(observation pipeline.Observation[event]) {
-			if trace := formatTraceEvent(observation); trace != "" {
-				fmt.Fprintln(writer, trace)
-			}
-		})
-	}
+func (c *Command) emitAcceptedArtifact(ctx context.Context, artifact *artifactResult) error {
+	return c.EmitArtifactJSONCtx(ctx, artifact.ResultID, artifact.Tool, artifact.Kind, artifact.Target, artifact.Data)
 }
 
-func (c *Command) emitStructuredData(ctx context.Context, result *scanResult) (err error) {
-	if result == nil || c.Events == nil {
+func (c *Command) emitLoots(ctx context.Context, coll *collector) (err error) {
+	if coll == nil || c.Events == nil {
 		return nil
 	}
-	for _, service := range result.GOGO {
-		if service != nil {
-			resultID := toolargs.ArtifactResultID("gogo", toolpb.ArtifactKindService, service.GetTarget(), service)
-			err = errors.Join(err, c.EmitArtifactResultCtx(ctx, resultID, "gogo", toolpb.ArtifactKindService, service.GetTarget(), service))
-		}
-	}
-	for _, probe := range result.Spray {
-		if probe != nil {
-			resultID := toolargs.ArtifactResultID("spray", toolpb.ArtifactKindWeb, probe.UrlString, probe)
-			err = errors.Join(err, c.EmitArtifactResultCtx(ctx, resultID, "spray", toolpb.ArtifactKindWeb, probe.UrlString, probe))
-		}
-	}
-	for _, artifact := range result.Artifacts {
-		err = errors.Join(err, c.EmitArtifactResultCtx(
-			ctx,
-			artifact.ResultID,
-			artifact.Tool,
-			artifact.Kind,
-			artifact.Target,
-			artifact.Data,
-		))
-	}
-	for i := range result.Loots {
-		loot := result.Loots[i]
+	// The pipeline and verification workers have joined. Only their final loot
+	// markers remain to publish; native artifacts were published on acceptance.
+	loots := coll.loots
+	for _, loot := range loots {
 		resultID, _ := loot.Data["result_id"].(string)
 		tool, _ := loot.Data["artifact_tool"].(string)
 		if resultID == "" || tool == "" {

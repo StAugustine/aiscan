@@ -169,6 +169,22 @@ func TestToolResultEventNormalizesInvalidUTF8(t *testing.T) {
 
 type invalidUTF8Tool struct{}
 
+func TestModelToolResultBoundsTextWithoutLosingMedia(t *testing.T) {
+	full := strings.Repeat("large output\n", 100)
+	result := &aop.ToolResult{
+		CallId: "call", Name: "scan", IsError: true, Terminate: true, DurationMs: 7,
+		Output: []*aop.Content{aop.Text(full), aop.Image("image/png", []byte("image"))},
+	}
+	message := modelToolResultMessage(result, 64)
+	projected := provider.MessageToolResult(message)
+	if coretool.ResultText(result) != full || len(coretool.ResultText(projected)) >= len(full) {
+		t.Fatal("model projection must bound text without changing the event result")
+	}
+	if !projected.IsError || !projected.Terminate || projected.DurationMs != 7 || projected.Name != "scan" || !coretool.ResultHasImages(projected) {
+		t.Fatalf("model projection lost result fields: %+v", projected)
+	}
+}
+
 func (invalidUTF8Tool) Name() string        { return "echo" }
 func (invalidUTF8Tool) Description() string { return "returns raw text" }
 func (invalidUTF8Tool) Definition() *aop.ToolDefinition {

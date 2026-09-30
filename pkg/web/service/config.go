@@ -24,6 +24,7 @@ type ConfigStore interface {
 
 type PreparedConfig struct {
 	Config      *types.DistributeConfig
+	Runtime     *cfg.Option
 	RuntimePath string
 	TargetPath  string
 }
@@ -102,13 +103,14 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 		target, supported := s.profile.(interface{ SetGuardrailMode(string) error })
 		s.appMu.Unlock()
 		if supported {
-			if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
-				return nil, err
-			}
-			committed = true
 			if err := target.SetGuardrailMode(mode); err != nil {
 				return nil, fmt.Errorf("apply guardrail mode: %w", err)
 			}
+			if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+				previousMode, _ := cfg.GuardrailModeChange(prepared.Config, current)
+				return nil, errors.Join(err, target.SetGuardrailMode(previousMode))
+			}
+			committed = true
 			if s.agents != nil {
 				s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))
 			}
@@ -148,15 +150,20 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 			return nil, fmt.Errorf("config candidate is not ready: profile is not active")
 		}
 	}
-	if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
-		return nil, err
+	commit := func() error {
+		if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+			return err
+		}
+		committed = true
+		return nil
 	}
-	committed = true
 	if next != nil {
-		if err := s.swapProfile(next); err != nil {
-			return nil, fmt.Errorf("config committed but activation failed: %w", err)
+		if err := s.swapProfile(next, commit); err != nil {
+			return nil, err
 		}
 		s.pending = nil
+	} else if err := commit(); err != nil {
+		return nil, err
 	}
 	if s.agents != nil {
 		s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))

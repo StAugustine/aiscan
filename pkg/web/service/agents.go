@@ -11,10 +11,9 @@ import (
 	"time"
 
 	"github.com/chainreactors/cyber/core/extension"
-	"github.com/chainreactors/cyber/pkg/exts/guardrail"
+	coretool "github.com/chainreactors/cyber/core/tool"
 
 	aop "github.com/chainreactors/cyber/aop"
-	filepb "github.com/chainreactors/cyber/aop/file"
 	ptypb "github.com/chainreactors/cyber/aop/pty"
 	toolpb "github.com/chainreactors/cyber/aop/tool"
 	types "github.com/chainreactors/cyber/core/types"
@@ -36,38 +35,24 @@ func cloneCommandSpecs(values []*types.CommandSpec) []*types.CommandSpec {
 	return out
 }
 
-type taskResult struct {
-	Guardrail *guardrail.ProtocolMessage
-	Output    string
-	File      *filepb.Result
-	Err       string
-	Code      string
-	Turn      int
-}
-
 // nodeState is the per-node task/session bookkeeping shared by both pool
 // member kinds. tasks map in-flight operation IDs to their waiter channels;
 // toolCalls marks tasks dispatched via DispatchToolCall: only they converge
 // on a tool.result. Chat tasks see tool.result events too (LLM tool use)
-// and must ignore them as terminals. childSessions tracks derived sub-agent
-// session IDs per task: only a ROOT session.end converges the task.
+// and must ignore them as terminals. Turn terminals are matched to their root session.
 type nodeState struct {
 	mu            sync.Mutex
-	tasks         map[string]chan taskResult
-	turns         map[string]int
+	tasks         map[string]chan protobuf.Message
 	openSessions  map[string]struct{}
 	toolCalls     map[string]struct{}
-	childSessions map[string]map[string]struct{}
 	archiveErrors map[string]string
 }
 
 func newNodeState() *nodeState {
 	return &nodeState{
-		tasks:         make(map[string]chan taskResult),
-		turns:         make(map[string]int),
+		tasks:         make(map[string]chan protobuf.Message),
 		openSessions:  make(map[string]struct{}),
 		toolCalls:     make(map[string]struct{}),
-		childSessions: make(map[string]map[string]struct{}),
 		archiveErrors: make(map[string]string),
 	}
 }
@@ -87,27 +72,22 @@ func (s *nodeState) sessionOpen(sessionID string) bool {
 
 // finishTask delivers result to the waiter of taskID and clears its
 // bookkeeping. Idempotent — a late frame after convergence is a no-op.
-func (s *nodeState) finishTask(taskID string, result taskResult) {
+func (s *nodeState) finishTask(taskID string, result protobuf.Message) {
 	if taskID == "" {
 		return
 	}
 	s.mu.Lock()
 	ch, ok := s.tasks[taskID]
-	result.Turn = s.turns[taskID]
 	if ok {
 		if message := s.archiveErrors[taskID]; message != "" {
-			if result.Err == "" {
-				result.Err = message
-			} else {
-				result.Err += "; " + message
+			if previous := taskError(result); previous != nil && previous.Message != "" {
+				message = previous.Message + "; " + message
 			}
-			result.Code = "RESULT_ARCHIVE_FAILED"
+			result = &aop.ProtocolError{Code: "RESULT_ARCHIVE_FAILED", Message: message}
 		}
 		delete(s.archiveErrors, taskID)
 		delete(s.tasks, taskID)
-		delete(s.turns, taskID)
 		delete(s.toolCalls, taskID)
-		delete(s.childSessions, taskID)
 	}
 	s.mu.Unlock()
 	if ok && ch != nil {
@@ -117,15 +97,13 @@ func (s *nodeState) finishTask(taskID string, result taskResult) {
 }
 
 // dropTask clears taskID's bookkeeping and closes its waiter with no result.
-func (s *nodeState) dropTask(taskID string) (chan taskResult, bool) {
+func (s *nodeState) dropTask(taskID string) (chan protobuf.Message, bool) {
 	s.mu.Lock()
 	ch, pending := s.tasks[taskID]
 	if pending {
 		delete(s.archiveErrors, taskID)
 		delete(s.tasks, taskID)
-		delete(s.turns, taskID)
 		delete(s.toolCalls, taskID)
-		delete(s.childSessions, taskID)
 	}
 	s.mu.Unlock()
 	return ch, pending
@@ -141,13 +119,7 @@ func (s *nodeState) convergeOnToolResult(taskID string, ev *aop.Event) {
 		return
 	}
 	s.mu.Unlock()
-	d := ev.GetToolResult()
-	res := taskResult{Output: aopToolResultText(d.Output)}
-	if d.IsError {
-		res.Err = res.Output
-		res.Output = ""
-	}
-	s.finishTask(taskID, res)
+	s.finishTask(taskID, protobuf.CloneOf(ev.GetToolResult()))
 }
 
 // convergeOnTurnEnd releases the waiter after the Runtime terminal was forwarded.
@@ -155,7 +127,7 @@ func (s *nodeState) convergeOnToolResult(taskID string, ev *aop.Event) {
 // second Web terminal for the same turn.
 func (s *nodeState) convergeOnTurnEnd(taskID string, _ *aop.Event) {
 	if taskID != "" {
-		s.finishTask(taskID, taskResult{})
+		s.finishTask(taskID, nil)
 	}
 }
 
@@ -166,7 +138,6 @@ func (s *nodeState) closeAllTasks() {
 	}
 	s.tasks = nil
 	s.toolCalls = nil
-	s.childSessions = nil
 	s.archiveErrors = nil
 	s.mu.Unlock()
 }
@@ -346,7 +317,7 @@ func (p *AgentPool) Pick() *remoteAgent {
 
 // DispatchToolCall sends a canonical AOP tool.call to a tool-capable node.
 // The task completes only on the matching AOP tool.result.
-func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
@@ -385,7 +356,7 @@ func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) 
 	return ch, nil
 }
 
-func (p *AgentPool) DispatchOpenSession(nodeID, requestID string, request *aop.OpenSessionRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchOpenSession(nodeID, requestID string, request *aop.OpenSessionRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return nil, fmt.Errorf("open session envelope id and session_id are required")
 	}
@@ -400,14 +371,14 @@ func (p *AgentPool) SessionOpen(nodeID, sessionID string) bool {
 	return agent.state().sessionOpen(sessionID)
 }
 
-func (p *AgentPool) DispatchCloseSession(nodeID, requestID string, request *aop.CloseSessionRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCloseSession(nodeID, requestID string, request *aop.CloseSessionRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return nil, fmt.Errorf("close session envelope id and session_id are required")
 	}
 	return p.dispatchMessage(nodeID, requestID, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_CloseSessionRequest{CloseSessionRequest: request}})
 }
 
-func (p *AgentPool) DispatchCancelTurn(nodeID, requestID string, request *aop.CancelTurnRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCancelTurn(nodeID, requestID string, request *aop.CancelTurnRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" || strings.TrimSpace(request.TurnId) == "" {
 		return nil, fmt.Errorf("cancel turn envelope id, session_id, and turn_id are required")
 	}
@@ -440,7 +411,7 @@ func (p *AgentPool) ensureSessionOpen(a *remoteAgent, sessionID string) error {
 	return nil
 }
 
-func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
@@ -456,7 +427,7 @@ func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-c
 	return p.dispatchMessage(nodeID, request.TurnId, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_RunTurnRequest{RunTurnRequest: request}})
 }
 
-func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.CommandRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.CommandRequest) (<-chan protobuf.Message, error) {
 	if command == nil || taskID == "" {
 		return nil, fmt.Errorf("command and operation id are required")
 	}
@@ -472,16 +443,15 @@ func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.Comman
 	return p.dispatchMessage(nodeID, taskID, &types.CommandProtocolMessage{Message: &types.CommandProtocolMessage_Request{Request: protobuf.CloneOf(command)}})
 }
 
-func (p *AgentPool) dispatchMessage(nodeID, taskID string, message protobuf.Message) (<-chan taskResult, error) {
+func (p *AgentPool) dispatchMessage(nodeID, taskID string, message protobuf.Message) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
 	}
-	ch := make(chan taskResult, 1)
+	ch := make(chan protobuf.Message, 1)
 	st := a.state()
 	st.mu.Lock()
 	st.tasks[taskID] = ch
-	st.turns[taskID] = 0
 	st.mu.Unlock()
 	envelope, err := aop.Wrap(taskID, "", message)
 	if err != nil {
@@ -653,14 +623,23 @@ func buildUpgrader(origins []string) websocket.Upgrader {
 	}
 }
 
-func aopToolResultText(content []*aop.Content) string {
-	var parts []string
-	for _, item := range content {
-		if text := item.GetText().GetText(); text != "" {
-			parts = append(parts, text)
+// taskError reads the canonical terminal reply only when an API needs an error
+// projection. Pending tasks retain the complete protobuf response.
+func taskError(reply protobuf.Message) *aop.ProtocolError {
+	if rejected, ok := reply.(interface{ GetRejected() *aop.Rejection }); ok {
+		if failure := rejected.GetRejected(); failure != nil {
+			return &aop.ProtocolError{Code: failure.Code, Message: failure.Message}
 		}
 	}
-	return strings.Join(parts, "\n")
+	switch reply := reply.(type) {
+	case *aop.ProtocolError:
+		return reply
+	case *aop.ToolResult:
+		if reply.IsError {
+			return &aop.ProtocolError{Code: "TOOL_FAILED", Message: coretool.ResultText(reply)}
+		}
+	}
+	return nil
 }
 
 // nodeStream includes connections still waiting for their first hello.

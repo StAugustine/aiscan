@@ -45,7 +45,7 @@ func TestProfileSwitchReleasesApplicationWaitingForFirstEnvelope(t *testing.T) {
 	go func() {
 		svc.configGate <- struct{}{}
 		defer func() { <-svc.configGate }()
-		switched <- svc.swapProfile(candidate)
+		switched <- svc.swapProfile(candidate, nil)
 	}()
 	select {
 	case err := <-switched:

@@ -58,31 +58,13 @@ func serveWeb(ctx context.Context, option, explicitOption *cfg.Option, opts webC
 		},
 		ConfigAPI:   configAPI(),
 		AccessKey:   accessKey,
-		ConfigStore: &webConfigStore{explicit: configFile, runtime: option},
+		ConfigStore: &webConfigStore{explicit: configFile, runtime: option, overrides: explicitOption},
 		BuildProfile: func(ctx context.Context, prepared *webservice.PreparedConfig) (profile.Profile, error) {
-			candidateOption := cfg.Option{}
-			if explicitOption != nil {
-				candidateOption = *explicitOption
+			if prepared.Runtime == nil {
+				return nil, fmt.Errorf("config candidate has no resolved runtime options")
 			}
-			candidateOption.ConfigFile = configFile
-			environment := cfg.Context{}
-			if option.Context != nil {
-				environment = *option.Context
-			}
-			data, err := os.ReadFile(prepared.RuntimePath)
-			if err != nil {
-				return nil, err
-			}
-			environment.Replacements = map[string][]byte{prepared.TargetPath: data}
-			candidateOption.Context = &environment
-			candidateOption.Sections = defaultSections()
-			if _, err := cfg.ResolveRuntimeConfig(&candidateOption); err != nil {
-				return nil, err
-			}
-			// The staged YAML is resolved into the flags config, which stays the
-			// truth for the candidate runtime; the proto is only the settings
-			// payload that produced it.
-			candidateProfile, err := initWebProfile(ctx, &candidateOption, logger)
+			candidateOption := prepared.Runtime
+			candidateProfile, err := initWebProfile(ctx, candidateOption, logger)
 			if err != nil {
 				return candidateProfile, err
 			}
@@ -252,8 +234,9 @@ func initWebProfile(ctx context.Context, baseOption *cfg.Option, logger telemetr
 type webConfigStore struct {
 	explicit string
 	// runtime supplies the original discovery context; its overrides are never saved.
-	runtime *cfg.Option
-	mu      sync.Mutex
+	runtime   *cfg.Option
+	overrides *cfg.Option
+	mu        sync.Mutex
 }
 
 func (s *webConfigStore) configContext() *cfg.Context {
@@ -277,11 +260,7 @@ func (s *webConfigStore) stored() (*cfg.Snapshot, bool, *types.DistributeConfig,
 	if err != nil {
 		return nil, false, nil, err
 	}
-	data, err := yaml.Marshal(snapshot.RuntimeDocument(defaultSections()))
-	if err != nil {
-		return nil, false, nil, err
-	}
-	value, err := parseConfig(data)
+	value, err := parseConfigDocument(snapshot.RuntimeDocument(defaultSections()))
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -354,7 +333,6 @@ func (s *webConfigStore) PrepareDistributeConfig(ctx context.Context, incoming *
 		incoming.Node = current.GetNode()
 	}
 	preserveLLMProfileSecrets(incoming.Llm, current.GetLlm())
-	incoming.Search = preserveConfigSection(incoming.Search, current.GetSearch(), func(c *types.SearchConfig) { preserveSecret(&c.TavilyKeys, current.GetSearch().GetTavilyKeys()) })
 	sections := defaultSections()
 	nextValues, currentValues := cfg.ValuesFromProto(incoming.Extensions), cfg.ValuesFromProto(current.Extensions)
 	preserveURLCredentials(nextValues, currentValues)
@@ -366,39 +344,17 @@ func (s *webConfigStore) PrepareDistributeConfig(ctx context.Context, incoming *
 		return nil, err
 	}
 
-	beforeBytes, err := marshalConfig(current, nil)
-	if err != nil {
-		return nil, err
-	}
-	afterBytes, err := marshalConfig(incoming, nil)
-	if err != nil {
-		return nil, err
-	}
-	var before, after map[string]any
-	if err = yaml.Unmarshal(beforeBytes, &before); err != nil {
-		return nil, err
-	}
-	if err = yaml.Unmarshal(afterBytes, &after); err != nil {
-		return nil, err
-	}
+	before, after := configDocument(current, nil), configDocument(incoming, nil)
 	target := snapshot.TargetDocument()
 	// Convert a target's own shorthand when editing LLM settings. Never materialize inherited credentials.
 	if !proto.Equal(current.GetLlm(), incoming.GetLlm()) {
 		if raw, ok := target["llm"].(map[string]any); ok {
 			if _, flat := raw["model"]; flat {
-				original, _ := yaml.Marshal(target)
-				own, parseErr := parseConfig(original)
+				own, parseErr := parseConfigDocument(target)
 				if parseErr != nil {
 					return nil, parseErr
 				}
-				ownBytes, e := marshalConfig(own, nil)
-				if e != nil {
-					return nil, e
-				}
-				var ownDoc map[string]any
-				if e = yaml.Unmarshal(ownBytes, &ownDoc); e != nil {
-					return nil, e
-				}
+				ownDoc := configDocument(own, nil)
 				target["llm"] = ownDoc["llm"]
 			}
 		}
@@ -413,22 +369,11 @@ func (s *webConfigStore) PrepareDistributeConfig(ctx context.Context, incoming *
 	if err != nil {
 		return nil, err
 	}
-	next, err := yaml.Marshal(patched)
+	candidate, err := snapshot.WithTargetDocument(patched, sections)
 	if err != nil {
 		return nil, err
 	}
-	// Validate the merged candidate, not an isolated temporary config file.
-	environment := snapshot.Context
-	environment.Replacements = map[string][]byte{p: next}
-	candidate, err := cfg.LoadSnapshot(&environment, s.explicit, defaultSections())
-	if err != nil {
-		return nil, err
-	}
-	candidateBytes, err := yaml.Marshal(candidate.RuntimeDocument(defaultSections()))
-	if err != nil {
-		return nil, err
-	}
-	merged, err := parseConfig(candidateBytes)
+	merged, err := parseConfigDocument(candidate.RuntimeDocument(defaultSections()))
 	if err != nil {
 		return nil, err
 	}
@@ -440,11 +385,24 @@ func (s *webConfigStore) PrepareDistributeConfig(ctx context.Context, incoming *
 		merged.Llm = cfg.LLMFromOption(fileOption)
 		cfg.NormalizeLLMConfig(merged.Llm)
 	}
+	runtimeOption := cfg.Option{Sections: defaultSections(), Context: s.configContext()}
+	if s.overrides != nil {
+		runtimeOption = *s.overrides
+		runtimeOption.Sections, runtimeOption.Context = defaultSections(), s.configContext()
+	}
+	runtimeOption.ConfigFile = s.explicit
+	if err := cfg.ResolveRuntimeSnapshot(&runtimeOption, candidate); err != nil {
+		return nil, err
+	}
+	next, err := yaml.Marshal(patched)
+	if err != nil {
+		return nil, err
+	}
 	tmpPath, err := cfg.PrepareFile(p, next)
 	if err != nil {
 		return nil, err
 	}
-	return &webservice.PreparedConfig{Config: merged, RuntimePath: tmpPath, TargetPath: p}, nil
+	return &webservice.PreparedConfig{Config: merged, Runtime: &runtimeOption, RuntimePath: tmpPath, TargetPath: p}, nil
 }
 
 func (s *webConfigStore) CommitDistributeConfig(ctx context.Context, prepared *webservice.PreparedConfig) error {
@@ -469,25 +427,6 @@ func (s *webConfigStore) DiscardDistributeConfig(prepared *webservice.PreparedCo
 	}
 	_ = os.Remove(prepared.RuntimePath)
 	prepared.RuntimePath = ""
-}
-
-func preserveSecret(incoming *string, existing string) {
-	if strings.TrimSpace(*incoming) == "" {
-		*incoming = existing
-	}
-}
-
-// preserveConfigSection ensures section is non-nil, then applies fn to it.
-// current is the on-disk value used to backfill empty secrets.
-func preserveConfigSection[T any](incoming *T, current *T, fn func(*T)) *T {
-	if incoming == nil {
-		if current != nil {
-			return current
-		}
-		return new(T)
-	}
-	fn(incoming)
-	return incoming
 }
 
 func preserveLLMProfileSecrets(incoming *types.LLMConfig, existing *types.LLMConfig) {

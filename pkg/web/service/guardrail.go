@@ -56,13 +56,14 @@ func (s *Service) forwardGuardrail(ctx context.Context, request *guardrail.Proto
 		if !ok {
 			return nil, errors.New("agent disconnected during guardrail request")
 		}
-		if reply.Err != "" {
-			return nil, errors.New(reply.Err)
+		if failure := taskError(reply); failure != nil {
+			return nil, errors.New(failure.Message)
 		}
-		if reply.Guardrail == nil {
+		response, _ := reply.(*guardrail.ProtocolMessage)
+		if response == nil {
 			return nil, errors.New("missing guardrail response")
 		}
-		return reply.Guardrail, nil
+		return response, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

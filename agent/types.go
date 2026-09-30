@@ -90,13 +90,6 @@ func (noLoop) Run(context.Context, Config) (*Result, error) {
 	return nil, fmt.Errorf("agent loop is not configured")
 }
 
-type ToolFlowDecision int
-
-const (
-	ToolFlowContinue ToolFlowDecision = iota
-	ToolFlowTerminate
-)
-
 // SystemPromptFunc resolves the system prompt once at the start of a run.
 type SystemPromptFunc func(context.Context, *Config) (string, error)
 

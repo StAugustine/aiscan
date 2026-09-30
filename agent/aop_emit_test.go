@@ -4,7 +4,6 @@ import (
 	"context"
 	aop "github.com/chainreactors/cyber/aop"
 	coreevents "github.com/chainreactors/cyber/core/events"
-	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
 	"io"
 	"net/http"
@@ -210,10 +209,10 @@ func TestToolResultEmitterPreservesAllProtocolFields(t *testing.T) {
 	var emitted *aop.Event
 	bus.Observe(coreevents.ObserverFunc(func(event *aop.Event) { emitted = event }))
 	emitter := newAOPEmitter(bus, "agent-1", "session-1", "", "", nil, 0).turn("turn-1")
-	emitter.toolResult(&aop.ToolCall{Id: "call-1", Name: "scan"}, []*aop.Content{
-		aop.Text("done"),
-		aop.Image("image/png", []byte("image")),
-	}, &coretool.Result{}, true, true, 12)
+	emitter.toolResult(&aop.ToolResult{
+		CallId: "call-1", Name: "scan", Terminate: true, IsError: true, DurationMs: 12,
+		Output: []*aop.Content{aop.Text("done"), aop.Image("image/png", []byte("image"))},
+	})
 
 	result := emitted.GetToolResult()
 	if result == nil || result.CallId != "call-1" || result.Name != "scan" || !result.Terminate || !result.IsError || result.DurationMs != 12 {

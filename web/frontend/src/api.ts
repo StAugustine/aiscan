@@ -5,6 +5,7 @@ import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
 import {
   AOPClient,
+  newID as newRPCID,
   AOPProtocolMessageSchema,
   FileProtocolMessageSchema,
   type AOPPayload,
@@ -458,11 +459,17 @@ export async function uploadChatFile(sessionID: string, file: File): Promise<Fil
 }
 
 // Chat history is the raw AOP event log; views project EventDelivery records
-// into their own render models (see useChatSession.deliveryToChatMessage).
-export async function listChatMessages(sessionID: string): Promise<EventDelivery[]> {
+// directly into the existing AOP reducer.
+export async function listChatEvents(sessionID: string, afterCursor = ''): Promise<EventDelivery[]> {
   try {
-	const response = await cyberRPC.sessions.listEvents({ sessionId: sessionID, limit: 500 })
-    return response.events
+    const events: EventDelivery[] = []
+    do {
+      const response = await cyberRPC.sessions.listEvents({ sessionId: sessionID, limit: 500, afterCursor })
+      events.push(...response.events)
+      if (response.nextCursor === afterCursor && afterCursor) throw new Error('History cursor did not advance')
+      afterCursor = response.nextCursor
+    } while (afterCursor)
+    return events
   } catch (error) {
     throw connectFailure(error, 'Failed to list messages')
   }
@@ -470,15 +477,15 @@ export async function listChatMessages(sessionID: string): Promise<EventDelivery
 
 export function subscribeAOPEvents(
   sessionID: string,
-  onEvent: (event: AOPEvent) => void,
-  onReconnect?: () => void,
+  onEvent: (event: AOPEvent, cursor: string) => void,
+  afterCursor = '',
 ): () => void {
 	const watch = (cursor: string) => create(AOPProtocolMessageSchema, { message: { case: 'watchEventsRequest', value: { sessionId: sessionID, afterCursor: cursor } } })
-	return aopClient.subscribe(AOPProtocolMessageSchema, watch(''), (payload) => {
+	return aopClient.subscribe(AOPProtocolMessageSchema, watch(afterCursor), (payload, envelope) => {
 		if (payload.$typeName !== 'aop.ProtocolMessage') return
 		const core = payload as AOPProtocolMessage
-		if (core.message.case === 'event') onEvent(core.message.value)
-	}, { durable: true, resume: (cursor) => { onReconnect?.(); return watch(cursor) } })
+		if (core.message.case === 'event') onEvent(core.message.value, envelope.deliveryCursor)
+	}, { durable: true, resume: (cursor) => watch(cursor || afterCursor) })
 }
 
 function rejectionError(value: { code?: string; message?: string } | undefined, fallback: string): Error {
@@ -503,22 +510,6 @@ async function requestCore<C extends CoreCase>(request: AOPProtocolMessage, expe
 	if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
 	if (core.message.case !== expected) throw new Error(`Expected ${expected}, received ${core.message.case || 'empty'}`)
 	return core.message.value as CoreValue<C>
-}
-
-function newRPCID(): string {
-  const value = globalThis.crypto
-  if (value && typeof value.randomUUID === 'function') {
-    try { return value.randomUUID() } catch {}
-  }
-  if (value && typeof value.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    value.getRandomValues(bytes)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    const hex = Array.from(bytes, (item) => item.toString(16).padStart(2, '0')).join('')
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
 export { aopClient }
