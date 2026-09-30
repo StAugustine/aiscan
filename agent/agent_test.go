@@ -225,10 +225,7 @@ func TestProviderErrorEmitsAgentEndAndUpdatesState(t *testing.T) {
 		t.Fatalf("last event = %#v, want error", last)
 	}
 	endData := last.GetError()
-	if endData == nil {
-		t.Fatal("error event missing payload")
-	}
-	if endData.Message == "" {
+	if endData == nil || endData.Message == "" {
 		t.Fatalf("error event missing message: %+v", endData)
 	}
 	if a.running {
