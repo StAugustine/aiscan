@@ -1,6 +1,7 @@
 // Use recap-provider.mjs with a freshly built start-server.mjs runtime.
 // RECAP_TEST_PROVIDER_URL=http://127.0.0.1:38181 BASE_URL=http://127.0.0.1:38080
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test'
+import { openNodeTerminal } from './task-ui'
 
 const providerURL = process.env.RECAP_TEST_PROVIDER_URL
 const node = process.env.RECAP_TEST_NODE || 'e2e-node'
@@ -15,8 +16,7 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('i18nextLng', 'en'))
   expect((await page.request.post('/api/auth/login', { data: { token: process.env.ACCESS_KEY || 'test-token' } })).ok()).toBe(true)
   await page.goto('/')
-  await page.getByRole('button', { name: /agent\(s\) connected/ }).click()
-  await page.getByRole('button', { name: new RegExp(`info ${node} `) }).click()
+  await openNodeTerminal(page, node)
   await expect(page.locator('.xterm-rows')).toContainText('aiscan')
   await page.getByRole('textbox', { name: 'Terminal input' }).press('Control+u')
   await page.getByRole('textbox', { name: 'Terminal input' }).press('Control+l')

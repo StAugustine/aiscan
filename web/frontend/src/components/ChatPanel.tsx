@@ -60,6 +60,7 @@ import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, with
 import { withRecaps } from '../lib/recap-view'
 import { ReviewState, type Review } from '../cyber-proto'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
+import { withRecaps } from '../lib/recap-view'
 
 const webUserAgent = 'cyber.web'
 
@@ -1129,6 +1130,8 @@ function AssistantResponseEntry({
       footer={!embedded && typeof message?.metadata?.recap === 'string'
         ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       labels={{ tools: toolsLabel, thinking: t('thinkingLabel'), response: t('responseLabel') }}
+      footer={typeof message?.metadata?.recap === 'string'
+        ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}
       showResponseLabel={false}
