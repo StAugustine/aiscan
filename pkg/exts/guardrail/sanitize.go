@@ -12,9 +12,9 @@ import (
 var secretField = regexp.MustCompile("(?i)(password|passwd|secret|token|api.?key|authorization|cookie|credential|private.?key)")
 var redactions = []*regexp.Regexp{
 	regexp.MustCompile("(?is)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----"),
-	regexp.MustCompile("(?i)\\b(?:bearer|basic)\\s+[A-Za-z0-9._~+/=-]+"),
-	regexp.MustCompile("(?i)\\b(?:apikey_|sk-)[A-Za-z0-9_-]+"),
-	regexp.MustCompile("(?i)(?:https?|ftp)://[^\\s/@]+:[^\\s/@]+@"),
+	regexp.MustCompile(`(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+`),
+	regexp.MustCompile(`(?i)\b(?:apikey_|sk-)[A-Za-z0-9_-]+`),
+	regexp.MustCompile(`(?i)(?:https?|ftp)://[^\s/@]+:[^\s/@]+@`),
 }
 var secretAssignment = regexp.MustCompile("(?i)((?:[A-Za-z0-9_]*)(?:password|passwd|secret|token|api[_-]?key|authorization|cookie|credential)(?:[A-Za-z0-9_]*)(?:[\\\"']?\\s*[:=]\\s*|\\s+))(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;\\\"']+)")
 var curlAuth = regexp.MustCompile("(?i)((?:--user|-u)\\s+)(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s;]+)")
@@ -25,8 +25,8 @@ func RedactText(s string) string {
 	for _, re := range redactions {
 		s = re.ReplaceAllString(s, "[REDACTED]")
 	}
-	s = secretAssignment.ReplaceAllString(s, "1[REDACTED]")
-	return curlAuth.ReplaceAllString(s, "1[REDACTED]")
+	s = secretAssignment.ReplaceAllString(s, "${1}[REDACTED]")
+	return curlAuth.ReplaceAllString(s, "${1}[REDACTED]")
 }
 
 func sanitizeValue(value any) any {

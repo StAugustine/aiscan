@@ -16,7 +16,6 @@ import (
 	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/telemetry"
 	types "github.com/chainreactors/cyber/core/types"
-	"github.com/chainreactors/cyber/internal/testutil/hosttest"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	webext "github.com/chainreactors/cyber/pkg/exts/web"
 	"github.com/chainreactors/cyber/pkg/harness"

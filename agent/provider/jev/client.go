@@ -147,6 +147,7 @@ func (c *Client) Exchange(ctx context.Context, input Request) (response *Respons
 			case <-timer.C:
 			}
 		}
+		// #nosec G704 -- The host selects Endpoint; production uses the fixed vendor URL, never model or tool input.
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
@@ -155,6 +156,7 @@ func (c *Client) Exchange(ctx context.Context, input Request) (response *Respons
 		req.Header.Set("Content-Type", "application/json")
 		c.attempts.Add(1)
 		attempts++
+		// #nosec G704 -- The destination is host-owned and redirects are disabled, including credential forwarding.
 		res, err := c.http.Do(req)
 		if err != nil {
 			c.missing.Add(1)

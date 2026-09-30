@@ -44,7 +44,7 @@ func migrateEvents(ctx context.Context, path string) (count int64, err error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(chat_aop_events)`)
 	if err != nil {

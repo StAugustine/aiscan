@@ -120,11 +120,18 @@ test('a delayed recap never blocks the next task or enters its context and survi
   expect(next.text).not.toContain('Task late complete.')
   for (const call of await calls(request, 'next', 'task')) expect(call.text).not.toContain(recapText('late'))
   const before = recaps(await history(page))
-  const replay = page.waitForResponse(response => response.url().includes('/ListEvents') && response.ok())
+  let historyRequests = 0
+  page.on('request', request => { if (request.url().includes('/ListEvents')) historyRequests++ })
+  const socketCount = await page.evaluate(() => (window as any).recapTestSockets.length)
   await page.evaluate(() => (window as any).recapTestSockets.at(-1).close())
-  await (await replay).finished()
+  await expect.poll(() => page.evaluate(() => (window as any).recapTestSockets.length)).toBeGreaterThan(socketCount)
+  await expect.poll(() => page.evaluate(() => (window as any).recapTestSockets.at(-1).readyState)).toBe(1)
   await expect(page.getByTestId('task-recap')).toHaveText([recapText('late'), recapText('next')])
+  await expect(page.getByRole('textbox', { name: 'Your goal' })).toHaveValue('Unsaved next task')
   expect(recaps(await history(page)).map((event: any) => event.id)).toEqual(before.map((event: any) => event.id))
+  await send(page, 'reconnected')
+  await expect(page.getByTestId('task-recap')).toHaveText([recapText('late'), recapText('next'), recapText('reconnected')])
+  expect(historyRequests).toBe(0)
 })
 
 test('a task larger than 10k estimated tokens sends a bounded recap with recent results', async ({ page, request }) => {

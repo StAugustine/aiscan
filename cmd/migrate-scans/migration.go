@@ -31,7 +31,7 @@ func migrateScans(ctx context.Context, path string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	rows, err := tx.QueryContext(ctx, `PRAGMA table_info(scans)`)
 	if err != nil {
 		return 0, err

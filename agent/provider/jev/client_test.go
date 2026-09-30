@@ -154,7 +154,9 @@ func TestClientRejectsRedirectsAndInvalidSelectedAnswers(t *testing.T) {
 	var targetCalls atomic.Int64
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { targetCalls.Add(1) }))
 	defer target.Close()
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 307) }))
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
 	defer s.Close()
 	c := New("key", DefaultModel, time.Second)
 	defer c.Close()
