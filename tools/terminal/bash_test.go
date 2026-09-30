@@ -42,22 +42,24 @@ func TestBackgroundOutputPublishesBoundedCompletionAndOriginalFile(t *testing.T)
 	}
 	tool.startMonitor(info, dir, scoped)
 	close(release)
-	deadline := time.Now().Add(2 * time.Second)
-	for scoped.ActiveProducers() != 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if scoped.ActiveProducers() != 0 {
-		t.Fatal("background completion did not arrive")
-	}
+	// Use Inbox notifications while large output is processed with race and
+	// coverage instrumentation, including the producer's final wakeup.
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
 	var completion string
-	for _, message := range scoped.Drain() {
-		text := message.Message.GetContent()[0].GetText().GetText()
-		if !utf8.ValidString(text) || len(text) > 60<<10 {
-			t.Fatalf("unbounded/invalid background preview: %d bytes", len(text))
+	for scoped.WaitWhileActive(ctx) {
+		for _, message := range scoped.Drain() {
+			text := message.Message.GetContent()[0].GetText().GetText()
+			if !utf8.ValidString(text) || len(text) > 60<<10 {
+				t.Fatalf("unbounded/invalid background preview: %d bytes", len(text))
+			}
+			if message.Meta["type"] == "completion" {
+				completion = text
+			}
 		}
-		if message.Meta["type"] == "completion" {
-			completion = text
-		}
+	}
+	if ctx.Err() != nil || scoped.ActiveProducers() != 0 {
+		t.Fatal("background completion did not arrive")
 	}
 	if !strings.Contains(completion, "command.log") || !strings.Contains(completion, "LAST") {
 		t.Fatal("completion lost the original output path or tail")
