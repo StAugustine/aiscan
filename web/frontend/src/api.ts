@@ -489,7 +489,7 @@ export function subscribeAOPEvents(
 }
 
 function rejectionError(value: { code?: string; message?: string } | undefined, fallback: string): Error {
-  return Object.assign(new Error(value?.message || value?.code || fallback), { rejected: true })
+  return Object.assign(new Error(value?.message || value?.code || fallback), { rejected: true, code: value?.code })
 }
 
 function connectFailure(error: unknown, fallback: string): Error {

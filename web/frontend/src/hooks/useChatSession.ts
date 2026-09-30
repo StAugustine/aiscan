@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
+import { newID as safeUUID } from '@cyber/aop'
+import { createAOPTimelineReducer } from '@/viewer'
 import { ScanStatus, SessionScanEventSchema, WebMessageMetadataSchema } from '../cyber-proto'
 import { usePolling } from './usePolling'
 import {
@@ -26,29 +28,6 @@ import {
   setSessionRoute,
   type RouteMode,
 } from '../lib/route'
-
-// safeUUID() only exists in secure contexts (HTTPS or localhost).
-// When the UI is served over plain HTTP on a LAN/public IP it is undefined,
-// which would throw when sending a message or rendering events. Fall back to
-// crypto.getRandomValues (available in insecure contexts) and finally Math.random.
-function safeUUID(): string {
-  const c: Crypto | undefined = typeof crypto !== 'undefined' ? crypto : undefined
-  if (c && typeof c.randomUUID === 'function') {
-    try {
-      return c.randomUUID()
-    } catch {
-      // fall through to the manual generators below
-    }
-  }
-  if (c && typeof c.getRandomValues === 'function') {
-    const b = c.getRandomValues(new Uint8Array(16))
-    b[6] = (b[6] & 0x0f) | 0x40
-    b[8] = (b[8] & 0x3f) | 0x80
-    const h = Array.from(b, (x) => x.toString(16).padStart(2, '0'))
-    return `${h.slice(0, 4).join('')}-${h.slice(4, 6).join('')}-${h.slice(6, 8).join('')}-${h.slice(8, 10).join('')}-${h.slice(10, 16).join('')}`
-  }
-  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
-}
 
 function aopExtension(event: AOPEvent): Record<string, unknown> | undefined {
   for (const extension of event.extensions) {
@@ -119,19 +98,23 @@ export function useChatSession() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
   const [history, setHistory] = useState<AOPHistory>({ events: [], cursor: '' })
   const aopEvents = history.events
-  const [isThinking, setIsThinking] = useState(false)
   const [runRequestPending, setRunRequestPending] = useState(false)
-  const [activeTurnID, setActiveTurnID] = useState('')
+  const [receiptTurnID, setReceiptTurnID] = useState('')
+  const projection = useMemo(() => createAOPTimelineReducer({ timeline: false }), [activeSessionID])
+  const run = useMemo(() => {
+    projection(history.events)
+    return projection.runState(activeSessionID || '')
+  }, [projection, history.events, activeSessionID])
+  const activeTurnID = run.activeTurnID || (run.ended.has(receiptTurnID) ? '' : receiptTurnID)
+  const isThinking = run.isThinking
   const [error, setError] = useState('')
   const creatingSession = useRef<Promise<string | null> | null>(null)
   const retrySessionCreation = useRef<{ nodeID: string; sessionID: string; requestID: string } | null>(null)
-  const retrySubmission = useRef<{ signature: string; messageID: string; requestID: string; turnID: string } | null>(null)
-  const submittingRef = useRef(false)
+  const retrySubmissions = useRef(new Map<string, { signature: string; messageID: string; requestID: string; turnID: string }>())
+  const submittingSessions = useRef(new Set<string | null>())
   const unsubRef = useRef<(() => void) | null>(null)
   const activationRef = useRef(0)
   const activeSessionRef = useRef<string | null>(null)
-  const activeTurnRef = useRef<string>('')
-  const endedTurnIDsRef = useRef<Set<string>>(new Set())
   const receivedEventIDsRef = useRef<Set<string>>(new Set())
   const sessionCacheRef = useRef<Map<string, AOPHistory>>(new Map())
 
@@ -199,15 +182,10 @@ export function useChatSession() {
     }
   }
 
-  // Wipe the transient per-run state (streaming buffers, thinking/pending flags,
-  // turn/epoch bookkeeping) while leaving the durable conversation untouched.
-  // Both a cold open and a cache restore want this cleared — only their handling
-  // of the durable state (messages/timeline/scans) differs.
+  // Clear admission receipts and optimistic state. Run state comes from events.
   function resetTransientState() {
-    activeTurnRef.current = ''
-    endedTurnIDsRef.current.clear()
-    setActiveTurnID('')
-    setIsThinking(false)
+    receivedEventIDsRef.current.clear()
+    setReceiptTurnID('')
     setRunRequestPending(false)
     setError('')
   }
@@ -228,25 +206,6 @@ export function useChatSession() {
     resetTransientState()
   }
 
-  function activateTurn(turnID: string) {
-    const id = turnID.trim()
-    activeTurnRef.current = id
-    setActiveTurnID(id)
-  }
-
-  // A Run converges only on turn_ended. Session lifecycle is independent and a
-  // turn-scoped error is diagnostic until its terminal turn_ended arrives.
-  // Ignore a late terminal event for an older turn so it cannot clear a newer
-  // active run after reconnect/replay interleaving.
-  function finalizeRun(turnID = '') {
-    const id = turnID.trim()
-    if (id) endedTurnIDsRef.current.add(id)
-    if (id && activeTurnRef.current && activeTurnRef.current !== id) return
-    activateTurn('')
-    setIsThinking(false)
-    setRunRequestPending(false)
-  }
-
   function handleAOPEvent(event: AOPEvent, cursor: string) {
     if (event.id) {
       if (receivedEventIDsRef.current.has(event.id)) {
@@ -259,43 +218,12 @@ export function useChatSession() {
     // Child-session events belong in the conversation renderer, while their
     // lifecycle must not change the root session's Pause target.
     if (event.sessionId !== activeSessionRef.current) return
-    // Replayed content is still useful to the renderer, but a completed turn
-    // cannot become active again because an older lifecycle/content frame arrives.
-    if (event.turnId && endedTurnIDsRef.current.has(event.turnId)) return
     switch (event.payload.case) {
-      case 'turnStarted':
-        endedTurnIDsRef.current.delete(event.turnId)
-        activateTurn(event.turnId)
-        setRunRequestPending(false)
-        setIsThinking(true)
-        break
-      case 'messageDelta':
-        if (!event.turnId) break
-        activateTurn(event.turnId)
-        setIsThinking(event.payload.value.value.case === 'reasoning')
-        break
-      case 'toolCall':
-        if (!event.turnId) break
-        activateTurn(event.turnId)
-        setIsThinking(false)
-        break
       case 'message':
         if (event.payload.value.role === 'user') {
           const messageID = event.payload.value.id
           setTimeline(previous => previous.filter(item => item.id !== messageID))
         }
-        // Messages carry content, not lifecycle. Command results are durable
-        // assistant messages with no turn_id and must never reactivate the Run
-        // state during live delivery or history replay.
-        if (event.turnId && event.payload.value.role === 'assistant') {
-          activateTurn(event.turnId)
-          setIsThinking(false)
-        }
-        break
-      case 'turnEnded':
-        finalizeRun(event.turnId)
-        break
-      case 'sessionEnded':
         break
       case 'extension': {
         const extension = event.payload.value
@@ -324,11 +252,11 @@ export function useChatSession() {
     }
   }
 
-  function restoreHistoryState(events: AOPEvent[], sessionID: string) {
+  function indexHistory(events: AOPEvent[]) {
     receivedEventIDsRef.current = new Set(events.map(event => event.id).filter(Boolean))
     const scans: TimelineItem[] = []
     for (const event of events) {
-      if (event.sessionId !== sessionID || event.payload.case !== 'extension') continue
+      if (event.sessionId !== activeSessionRef.current || event.payload.case !== 'extension') continue
       try {
         const scan = anyUnpack(event.payload.value, SessionScanEventSchema)
         if (!scan?.scanId || ![ScanStatus.COMPLETED, ScanStatus.FAILED, ScanStatus.CANCELED].includes(scan.status)) continue
@@ -337,23 +265,6 @@ export function useChatSession() {
       } catch { /* malformed application extension */ }
     }
     setTimeline(previous => [...previous.filter(item => !scans.some(scan => scan.id === item.id)), ...scans])
-    endedTurnIDsRef.current = new Set(events.filter(event => event.sessionId === sessionID
-      && event.payload.case === 'turnEnded').map(event => event.turnId).filter(Boolean))
-    let turnID = ''
-    let thinking = false
-    for (const event of events) {
-      if (event.sessionId !== sessionID || !event.turnId || endedTurnIDsRef.current.has(event.turnId)) continue
-      switch (event.payload.case) {
-        case 'turnStarted': turnID = event.turnId; thinking = true; break
-        case 'messageDelta': turnID = event.turnId; thinking = event.payload.value.value.case === 'reasoning'; break
-        case 'toolCall': turnID = event.turnId; thinking = false; break
-        case 'message':
-          if (event.payload.value.role === 'assistant') { turnID = event.turnId; thinking = false }
-          break
-      }
-    }
-    activateTurn(turnID)
-    setIsThinking(thinking)
   }
 
   async function activateSession(id: string, route: RouteMode) {
@@ -368,11 +279,12 @@ export function useChatSession() {
     if (cached) restoreSnapshot(cached)
     else resetSessionState()
     setActiveSessionID(id)
+    setActiveSessionRecord(null)
     // Mirror into the ref synchronously so a send issued immediately after
     // activation (e.g. the deck's Command Cortex) targets the new session
     // without waiting for the activeSessionID effect to flush on re-render.
     activeSessionRef.current = id
-    if (cached) restoreHistoryState(cached.events, id)
+    if (cached) indexHistory(cached.events)
     setSessionRoute(id, route)
 
     let afterCursor = cached?.cursor || ''
@@ -384,7 +296,7 @@ export function useChatSession() {
       const events = incoming.length ? [...(cached?.events || []), ...incoming] : cached?.events || []
       afterCursor = deliveries[deliveries.length - 1]?.cursor || afterCursor
       setHistory({ events, cursor: afterCursor })
-      restoreHistoryState(events, id)
+      indexHistory(events)
       unsubRef.current = subscribeAOPEvents(id, (event, cursor) => {
         if (activation === activationRef.current) handleAOPEvent(event, cursor)
       }, afterCursor)
@@ -445,8 +357,9 @@ export function useChatSession() {
   }
 
   async function handleSendMessage(content: string, opts?: { persist?: boolean; evalCriteria?: string; evalRounds?: string; sessionID?: string }): Promise<boolean> {
-    if (!content.trim() || submittingRef.current) return false
-    submittingRef.current = true
+    const submissionScope = opts?.sessionID || activeSessionRef.current
+    if (!content.trim() || submittingSessions.current.has(submissionScope)) return false
+    submittingSessions.current.add(submissionScope)
     let optimisticID = ''
     let sessionID: string | null = null
     try {
@@ -466,8 +379,8 @@ export function useChatSession() {
       const runContent = lower.startsWith('/followup ') ? trimmed.slice(trimmed.indexOf(' ') + 1).trim() : trimmed
       const command = !continueSession && (runContent.startsWith('!') || (runContent.startsWith('/') && !runContent.startsWith('/skill:') && !lower.startsWith('/followup ')))
       const signature = JSON.stringify([sessionID, runContent, opts])
-      if (retrySubmission.current?.signature !== signature) retrySubmission.current = { signature, messageID: safeUUID(), requestID: safeUUID(), turnID: safeUUID() }
-      const submission = retrySubmission.current
+      if (retrySubmissions.current.get(sessionID)?.signature !== signature) retrySubmissions.current.set(sessionID, { signature, messageID: safeUUID(), requestID: safeUUID(), turnID: safeUUID() })
+      const submission = retrySubmissions.current.get(sessionID)!
       optimisticID = submission.messageID
       if (!continueSession && !command && activeSessionRef.current === sessionID) {
         const message: ChatMessage = { id: optimisticID, session_id: sessionID, role: 'user', content: runContent, created_at: new Date().toISOString() }
@@ -480,20 +393,19 @@ export function useChatSession() {
         // Acceptance may queue behind the current run. Its receipt must not
         // redirect Pause away from the running turn; turnStarted selects the
         // next turn once the runtime actually starts it.
-        if (activeSessionRef.current === sessionID && !activeTurnRef.current && sent.turnId && !endedTurnIDsRef.current.has(sent.turnId)) activateTurn(sent.turnId)
+        if (activeSessionRef.current === sessionID && !projection.runState(sessionID).activeTurnID && sent.turnId) setReceiptTurnID(sent.turnId)
       }
-      retrySubmission.current = null
+      retrySubmissions.current.delete(sessionID)
       await refreshSessions()
       return true
     } catch (error) {
-      if ((error as { rejected?: boolean }).rejected) retrySubmission.current = null
+      if (sessionID && (error as { rejected?: boolean }).rejected) retrySubmissions.current.delete(sessionID)
       if (activeSessionRef.current === sessionID) {
         setTimeline((previous) => previous.filter((m) => m.id !== optimisticID))
         setError(error instanceof Error ? error.message : 'Failed to send message')
       }
-      setError(error instanceof Error ? error.message : 'Failed to send message')
       return false
-    } finally { submittingRef.current = false; if (activeSessionRef.current === sessionID) setRunRequestPending(false) }
+    } finally { submittingSessions.current.delete(submissionScope); if (activeSessionRef.current === sessionID) setRunRequestPending(false) }
   }
 
   // Make sure a chat session is active, lazily creating one on the selected (or
@@ -629,13 +541,14 @@ export function useChatSession() {
 
   async function handleCancelMessage() {
     const sessionID = activeSessionRef.current
-    if (!sessionID) return
+    const turnID = activeTurnID
+    const activation = activationRef.current
+    if (!sessionID || !turnID) return
     try {
-		await cancelChatSession(sessionID, activeTurnRef.current)
-		finalizeRun(activeTurnRef.current)
+      await cancelChatSession(sessionID, turnID)
       await refreshSessions()
     } catch (err: any) {
-      setError(err.message || 'Failed to pause response')
+      if (activation === activationRef.current && activeSessionRef.current === sessionID) setError(err.message || 'Failed to pause response')
     }
   }
 

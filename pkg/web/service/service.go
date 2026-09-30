@@ -65,8 +65,7 @@ type Service struct {
 	taskSessions map[string]string // taskID → sessionID
 
 	eventMu    sync.Mutex
-	sessionSeq map[string]uint64
-	endedTurns map[string]bool
+	eventState map[string]*sessionEventState
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -82,8 +81,7 @@ func NewService(cfg ServiceConfig) *Service {
 		cancels:      make(map[string]context.CancelFunc),
 		scanNodeIDs:  make(map[string]string),
 		taskSessions: make(map[string]string),
-		sessionSeq:   make(map[string]uint64),
-		endedTurns:   make(map[string]bool),
+		eventState:   make(map[string]*sessionEventState),
 	}
 	if cfg.Profile != nil {
 		svc.profile = cfg.Profile

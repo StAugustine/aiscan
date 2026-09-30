@@ -59,7 +59,7 @@ type State struct {
 // Controller is the provider extension's live configuration boundary. The
 // session runtime consumes State; it never constructs or probes providers.
 type Controller interface {
-	Reload(context.Context, ProviderConfig) error
+	Reload(context.Context, ProviderConfig, ...func() error) error
 }
 
 func (s *State) Current() (Provider, ProviderConfig) {
@@ -137,7 +137,13 @@ func (s *State) Reload(ctx context.Context, config ProviderConfig, logger teleme
 // Update is the live configuration operation owned by the provider
 // extension. It validates and probes the new client before publishing it, so
 // a quota/network failure leaves the previous client and sessions usable.
-func (s *State) Update(ctx context.Context, config ProviderConfig, logger telemetry.Logger) error {
+// An optional commit runs after validation, under the publication lock. It
+// must not call State methods. A failed commit leaves the existing client,
+// health and sessions intact, without a second probe or a rollback reload.
+func (s *State) Update(ctx context.Context, config ProviderConfig, logger telemetry.Logger, commit ...func() error) error {
+	if len(commit) > 1 {
+		return fmt.Errorf("provider update accepts one commit")
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -164,10 +170,22 @@ func (s *State) Update(ctx context.Context, config ProviderConfig, logger teleme
 		return fmt.Errorf("provider probe failed: %s", health.Error)
 	}
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		closeIdleConnections(p)
+		return err
+	}
 	if s.revision != revision {
 		s.mu.Unlock()
 		closeIdleConnections(p)
 		return fmt.Errorf("provider state changed while checking configuration")
+	}
+	if len(commit) == 1 && commit[0] != nil {
+		if err := commit[0](); err != nil {
+			s.mu.Unlock()
+			closeIdleConnections(p)
+			return err
+		}
 	}
 	s.provider, s.config, s.health = p, *resolved, health
 	s.owned = append(s.owned, p)

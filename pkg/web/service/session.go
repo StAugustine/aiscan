@@ -217,7 +217,13 @@ func (s *Service) Upload(ctx context.Context, sessionID, filename string, data [
 
 func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	s.closeRemoteSession(id)
-	return s.store.DeleteSession(ctx, id)
+	if err := s.store.DeleteSession(ctx, id); err != nil {
+		return err
+	}
+	s.eventMu.Lock()
+	delete(s.eventState, id)
+	s.eventMu.Unlock()
+	return nil
 }
 
 func (s *Service) closeRemoteSession(sessionID string) {

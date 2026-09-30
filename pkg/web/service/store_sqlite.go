@@ -351,7 +351,11 @@ func (s *SQLiteStore) AddAOPEvent(ctx context.Context, sessionID string, event *
 	return err
 }
 
-func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, event *aop.Event) (cursor int64, persisted bool, err error) {
+func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, event *aop.Event) (int64, bool, error) {
+	return s.appendAOPEvent(ctx, sessionID, event, 0)
+}
+
+func (s *SQLiteStore) appendAOPEvent(ctx context.Context, sessionID string, event *aop.Event, after int64) (cursor int64, persisted bool, err error) {
 	if event == nil || event.GetMessageDelta() != nil || event.GetToolCallDelta() != nil {
 		return 0, false, nil
 	}
@@ -380,6 +384,16 @@ func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, even
 		}
 		if !errors.Is(lookupErr, sql.ErrNoRows) {
 			return lookupErr
+		}
+		if event.GetTurnEnded() != nil && event.TurnId != "" {
+			terminal, err := turnTerminalCursor(ctx, tx, sessionID, event.SessionId, event.TurnId, after)
+			if err != nil {
+				return err
+			}
+			if terminal > 0 {
+				cursor = terminal
+				return nil
+			}
 		}
 		if err := tx.NewSelect().Model((*aopEventModel)(nil)).
 			ColumnExpr("COALESCE(MAX(cursor), 0) + 1").Where("session_id = ?", sessionID).Scan(ctx, &cursor); err != nil {
@@ -411,6 +425,38 @@ func (s *SQLiteStore) ListAOPEvents(ctx context.Context, sessionID string, limit
 		events = append(events, stored.Event)
 	}
 	return events, nil
+}
+
+// turnTerminalCursor checks only the requested turn, stopping at its latest
+// start. Terminal identity survives Web restarts and different event IDs.
+func turnTerminalCursor(ctx context.Context, db bun.IDB, sessionID, originID, turnID string, after int64) (int64, error) {
+	var events []aopEventModel
+	if err := db.NewSelect().Model(&events).Column("cursor", "event_proto").
+		Where("session_id = ? AND turn_id = ? AND cursor > ?", sessionID, turnID, after).
+		OrderExpr("cursor DESC").Scan(ctx); err != nil {
+		return 0, err
+	}
+	for _, stored := range events {
+		event, err := eventFromProto(stored.EventProto)
+		if err != nil {
+			return 0, err
+		}
+		if event.SessionId != originID {
+			continue
+		}
+		if event.GetTurnEnded() != nil {
+			return stored.Cursor, nil
+		}
+		if event.GetTurnStarted() != nil {
+			break
+		}
+	}
+	return 0, nil
+}
+
+func (s *SQLiteStore) HasTurnEnded(ctx context.Context, sessionID, turnID string) (bool, error) {
+	cursor, err := turnTerminalCursor(ctx, s.orm, sessionID, sessionID, turnID, 0)
+	return cursor > 0, err
 }
 
 func (s *SQLiteStore) MaxAOPEventSeq(ctx context.Context, sessionID string) (uint64, error) {

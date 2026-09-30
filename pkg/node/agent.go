@@ -63,7 +63,11 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 	}
 	defer func() { _ = current.Close(context.Background()) }()
 	currentOption := option
-	var applied *types.DistributeConfig
+	currentConfig, err := cfg.SharedFromOption(currentOption)
+	if err != nil {
+		return err
+	}
+	configured := false
 	started := false
 	for {
 		var candidate profile.Profile
@@ -122,39 +126,33 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 			// Graph changes prepare a complete candidate; provider-only changes
 			// are applied in place so sessions retain their conversation history.
 			reload := func(distributed *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
-				if applied != nil && proto.Equal(applied, distributed) {
-					return reloadStatus(current)
-				}
 				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
 				if err != nil {
 					return &types.ReloadResult{Error: err.Error()}, nil
 				}
-				if mode, onlyMode := cfg.GuardrailModeChange(applied, distributed); onlyMode {
+				nextConfig, err := cfg.SharedFromOption(nextOption)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				unchanged := proto.Equal(currentConfig, nextConfig)
+				if configured && unchanged {
+					currentOption = nextOption
+					return reloadStatus(current)
+				}
+				if mode, onlyMode := cfg.GuardrailModeChange(currentConfig, nextConfig); configured && onlyMode {
 					if target, ok := current.(interface{ SetGuardrailMode(string) error }); ok {
 						if err := target.SetGuardrailMode(mode); err != nil {
 							return &types.ReloadResult{Error: err.Error()}, nil
 						}
-						currentOption, applied = nextOption, proto.CloneOf(distributed)
+						currentOption, currentConfig = nextOption, nextConfig
 						return reloadStatus(current)
 					}
-				}
-				before, err := cfg.SharedFromOption(currentOption)
-				if err != nil {
-					return &types.ReloadResult{Error: err.Error()}, nil
-				}
-				after, err := cfg.SharedFromOption(nextOption)
-				if err != nil {
-					return &types.ReloadResult{Error: err.Error()}, nil
-				}
-				unchanged := proto.Equal(before, after)
-				if applied != nil && unchanged {
-					currentOption, applied = nextOption, proto.CloneOf(distributed)
-					return reloadStatus(current)
 				}
 				// Rebuilding a profile for a model/API update cancels live runs and
 				// drops their in-memory transcript. Delegate to the provider owner;
 				// active turns keep their provider snapshot and later turns use the
 				// new one.
+				before, after := proto.CloneOf(currentConfig), proto.CloneOf(nextConfig)
 				before.Llm, after.Llm = nil, nil
 				if !unchanged && proto.Equal(before, after) {
 					if reloader, ok := current.(interface {
@@ -163,7 +161,7 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 						if reloadErr := reloader.ReloadProvider(connectionCtx, cfg.ProviderConfig(nextOption)); reloadErr != nil {
 							return &types.ReloadResult{Error: reloadErr.Error()}, nil
 						}
-						currentOption, applied = nextOption, proto.CloneOf(distributed)
+						currentOption, currentConfig, configured = nextOption, nextConfig, true
 						if err := startTask(); err != nil {
 							return &types.ReloadResult{Error: err.Error()}, nil
 						}
@@ -188,7 +186,7 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 					_ = next.Close(context.Background())
 					return result, nil
 				}
-				candidate, candidateOption, candidateConfig = next, nextOption, proto.CloneOf(distributed)
+				candidate, candidateOption, candidateConfig = next, nextOption, nextConfig
 				return result, status
 			}
 			commit := func() {
@@ -211,7 +209,7 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 		if err := current.Close(context.Background()); err != nil {
 			logger.Warnf("close previous profile: %v", err)
 		}
-		current, currentOption, applied = candidate, candidateOption, candidateConfig
+		current, currentOption, currentConfig, configured = candidate, candidateOption, candidateConfig, true
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

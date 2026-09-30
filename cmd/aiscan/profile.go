@@ -439,8 +439,14 @@ func (p *aiscanProfile) SetGuardrailMode(mode string) error {
 // Profile construction remains a startup concern; this method only exposes
 // the owner's already-loaded update boundary to the node transport.
 func (p *aiscanProfile) ReloadProvider(ctx context.Context, config provider.ProviderConfig) error {
+	return p.CommitProvider(ctx, config, nil)
+}
+
+// CommitProvider keeps validation, durable config commit and publication in
+// the provider owner's transaction; the installation graph stays active.
+func (p *aiscanProfile) CommitProvider(ctx context.Context, config provider.ProviderConfig, commit func() error) error {
 	if !p.Active() || p.providerController == nil {
 		return fmt.Errorf("provider controller is unavailable")
 	}
-	return p.providerController.Reload(ctx, config)
+	return p.providerController.Reload(ctx, config, commit)
 }

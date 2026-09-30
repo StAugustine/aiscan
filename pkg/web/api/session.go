@@ -60,11 +60,11 @@ type SessionRuntime interface {
 }
 
 type Sessions struct {
-	store         SessionStore
-	runtime       SessionRuntime
-	newID         func() string
-	managementMu  sync.Mutex
-	applicationMu sync.Mutex
+	store        SessionStore
+	runtime      SessionRuntime
+	newID        func() string
+	operationsMu sync.Mutex
+	operations   map[string]*operationGate
 }
 
 func NewSessions(store SessionStore, runtime SessionRuntime, newID func() string) *Sessions {
@@ -109,8 +109,11 @@ func (s *Sessions) UpdateSession(ctx context.Context, request *types.UpdateSessi
 	if request == nil || request.RequestId == "" || request.SessionId == "" {
 		return nil, Errorf(CodeInvalidArgument, "request_id and session_id are required")
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+request.RequestId, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	replay := new(types.UpdateSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "UpdateSession", request.RequestId, request, replay)
 	if err != nil {
@@ -174,8 +177,11 @@ func (s *Sessions) OpenSession(ctx context.Context, requestID string, request *a
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedOpen("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+strings.TrimSpace(request.SessionId))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.OpenSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "OpenSession", requestID, request, replayed)
@@ -269,8 +275,11 @@ func (s *Sessions) RunTurn(ctx context.Context, requestID string, request *aop.R
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedRun("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.RunTurnResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "RunTurn", requestID, request, replayed)
@@ -342,8 +351,11 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedCancel("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.CancelTurnResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "CancelTurn", requestID, request, replayed)
@@ -398,13 +410,29 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 }
 
 func (s *Sessions) turnEnded(ctx context.Context, sessionID, turnID string) (bool, error) {
+	if indexed, ok := s.store.(interface {
+		HasTurnEnded(context.Context, string, string) (bool, error)
+	}); ok {
+		return indexed.HasTurnEnded(ctx, sessionID, turnID)
+	}
 	items, err := s.store.ListAOPEventsAfter(ctx, sessionID, 0, 0)
 	if err != nil {
 		return false, err
 	}
-	for _, item := range items {
-		if item != nil && item.Event != nil && item.Event.TurnId == turnID && item.Event.GetTurnEnded() != nil {
+	for index := len(items) - 1; index >= 0; index-- {
+		item := items[index]
+		if item == nil || item.Event == nil || item.Event.TurnId != turnID {
+			continue
+		}
+		event := item.Event
+		if event.SessionId != "" && event.SessionId != sessionID {
+			continue
+		}
+		if event.GetTurnEnded() != nil {
 			return true, nil
+		}
+		if event.GetTurnStarted() != nil {
+			return false, nil
 		}
 	}
 	return false, nil
@@ -417,8 +445,11 @@ func (s *Sessions) CloseSession(ctx context.Context, requestID string, request *
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedClose("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.CloseSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "CloseSession", requestID, request, replayed)
@@ -479,8 +510,11 @@ func (s *Sessions) ResetSession(ctx context.Context, request *types.ResetSession
 	if request == nil || strings.TrimSpace(request.RequestId) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return rejectedReset(request, "INVALID_ARGUMENT", "request_id and session_id are required"), nil
 	}
-	s.managementMu.Lock()
-	defer s.managementMu.Unlock()
+	release, err := s.lockOperations(ctx, "management:"+request.SessionId, "request:"+request.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	replayed := new(types.ResetSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "ResetSession", request.RequestId, request, replayed)
 	if err != nil {
@@ -539,8 +573,11 @@ func (s *Sessions) DeleteSession(ctx context.Context, request *types.DeleteSessi
 	if request == nil || strings.TrimSpace(request.RequestId) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return rejectedDelete(request, "INVALID_ARGUMENT", "request_id and session_id are required"), nil
 	}
-	s.managementMu.Lock()
-	defer s.managementMu.Unlock()
+	release, err := s.lockOperations(ctx, "management:"+request.SessionId, "request:"+request.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	replayed := new(types.DeleteSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "DeleteSession", request.RequestId, request, replayed)
 	if err != nil {
@@ -565,6 +602,11 @@ func (s *Sessions) DeleteSession(ctx context.Context, request *types.DeleteSessi
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockOperations(ctx, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := s.runtime.DeleteSession(ctx, request.SessionId); err != nil {
 		return nil, err
 	}

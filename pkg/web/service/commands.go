@@ -164,7 +164,10 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 	}
 	request.TurnId = taskID
 	request.SessionId = sessionID
-	s.resetTurnTerminal(sessionID, taskID)
+	if err := s.resetTurnTerminal(sessionID, taskID); err != nil {
+		s.broadcastHubTurnEnded(sessionID, taskID, "storage_error", err.Error())
+		return
+	}
 	workCtx, admitted := s.beginWork()
 	if !admitted {
 		s.broadcastHubTurnEnded(sessionID, taskID, "service_closing", "web service is closing")

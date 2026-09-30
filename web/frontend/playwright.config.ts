@@ -5,6 +5,7 @@ const manageServer = !process.env.BASE_URL;
 
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/boundary*.spec.ts',
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

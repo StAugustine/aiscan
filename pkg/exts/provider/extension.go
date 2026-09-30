@@ -52,7 +52,7 @@ func (e *Extension) Load(scope *extension.Scope) error {
 
 // Reload is the provider extension's live configuration boundary. Profiles
 // may delegate to it, but session/runtime code must not initialize providers.
-func (e *Extension) Reload(ctx context.Context, config provider.ProviderConfig) error {
+func (e *Extension) Reload(ctx context.Context, config provider.ProviderConfig, commit ...func() error) error {
 	if e == nil {
 		return fmt.Errorf("provider extension is unavailable")
 	}
@@ -69,7 +69,7 @@ func (e *Extension) Reload(ctx context.Context, config provider.ProviderConfig) 
 	stop := context.AfterFunc(lifetime, cancel)
 	defer stop()
 	defer cancel()
-	return state.Update(updateCtx, config, logger)
+	return state.Update(updateCtx, config, logger, commit...)
 }
 func (e *Extension) Close(context.Context) error {
 	e.mu.Lock()

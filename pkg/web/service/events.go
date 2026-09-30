@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"log/slog"
 	"strconv"
 
@@ -13,6 +15,20 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+// Sequence includes live deltas that are deliberately not persisted. Keep
+// only that counter in memory; durable turn terminals belong to the store.
+// Boundaries are needed only for explicit turn-ID reuse before TurnStarted,
+// or for terminal deduplication when running without a durable store.
+type sessionEventState struct {
+	sequence uint64
+	turns    map[string]turnEventBoundary
+}
+
+type turnEventBoundary struct {
+	cursor int64
+	ended  bool
+}
 
 // BroadcastAOPEvent accepts a copy into the Web-owned timeline. Node sequence
 // numbers belong to a different publication stream and never order this one.
@@ -42,36 +58,41 @@ func (s *Service) acceptAOPEvent(sessionID string, event *aop.Event) (bool, erro
 	if event.EmittedAt == nil {
 		event.EmittedAt = timestamppb.Now()
 	}
-	key := sessionID
-	if s.sessionSeq == nil {
-		s.sessionSeq = make(map[string]uint64)
+	if s.eventState == nil {
+		s.eventState = make(map[string]*sessionEventState)
 	}
-	if s.endedTurns == nil {
-		s.endedTurns = make(map[string]bool)
-	}
-	terminal := event.SessionId + "\x00" + event.TurnId
-	if event.GetTurnEnded() != nil && event.TurnId != "" && s.endedTurns[terminal] {
-		return false, nil
-	}
-	if _, initialized := s.sessionSeq[key]; !initialized {
-		var maximum uint64
+	state := s.eventState[sessionID]
+	if state == nil {
+		state = &sessionEventState{}
 		if s.store != nil {
 			var err error
-			maximum, err = s.store.MaxAOPEventSeq(context.Background(), key)
+			state.sequence, err = s.store.MaxAOPEventSeq(context.Background(), sessionID)
 			if err != nil {
 				return false, err
 			}
 		}
-		s.sessionSeq[key] = maximum
+		s.eventState[sessionID] = state
+	}
+	turn := event.SessionId + "\x00" + event.TurnId
+	boundary := state.turns[turn]
+	if s.store == nil && event.GetTurnEnded() != nil && event.TurnId != "" && boundary.ended {
+		return false, nil
 	}
 	recreated := s.sessionWasRecreated(sessionID, event)
-	event.Seq = s.sessionSeq[key] + 1
+	event.Seq = state.sequence + 1
 	var cursor int64
 	if s.store != nil {
 		var persisted bool
 		var err error
-		cursor, persisted, err = s.store.AppendAOPEvent(context.Background(), sessionID, event)
+		cursor, persisted, err = s.store.appendAOPEvent(context.Background(), sessionID, event, boundary.cursor)
 		if err != nil {
+			// Deleting a session also deletes its history. Its remote close and
+			// optional recap may still be in flight; they must not recreate it
+			// or report a persistence failure for an intentionally removed row.
+			if _, sessionErr := s.store.GetSession(context.Background(), sessionID); errors.Is(sessionErr, sql.ErrNoRows) {
+				delete(s.eventState, sessionID)
+				return false, nil
+			}
 			return false, err
 		}
 		if cursor > 0 && !persisted {
@@ -80,9 +101,16 @@ func (s *Service) acceptAOPEvent(sessionID string, event *aop.Event) (bool, erro
 	}
 	// Commit in-memory state only after persistence succeeded, so a retry after
 	// storage failure can still publish the terminal event.
-	s.sessionSeq[key] = event.Seq
-	if event.GetTurnEnded() != nil && event.TurnId != "" {
-		s.endedTurns[terminal] = true
+	state.sequence = event.Seq
+	if event.TurnId != "" {
+		if s.store != nil && (event.GetTurnStarted() != nil || event.GetTurnEnded() != nil) {
+			delete(state.turns, turn)
+		} else if s.store == nil && event.GetTurnEnded() != nil {
+			if state.turns == nil {
+				state.turns = make(map[string]turnEventBoundary)
+			}
+			state.turns[turn] = turnEventBoundary{ended: true}
+		}
 	}
 	s.broadcastAOPEvent(sessionID, event, cursor)
 	return recreated, nil
@@ -93,7 +121,7 @@ func (s *Service) acceptAOPEvent(sessionID string, event *aop.Event) (bool, erro
 // has lost from memory (restart or eviction); the transcript survives here, so
 // the agent silently resumes with an empty context unless the operator is told.
 func (s *Service) sessionWasRecreated(sessionID string, event *aop.Event) bool {
-	if s.store == nil || event.GetSessionStarted() == nil {
+	if s.store == nil || event.GetSessionStarted() == nil || event.SessionId != sessionID {
 		return false
 	}
 	maximum, err := s.store.MaxAOPEventSeq(context.Background(), sessionID)
@@ -120,13 +148,44 @@ func (s *Service) PublishUserMessage(sessionID, turnID string, message *aop.Mess
 	})
 }
 
-func (s *Service) resetTurnTerminal(sessionID, turnID string) {
+func (s *Service) resetTurnTerminal(sessionID, turnID string) error {
 	if sessionID == "" || turnID == "" {
-		return
+		return nil
 	}
 	s.eventMu.Lock()
-	delete(s.endedTurns, sessionID+"\x00"+turnID)
-	s.eventMu.Unlock()
+	defer s.eventMu.Unlock()
+	state := s.eventState[sessionID]
+	if s.store == nil {
+		if state != nil {
+			delete(state.turns, sessionID+"\x00"+turnID)
+		}
+		return nil
+	}
+	ended, err := s.store.HasTurnEnded(context.Background(), sessionID, turnID)
+	if err != nil || !ended {
+		return err
+	}
+	var cursor int64
+	if err := s.store.orm.NewSelect().Model((*aopEventModel)(nil)).
+		ColumnExpr("COALESCE(MAX(cursor), 0)").Where("session_id = ?", sessionID).Scan(context.Background(), &cursor); err != nil {
+		return err
+	}
+	if state == nil {
+		sequence, err := s.store.MaxAOPEventSeq(context.Background(), sessionID)
+		if err != nil {
+			return err
+		}
+		state = &sessionEventState{sequence: sequence}
+		if s.eventState == nil {
+			s.eventState = make(map[string]*sessionEventState)
+		}
+		s.eventState[sessionID] = state
+	}
+	if state.turns == nil {
+		state.turns = make(map[string]turnEventBoundary)
+	}
+	state.turns[sessionID+"\x00"+turnID] = turnEventBoundary{cursor: cursor}
+	return nil
 }
 
 func (s *Service) broadcastAOPEvent(sessionID string, event *aop.Event, cursor int64) {

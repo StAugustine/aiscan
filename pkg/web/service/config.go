@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chainreactors/cyber/agent/provider"
 	"github.com/chainreactors/cyber/core/extension"
 	types "github.com/chainreactors/cyber/core/types"
 	cfg "github.com/chainreactors/cyber/pkg/config"
@@ -97,6 +98,39 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 	}
 	if proto.Equal(current, prepared.Config) {
 		return s.api.Config.View(ctx)
+	}
+	// Provider edits belong to the existing owner. Building an installation
+	// graph here would cancel local sessions and drop their model context.
+	previousGraph, nextGraph := proto.CloneOf(current), proto.CloneOf(prepared.Config)
+	if previousGraph != nil && nextGraph != nil {
+		previousGraph.Llm, nextGraph.Llm = nil, nil
+		if proto.Equal(previousGraph, nextGraph) {
+			s.appMu.Lock()
+			target, supported := s.profile.(interface {
+				CommitProvider(context.Context, provider.ProviderConfig, func() error) error
+			})
+			s.appMu.Unlock()
+			providerConfig := cfg.ProviderConfigFromProto(prepared.Config.GetLlm())
+			// Incomplete provider drafts still use the existing save path, whose
+			// optional startup permits an unconfigured provider. A hot update
+			// requires a client that can be validated before publication.
+			if supported && strings.TrimSpace(providerConfig.APIKey) != "" {
+				commit := func() error {
+					if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+						return err
+					}
+					committed = true
+					return nil
+				}
+				if err := target.CommitProvider(ctx, providerConfig, commit); err != nil {
+					return nil, managementapi.NewError(managementapi.CodeFailedPrecondition, fmt.Errorf("update provider: %w", err))
+				}
+				if s.agents != nil {
+					s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))
+				}
+				return s.api.Config.View(ctx)
+			}
+		}
 	}
 	if mode, onlyMode := cfg.GuardrailModeChange(current, prepared.Config); onlyMode {
 		s.appMu.Lock()

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,10 +36,12 @@ func (p *recoveryProvider) ChatCompletion(context.Context, *provider.ChatComplet
 
 type recoveryProfile struct {
 	*reloadTestProfile
-	onChat func()
+	onChat  func()
+	reloads atomic.Int32
 }
 
 func (p *recoveryProfile) ReloadProvider(_ context.Context, config provider.ProviderConfig) error {
+	p.reloads.Add(1)
 	state, err := p.Providers()
 	if err == nil {
 		state.Set(&recoveryProvider{onChat: p.onChat}, config)
@@ -68,6 +71,8 @@ func testModelReloadKeepsConversation(t *testing.T, inPlace bool) {
 		}
 		option.Prompt = "run the startup task after the first provider is enabled"
 	}
+	option.Heartbeat = 17
+	option.MarkExplicit("heartbeat")
 	var mu sync.Mutex
 	startup := make(chan struct{})
 	var started sync.Once
@@ -127,8 +132,8 @@ func testModelReloadKeepsConversation(t *testing.T, inPlace bool) {
 			completed <- err
 			return
 		}
-		reload := func(id, model string) error {
-			config := &types.DistributeConfig{Llm: &types.LLMConfig{ActiveProfile: "primary", Providers: []*types.LLMProviderConfig{{Id: "primary", Provider: "openai", BaseUrl: "https://fixture.invalid/v1", ApiKey: "fixture", Model: model}}}}
+		reload := func(id, model string, heartbeat int32) error {
+			config := &types.DistributeConfig{Agent: &types.AgentConfig{Heartbeat: heartbeat}, Llm: &types.LLMConfig{ActiveProfile: "primary", Providers: []*types.LLMProviderConfig{{Id: "primary", Provider: "openai", BaseUrl: "https://fixture.invalid/v1", ApiKey: "fixture", Model: model}}}}
 			if err := send(id, "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{Config: config}}}); err != nil {
 				return err
 			}
@@ -157,7 +162,7 @@ func testModelReloadKeepsConversation(t *testing.T, inPlace bool) {
 		if !configured {
 			// A graph change reconnects; a provider-only startup keeps this
 			// connection and must still release the initial task.
-			if err := reload("initial", "model-a"); err != nil {
+			if err := reload("initial", "model-a", 99); err != nil {
 				completed <- err
 				return
 			}
@@ -194,7 +199,7 @@ func testModelReloadKeepsConversation(t *testing.T, inPlace bool) {
 			completed <- err
 			return
 		}
-		if err := reload("switch", "model-b"); err != nil {
+		if err := reload("switch", "model-b", 99); err != nil {
 			completed <- err
 			return
 		}
@@ -209,8 +214,21 @@ func testModelReloadKeepsConversation(t *testing.T, inPlace bool) {
 			completed <- fmt.Errorf("model or transcript lost: model=%q messages=%v", conversation.Model(), conversation.MessagesSnapshot())
 			return
 		}
-		// Re-sending the same settings must also keep the existing connection.
-		completed <- reload("duplicate", "model-b")
+		// Server changes overridden by explicit startup settings resolve to the
+		// same configuration. They must neither rebuild nor probe the provider.
+		reloads := current.reloads.Load()
+		if err := reload("equivalent", "model-b", 88); err != nil {
+			completed <- err
+			return
+		}
+		mu.Lock()
+		after = len(built)
+		mu.Unlock()
+		if after != count || current.reloads.Load() != reloads || current.closed.Load() {
+			completed <- fmt.Errorf("equivalent config rebuilt or reprobed: builds=%d reloads=%d closed=%v", after, current.reloads.Load(), current.closed.Load())
+			return
+		}
+		completed <- reload("duplicate", "model-b", 88)
 		<-ctx.Done()
 	}))
 	defer server.Close()
