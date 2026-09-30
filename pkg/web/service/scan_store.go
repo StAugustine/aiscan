@@ -3,9 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
+	"unicode/utf8"
 
 	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 	"github.com/uptrace/bun"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ScanSchema is the scan console's storage module: scan records plus the
@@ -15,7 +18,7 @@ var ScanSchema = SchemaModule{
 	Models:  []any{(*scanModel)(nil), (*sessionScanModel)(nil)},
 	Indexes: []SchemaIndex{{Model: (*scanModel)(nil), Name: "idx_scans_created", Expr: "created_at DESC"}},
 	Tables: map[string][]string{
-		"scans":         {"id", "target", "mode", "verify", "sniper", "status", "progress", "error", "scan_json", "created_at", "updated_at"},
+		"scans":         {"id", "target", "mode", "verify", "sniper", "status", "progress", "error", "created_at", "updated_at", "has_options"},
 		"session_scans": {"session_id", "scan_id"},
 	},
 }
@@ -23,17 +26,17 @@ var ScanSchema = SchemaModule{
 type scanModel struct {
 	bun.BaseModel `bun:"table:scans,alias:scan"`
 
-	ID        string `bun:"id,pk"`
-	Target    string `bun:"target,notnull"`
-	Mode      string `bun:"mode,notnull"`
-	Verify    *bool  `bun:"verify"`
-	Sniper    bool   `bun:"sniper,notnull"`
-	Status    string `bun:"status,notnull"`
-	Progress  string `bun:"progress,notnull"`
-	Error     string `bun:"error,notnull"`
-	ScanJSON  string `bun:"scan_json,type:text,notnull"`
-	CreatedAt string `bun:"created_at,notnull"`
-	UpdatedAt string `bun:"updated_at,notnull"`
+	ID         string            `bun:"id,pk"`
+	Target     string            `bun:"target,notnull"`
+	Mode       string            `bun:"mode,notnull"`
+	Verify     *bool             `bun:"verify"`
+	Sniper     bool              `bun:"sniper,notnull"`
+	Status     scanpb.ScanStatus `bun:"status,notnull"`
+	Progress   string            `bun:"progress,notnull"`
+	Error      string            `bun:"error,notnull"`
+	CreatedAt  string            `bun:"created_at,notnull"`
+	UpdatedAt  string            `bun:"updated_at,notnull"`
+	HasOptions bool              `bun:"has_options,notnull"`
 }
 
 type sessionScanModel struct {
@@ -66,7 +69,7 @@ func (s *SQLiteStore) Create(ctx context.Context, scan *scanpb.Scan) error {
 
 func (s *SQLiteStore) Get(ctx context.Context, id string) (*scanpb.Scan, error) {
 	var model scanModel
-	if err := s.orm.NewSelect().Model(&model).Column("scan_json").Where("id = ?", id).Limit(1).Scan(ctx); err != nil {
+	if err := s.orm.NewSelect().Model(&model).Where("id = ?", id).Limit(1).Scan(ctx); err != nil {
 		return nil, err
 	}
 	return scanFromModel(model)
@@ -77,7 +80,7 @@ func (s *SQLiteStore) List(ctx context.Context, limit int) ([]*scanpb.Scan, erro
 		limit = 50
 	}
 	var models []scanModel
-	if err := s.orm.NewSelect().Model(&models).Column("scan_json").OrderExpr("created_at DESC").Limit(limit).Scan(ctx); err != nil {
+	if err := s.orm.NewSelect().Model(&models).OrderExpr("created_at DESC").Limit(limit).Scan(ctx); err != nil {
 		return nil, err
 	}
 	scans := make([]*scanpb.Scan, 0, len(models))
@@ -97,7 +100,7 @@ func (s *SQLiteStore) Update(ctx context.Context, scan *scanpb.Scan) error {
 		return err
 	}
 	_, err = s.orm.NewUpdate().Model(model).
-		Column("target", "mode", "verify", "sniper", "status", "progress", "error", "scan_json", "updated_at").
+		Column("target", "mode", "verify", "sniper", "status", "progress", "error", "updated_at", "has_options").
 		WherePK().Exec(ctx)
 	return err
 }
@@ -113,13 +116,9 @@ func (s *SQLiteStore) TransitionScan(ctx context.Context, scan *scanpb.Scan, exp
 	if err != nil {
 		return false, err
 	}
-	statuses := make([]string, len(expected))
-	for i, status := range expected {
-		statuses[i] = scanStatusToDB(status)
-	}
 	result, err := s.orm.NewUpdate().Model(model).
-		Column("target", "mode", "verify", "sniper", "status", "progress", "error", "scan_json", "updated_at").
-		Where("id = ?", model.ID).Where("status IN (?)", bun.List(statuses)).Exec(ctx)
+		Column("target", "mode", "verify", "sniper", "status", "progress", "error", "updated_at", "has_options").
+		Where("id = ?", model.ID).Where("status IN (?)", bun.List(expected)).Exec(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -136,7 +135,16 @@ func scanToModel(scan *scanpb.Scan) (*scanModel, error) {
 	if scan == nil {
 		return nil, fmt.Errorf("scan is required")
 	}
-	raw, err := marshalProtoJSON(scan)
+	for _, field := range []string{scan.Id, scan.Target, scan.Mode, scan.Progress, scan.Error} {
+		if !utf8.ValidString(field) {
+			return nil, fmt.Errorf("scan contains invalid UTF-8")
+		}
+	}
+	createdAt, err := scanTime(scan.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	updatedAt, err := scanTime(scan.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -147,22 +155,50 @@ func scanToModel(scan *scanpb.Scan) (*scanModel, error) {
 	return &scanModel{
 		ID: scan.GetId(), Target: scan.GetTarget(), Mode: scan.GetMode(),
 		Verify: options.Verify, Sniper: options.GetSniper(),
-		Status: scanStatusToDB(scan.GetStatus()), Progress: scan.GetProgress(),
-		Error: scan.GetError(), ScanJSON: raw,
-		CreatedAt: formatProtoTime(scan.GetCreatedAt()), UpdatedAt: formatProtoTime(scan.GetUpdatedAt()),
+		Status: scan.GetStatus(), Progress: scan.GetProgress(), Error: scan.GetError(),
+		CreatedAt: createdAt, UpdatedAt: updatedAt, HasOptions: scan.Options != nil,
 	}, nil
 }
 
 func scanFromModel(model scanModel) (*scanpb.Scan, error) {
-	return scanFromJSON(model.ScanJSON)
-}
-
-func scanFromJSON(raw string) (*scanpb.Scan, error) {
-	scan := new(scanpb.Scan)
-	if err := unmarshalProtoJSON(raw, scan, "scan"); err != nil {
-		return nil, err
+	createdAt, err := parseScanTime(model.CreatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("scan %s timestamp: %w", model.ID, err)
+	}
+	updatedAt, err := parseScanTime(model.UpdatedAt)
+	if err != nil {
+		return nil, fmt.Errorf("scan %s timestamp: %w", model.ID, err)
+	}
+	scan := &scanpb.Scan{
+		Id: model.ID, Target: model.Target, Mode: model.Mode, Status: model.Status,
+		Progress: model.Progress, Error: model.Error, CreatedAt: createdAt, UpdatedAt: updatedAt,
+	}
+	if model.HasOptions {
+		scan.Options = &scanpb.ScanOptions{Verify: model.Verify, Sniper: model.Sniper}
 	}
 	return scan, nil
+}
+
+func parseScanTime(value string) (*timestamppb.Timestamp, error) {
+	if value == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil, err
+	}
+	ts := timestamppb.New(t)
+	return ts, ts.CheckValid()
+}
+
+func scanTime(ts *timestamppb.Timestamp) (string, error) {
+	if ts == nil {
+		return "", nil
+	}
+	if err := ts.CheckValid(); err != nil {
+		return "", err
+	}
+	return ts.AsTime().UTC().Format(time.RFC3339Nano), nil
 }
 
 func (s *SQLiteStore) LinkScanToSession(ctx context.Context, sessionID, scanID string) error {

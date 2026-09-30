@@ -135,16 +135,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    void refreshSCONodes()
     const unsubscribe = subscribeCSTXChanges(() => { void refreshSCONodes() })
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
-    void refreshIOA()
     return unsubscribe
-  }, [refreshSCONodes, refreshIOA])
+  }, [refreshSCONodes])
   // Refresh mentionables when scans finish (timeline changes often signal new results)
   useEffect(() => {
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
+    void syncCSTXArtifacts().catch(() => {})
     void refreshIOA()
-  }, [chat.timeline.length, refreshSCONodes, refreshIOA])
+  }, [chat.timeline.length, refreshIOA])
 
   const mentionables = useMemo(() => assetMentionables(scoNodes), [scoNodes])
 
@@ -320,7 +319,6 @@ export default function App() {
             guardrailReviews={guardrails.bySession[chat.activeSessionID || ''] || []}
             onResolveGuardrail={(review, approve) => guardrails.resolve(chat.activeSessionID!, review, approve)}
             aopEvents={chat.aopEvents}
-            scanResults={chat.scanResults}
             isThinking={chat.isThinking}
             isBusy={chat.busy}
             canPause={chat.canPause}

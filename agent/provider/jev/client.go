@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -188,12 +189,12 @@ func (r *Response) Choice(name string, question Question) (string, error) {
 	if question.Type != "choice" || !ok || a.Type != "choice" {
 		return "", errors.New("invalid JEV choice response")
 	}
-	data, err := json.Marshal(question.Criteria)
-	var options map[string]json.RawMessage
-	if err != nil || json.Unmarshal(data, &options) != nil {
+	options := reflect.ValueOf(question.Criteria)
+	if !options.IsValid() || options.Kind() != reflect.Map || options.Type().Key().Kind() != reflect.String {
 		return "", errors.New("invalid JEV choice criteria")
 	}
-	if _, ok = options[a.Choice]; !ok {
+	key := reflect.ValueOf(a.Choice).Convert(options.Type().Key())
+	if !options.MapIndex(key).IsValid() {
 		return "", errors.New("invalid JEV choice binding")
 	}
 	return a.Choice, nil
@@ -201,12 +202,11 @@ func (r *Response) Choice(name string, question Question) (string, error) {
 
 // Score returns the native weighted level index, not an application verdict.
 func (r *Response) Score(name string, question Question) (float64, error) {
-	data, err := json.Marshal(question.Criteria)
-	var levels []json.RawMessage
-	if question.Type != "score" || err != nil || json.Unmarshal(data, &levels) != nil || len(levels) < 2 || len(levels) > 10 {
+	levels := reflect.ValueOf(question.Criteria)
+	if question.Type != "score" || !levels.IsValid() || (levels.Kind() != reflect.Slice && levels.Kind() != reflect.Array) || (levels.Kind() == reflect.Slice && levels.Type().Elem().Kind() == reflect.Uint8) || levels.Len() < 2 || levels.Len() > 10 {
 		return 0, errors.New("invalid JEV score criteria")
 	}
-	return r.number(name, "score", float64(len(levels)-1))
+	return r.number(name, "score", float64(levels.Len()-1))
 }
 
 // Noul returns a probability. The caller owns any threshold or consequence.

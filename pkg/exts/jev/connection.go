@@ -50,18 +50,12 @@ func testConnection(ctx context.Context, incoming, stored *types.DistributeConfi
 		}
 		values[key] = value
 	}
-	config := defaults(Config{})
-	raw, err := json.Marshal(values)
-	if err == nil {
-		err = json.Unmarshal(raw, &config)
-	}
-	if err == nil {
-		err = config.validate()
-	}
+	decoded, err := configSection.Decode(values)
 	if err != nil {
 		check.Error = "Invalid JEV configuration"
 		return []*types.ConnectionCheck{check}
 	}
+	config := decoded.(*Config)
 	if strings.TrimSpace(config.APIKey) == "" {
 		config.APIKey = os.Getenv("TYPESAFE_API_KEY")
 	}

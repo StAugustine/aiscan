@@ -19,8 +19,7 @@ import {
   sendChatMessage,
   subscribeAOPEvents,
 } from '../api'
-import type { AgentView, AOPEvent, AOPSession, SCONode, SessionRecord } from '../api'
-import { listSCONodes, syncCSTXArtifacts } from '../lib/cstx-runtime'
+import type { AgentView, AOPEvent, AOPSession, SessionRecord } from '../api'
 import {
   isRootPath,
   parseRoute,
@@ -94,10 +93,6 @@ interface AOPHistory {
   cursor: string
 }
 
-interface SessionSnapshot extends AOPHistory {
-  scanResults: Map<string, SCONode[]>
-}
-
 // Deterministic roster order. The hub returns agents in Go-map iteration order,
 // which is randomized per request; without a stable sort the sidebar reshuffles
 // on every 5s poll. Ordering by node URI keeps the list — and any "first agent"
@@ -124,7 +119,6 @@ export function useChatSession() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([])
   const [history, setHistory] = useState<AOPHistory>({ events: [], cursor: '' })
   const aopEvents = history.events
-  const [scanResults, setScanResults] = useState<Map<string, SCONode[]>>(() => new Map())
   const [isThinking, setIsThinking] = useState(false)
   const [runRequestPending, setRunRequestPending] = useState(false)
   const [activeTurnID, setActiveTurnID] = useState('')
@@ -139,14 +133,14 @@ export function useChatSession() {
   const activeTurnRef = useRef<string>('')
   const endedTurnIDsRef = useRef<Set<string>>(new Set())
   const receivedEventIDsRef = useRef<Set<string>>(new Set())
-  const sessionCacheRef = useRef<Map<string, SessionSnapshot>>(new Map())
+  const sessionCacheRef = useRef<Map<string, AOPHistory>>(new Map())
 
   // Cache canonical events and the source cursor, without another message or
   // timeline graph. Re-entry fetches only events after this durable cursor.
   useEffect(() => {
     if (!activeSessionID) return
-    sessionCacheRef.current.set(activeSessionID, { ...history, scanResults })
-  }, [activeSessionID, history, scanResults])
+    sessionCacheRef.current.set(activeSessionID, history)
+  }, [activeSessionID, history])
 
   const refreshAgents = useCallback(async () => {
     try {
@@ -222,19 +216,15 @@ export function useChatSession() {
     activeSessionRef.current = null
     setTimeline([])
     setHistory({ events: [], cursor: '' })
-    setScanResults(new Map())
     resetTransientState()
   }
 
   // Repaint a cached session's durable state instantly (see sessionCacheRef).
   // Runs the same transient wipe as a cold open so a half-streamed response or
   // stale thinking dots from the previous session can't bleed across the switch.
-  function restoreSnapshot(snap: SessionSnapshot) {
-    setTimeline([...snap.scanResults.keys()].map(scanID => ({
-      id: `scanres-${scanID}`, kind: 'scan_complete', timestamp: Date.now(), scanID,
-    })))
+  function restoreSnapshot(snap: AOPHistory) {
+    setTimeline([])
     setHistory({ events: snap.events, cursor: snap.cursor })
-    setScanResults(snap.scanResults)
     resetTransientState()
   }
 
@@ -317,11 +307,6 @@ export function useChatSession() {
           setTimeline((previous) => previous.some((item) => item.id === timelineID)
             ? previous
             : [...previous, { id: timelineID, kind: 'scan_complete', timestamp: Date.now(), scanID: scan.scanId }])
-          const sessionID = activeSessionRef.current
-          void syncCSTXArtifacts().then(() => listSCONodes({ scanId: scan.scanId })).then(({ items: nodes }) => {
-            if (activeSessionRef.current !== sessionID) return
-            setScanResults((previous) => new Map(previous).set(scan.scanId, nodes))
-          }).catch((error) => { if (activeSessionRef.current === sessionID) setError(String(error)) })
         } catch {
           // Ignore malformed application extensions; the AOP stream remains usable.
         }
@@ -341,6 +326,17 @@ export function useChatSession() {
 
   function restoreHistoryState(events: AOPEvent[], sessionID: string) {
     receivedEventIDsRef.current = new Set(events.map(event => event.id).filter(Boolean))
+    const scans: TimelineItem[] = []
+    for (const event of events) {
+      if (event.sessionId !== sessionID || event.payload.case !== 'extension') continue
+      try {
+        const scan = anyUnpack(event.payload.value, SessionScanEventSchema)
+        if (!scan?.scanId || ![ScanStatus.COMPLETED, ScanStatus.FAILED, ScanStatus.CANCELED].includes(scan.status)) continue
+        const id = `scanres-${scan.scanId}`
+        if (!scans.some(item => item.id === id)) scans.push({ id, kind: 'scan_complete', timestamp: event.emittedAt ? Number(event.emittedAt.seconds) * 1000 : 0, scanID: scan.scanId })
+      } catch { /* malformed application extension */ }
+    }
+    setTimeline(previous => [...previous.filter(item => !scans.some(scan => scan.id === item.id)), ...scans])
     endedTurnIDsRef.current = new Set(events.filter(event => event.sessionId === sessionID
       && event.payload.case === 'turnEnded').map(event => event.turnId).filter(Boolean))
     let turnID = ''
@@ -409,32 +405,6 @@ export function useChatSession() {
           }
           return next
         })
-        await syncCSTXArtifacts()
-        if (activation !== activationRef.current) return
-        // Read every linked scan's CSTX nodes together after the archive sync.
-        const loaded = await Promise.all(
-          scanIDs.map(async (scanID) => {
-            try {
-              const { items: nodes } = await listSCONodes({ scanId: scanID })
-              return { scanID, nodes }
-            } catch (error) {
-              if (activation === activationRef.current) setError(String(error))
-              return { scanID, nodes: undefined as SCONode[] | undefined }
-            }
-          }),
-        )
-        // A session switch during scan loading bumps activationRef; discard
-        // these stale results instead of writing them into the new session's
-        // scanResults map.
-        if (activation !== activationRef.current) return
-        const withResult = loaded.filter((e) => e.nodes !== undefined)
-        if (withResult.length) {
-          setScanResults((prev) => {
-            const next = new Map(prev)
-            for (const e of withResult) next.set(e.scanID, e.nodes!)
-            return next
-          })
-        }
       }
     } catch (error) {
       if (activation === activationRef.current) setError(String(error))
@@ -705,7 +675,6 @@ export function useChatSession() {
     activeSessionRecord,
     timeline,
     aopEvents,
-    scanResults,
     isThinking,
     busy: runRequestPending || activeTurnID !== '',
     canPause: activeTurnID !== '',

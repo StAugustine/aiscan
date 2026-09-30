@@ -81,17 +81,19 @@ func (c Config) validate() error {
 	return nil
 }
 
+var configSection = cfg.Section{
+	Key: ConfigKey, New: func() any { c := defaults(Config{}); return &c }, Secrets: []string{"api_key"},
+	Validate: func(v any) error { return v.(*Config).validate() },
+	Environment: func(s cfg.Sources) (map[string]any, map[string]any, error) {
+		if value, ok := s.LookupEnv("TYPESAFE_API_KEY"); ok && strings.TrimSpace(value) != "" {
+			return nil, map[string]any{"api_key": value}, nil
+		}
+		return nil, nil, nil
+	},
+}
+
 func Declare(resources *resource.Registry) error {
-	_, err := resource.Add[cfg.Section](resources, cfg.Section{
-		Key: ConfigKey, New: func() any { c := defaults(Config{}); return &c }, Secrets: []string{"api_key"},
-		Validate: func(v any) error { return v.(*Config).validate() },
-		Environment: func(s cfg.Sources) (map[string]any, map[string]any, error) {
-			if value, ok := s.LookupEnv("TYPESAFE_API_KEY"); ok && strings.TrimSpace(value) != "" {
-				return nil, map[string]any{"api_key": value}, nil
-			}
-			return nil, nil, nil
-		},
-	})
+	_, err := resource.Add[cfg.Section](resources, configSection)
 	if err != nil {
 		return err
 	}

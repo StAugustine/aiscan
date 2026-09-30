@@ -1,10 +1,23 @@
 package provider
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	aop "github.com/chainreactors/cyber/aop"
 )
+
+// Keep the encoded schema intact at the vendor boundary, including exact numbers.
+func toolInputSchema(schema *aop.EncodedValue) json.RawMessage {
+	data := bytes.TrimSpace(schema.GetData())
+	if len(data) > 0 && data[0] == '{' && json.Valid(data) {
+		return data
+	}
+	return json.RawMessage(`{"type":"object","properties":{}}`)
+}
 
 type Provider interface {
 	Name() string

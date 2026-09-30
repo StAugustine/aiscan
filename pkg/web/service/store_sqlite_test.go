@@ -334,7 +334,7 @@ func TestSQLiteStorePersistsAnalysisOptions(t *testing.T) {
 	}
 }
 
-func TestSQLiteStoreUsesProtoJSONAndRelationalScanColumns(t *testing.T) {
+func TestSQLiteStoreUsesOnlyRelationalScanColumns(t *testing.T) {
 	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "protojson.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
@@ -351,29 +351,27 @@ func TestSQLiteStoreUsesProtoJSONAndRelationalScanColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var raw, target, mode, status, progress string
+	var target, mode, progress string
+	var status scanpb.ScanStatus
 	var verify, sniper bool
 	if err := store.db.QueryRow(`
-		SELECT scan_json, target, mode, verify, sniper, status, progress
+		SELECT target, mode, verify, sniper, status, progress
 		FROM scans WHERE id = ?`, scan.Id,
-	).Scan(&raw, &target, &mode, &verify, &sniper, &status, &progress); err != nil {
+	).Scan(&target, &mode, &verify, &sniper, &status, &progress); err != nil {
 		t.Fatal(err)
 	}
-	if !json.Valid([]byte(raw)) {
-		t.Fatalf("scan_json is not JSON: %q", raw)
-	}
-	if target != scan.Target || mode != scan.Mode || status != scanStatusToDB(scan.Status) || progress != scan.Progress {
-		t.Fatalf("relational projection = target:%q mode:%q status:%q progress:%q", target, mode, status, progress)
+	if target != scan.Target || mode != scan.Mode || status != scan.Status || progress != scan.Progress {
+		t.Fatalf("relational projection = target:%q mode:%q status:%v progress:%q", target, mode, status, progress)
 	}
 	if !verify || !sniper {
 		t.Fatalf("relational options = verify:%v sniper:%v", verify, sniper)
 	}
 	var obsoleteColumns int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('scans') WHERE name = 'scan_proto'`).Scan(&obsoleteColumns); err != nil {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('scans') WHERE name IN ('scan_proto', 'scan_json')`).Scan(&obsoleteColumns); err != nil {
 		t.Fatal(err)
 	}
 	if obsoleteColumns != 0 {
-		t.Fatal("obsolete scan_proto BLOB column still exists")
+		t.Fatal("redundant serialized scan column still exists")
 	}
 }
 

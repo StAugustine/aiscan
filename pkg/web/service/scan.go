@@ -31,7 +31,7 @@ var (
 // scansEnabled reports whether the service mounts the scan console.
 func (s *Service) scansEnabled() bool { return s.sem != nil }
 
-// scanStatusToDB maps the proto enum to the string stored in scans.status.
+// scanStatusToDB formats scan states for messages and diagnostics.
 func scanStatusToDB(value scanpb.ScanStatus) string {
 	switch value {
 	case scanpb.ScanStatus_SCAN_STATUS_RUNNING:

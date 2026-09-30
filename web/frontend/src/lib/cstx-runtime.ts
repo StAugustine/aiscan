@@ -171,21 +171,27 @@ export function syncCSTXArtifacts(artifacts: AOPEvent[] = []): Promise<number> {
 export async function listSCONodes(opts?: { type?: string; scanId?: string; limit?: number; afterCursor?: string }): Promise<{ items: SCONode[]; total: number; nextCursor: string }> {
   const runtime = await cstxRuntime()
   const db = await database(runtime.abiVersion)
-  const observations = await getAll<Observation>(db, observationsStore)
-  const operations = await getAll<ObservedOperation>(db, operationsStore)
-  const selected = operationIDs(operations, opts?.scanId)
+  const selected = opts?.scanId
+    ? operationIDs(await getAll<ObservedOperation>(db, operationsStore), opts.scanId)
+    : undefined
   let nodes: CanonicalSCONode[]
   if (opts?.scanId) {
     // Merge only the selected execution's own observations, never the global graph.
     const isolated = await CSTXArtifactNormalizer.create()
     try {
-      const own = observations.filter((o) => selected.has(o.operation_id)).map((o) => o.node)
+      const index = db.transaction(observationsStore).objectStore(observationsStore).index('operation_id')
+      const observations = await Promise.all([...selected!].sort().map((id) => requestValue<Observation[]>(index.getAll(id))))
+      const own = observations.flat().map((o) => o.node)
       isolated.hydrate(own)
       nodes = isolated.nodes([...new Set(own.map((node) => node.cstx_id))])
     } finally { isolated.close() }
   } else { nodes = await getAll<CanonicalSCONode>(db, nodesStore) }
   if (opts?.type) nodes = nodes.filter((node) => node.cstx_type === opts.type)
-  const evidence = (await getAll<ResultEvidence>(db, evidenceStore)).filter((e) => !opts?.scanId || selected.has(e.operation_id))
+  let evidence: ResultEvidence[]
+  if (selected) {
+    const store = db.transaction(evidenceStore).objectStore(evidenceStore)
+    evidence = (await Promise.all([...selected].sort().map((id) => requestValue<ResultEvidence[]>(store.getAll(IDBKeyRange.bound(`${id}\0`, `${id}\x01`, false, true)))))).flat()
+  } else { evidence = await getAll<ResultEvidence>(db, evidenceStore) }
   const byNode = new Map<string, ResultEvidence[]>()
   for (const item of evidence) for (const id of item.node_ids) byNode.set(id, [...(byNode.get(id) || []), item])
   nodes.sort((a, b) => a.cstx_id.localeCompare(b.cstx_id))
@@ -198,14 +204,21 @@ export async function listSCONodes(opts?: { type?: string; scanId?: string; limi
   }
 }
 
-function operationIDs(operations: ObservedOperation[], id?: string): Set<string> {
-  if (!id) return new Set(operations.map((op) => op.id))
+function operationIDs(operations: ObservedOperation[], id: string): Set<string> {
   const ids = new Set([id])
+  const children = new Map<string, string[]>()
   // Call identity selects all child command operations, without replacing their identities.
-  for (const op of operations) if (op.call_id === id) ids.add(op.id)
-  for (let previous = -1; previous !== ids.size;) {
-    previous = ids.size
-    for (const op of operations) if (op.parent_id && ids.has(op.parent_id)) ids.add(op.id)
+  for (const op of operations) {
+    if (op.call_id === id) ids.add(op.id)
+    if (op.parent_id) {
+      const group = children.get(op.parent_id) || []
+      group.push(op.id)
+      children.set(op.parent_id, group)
+    }
+  }
+  // Set iteration also visits appended descendants, once, and terminates on cycles.
+  for (const parent of ids) {
+    for (const child of children.get(parent) || []) ids.add(child)
   }
   return ids
 }
@@ -218,20 +231,24 @@ export async function listCSTXOperations(): Promise<ObservedOperation[]> {
 export async function cstxFailures(scanId?: string): Promise<ParseFailure[]> {
   const runtime = await cstxRuntime()
   const db = await database(runtime.abiVersion)
-  const selected = operationIDs(await getAll<ObservedOperation>(db, operationsStore), scanId)
-  return (await getAll<ParseFailure>(db, failuresStore)).filter((failure) => !scanId || selected.has(failure.operation_id))
+  const selected = scanId ? operationIDs(await getAll<ObservedOperation>(db, operationsStore), scanId) : undefined
+  return (await getAll<ParseFailure>(db, failuresStore)).filter((failure) => !selected || selected.has(failure.operation_id))
 }
 
 export function retryCSTXFailures(): Promise<void> {
   if (syncing) return syncing.then(() => retryCSTXFailures())
   syncing = (async () => {
     const runtime = await cstxRuntime()
+    let changed = false
     try {
       const db = await database(runtime.abiVersion)
-      for (const failure of await getAll<ParseFailure>(db, failuresStore)) await consumeEvent(db, runtime, failure.event)
+      for (const failure of await getAll<ParseFailure>(db, failuresStore)) {
+        const [, updated] = await consumeEvent(db, runtime, failure.event, undefined, failure.error)
+        changed ||= updated
+      }
       return 0
     } catch (error) { runtime.close(); runtimePromise = undefined; throw error }
-    finally { window.dispatchEvent(new Event(changedEvent)) }
+    finally { if (changed) window.dispatchEvent(new Event(changedEvent)) }
   })().finally(() => { syncing = undefined })
   return syncing.then(() => undefined)
 }
@@ -247,6 +264,7 @@ async function syncArchive(upload: AOPEvent[]): Promise<number> {
   let cursor = await getMeta(db, cursorKey) || '0'
   let stored = 0
   let appended = upload
+  let changed = false
   try {
     for (;;) {
       const deliveries = await syncArtifactEvents(cursor, appended)
@@ -254,7 +272,9 @@ async function syncArchive(upload: AOPEvent[]): Promise<number> {
       if (!deliveries.length) break
       for (const delivery of deliveries) {
         if (!delivery.cursor || !delivery.event) throw new Error('Invalid artifact archive delivery')
-        stored += await consumeEvent(db, runtime, delivery.event, delivery.cursor)
+        const [count, updated] = await consumeEvent(db, runtime, delivery.event, delivery.cursor)
+        stored += count
+        changed ||= updated
         cursor = delivery.cursor
       }
     }
@@ -263,7 +283,7 @@ async function syncArchive(upload: AOPEvent[]): Promise<number> {
     runtime.close()
     runtimePromise = undefined
     throw error
-  } finally { window.dispatchEvent(new Event(changedEvent)) }
+  } finally { if (changed) window.dispatchEvent(new Event(changedEvent)) }
   return stored
 }
 
@@ -275,7 +295,7 @@ function operationRef(event: AOPEvent) {
   return undefined
 }
 
-async function consumeEvent(db: IDBDatabase, runtime: CSTXArtifactNormalizer, event: AOPEvent, cursor?: string): Promise<number> {
+async function consumeEvent(db: IDBDatabase, runtime: CSTXArtifactNormalizer, event: AOPEvent, cursor?: string, previousError?: string): Promise<[number, boolean]> {
   const ref = operationRef(event)
   const operationID = ref?.operationId || ''
   const artifact = event.payload.case === 'extension' ? anyUnpack(event.payload.value, ArtifactSchema) : undefined
@@ -337,7 +357,7 @@ async function consumeEvent(db: IDBDatabase, runtime: CSTXArtifactNormalizer, ev
     await done.catch(() => undefined)
     throw error
   }
-  return observed.length
+  return [observed.length, failure !== previousError]
 }
 
 async function getMeta(db: IDBDatabase, key: string): Promise<string | undefined> {

@@ -137,6 +137,9 @@ func validateSchema(db *sql.DB, schema SchemaModule) error {
 			return err
 		}
 		if !slices.Equal(columns, schema.Tables[table]) {
+			if table == "scans" && slices.Contains(columns, "scan_json") {
+				return fmt.Errorf("legacy scan_json storage: stop the server and run go run ./cmd/migrate-scans -db <database-path> to retain scan records")
+			}
 			if table == "chat_aop_events" && slices.Contains(columns, "event_json") {
 				return fmt.Errorf("legacy event_json storage: stop the server and run go run ./cmd/migrate-events -db <database-path> to retain the event history")
 			}

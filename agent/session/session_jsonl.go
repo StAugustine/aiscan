@@ -9,7 +9,6 @@ import (
 
 	aop "github.com/chainreactors/cyber/aop"
 	types "github.com/chainreactors/cyber/core/types"
-	"google.golang.org/protobuf/proto"
 )
 
 type History struct {
@@ -76,12 +75,13 @@ func ReadHistory(path string) (*History, error) {
 			if _, command, _ := types.GetCommandDetail(event); command {
 				return nil
 			}
-			stream.messages = append(stream.messages, proto.CloneOf(payload.Message))
+			// ScanJSONL owns a fresh event per record; recovery transfers it to History.
+			stream.messages = append(stream.messages, payload.Message)
 			stream.messageCounter = max(stream.messageCounter, messageIDSequence(payload.Message.Id))
 		case *aop.Event_ToolResult:
 			if payload.ToolResult != nil {
 				stream.messages = append(stream.messages, &aop.Message{
-					Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: proto.CloneOf(payload.ToolResult)}}},
+					Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: payload.ToolResult}}},
 				})
 			}
 		}
@@ -158,7 +158,7 @@ func resumeStreamMessages(selected *resumeStream, streams map[string]*resumeStre
 			if message == nil {
 				continue
 			}
-			messages = append(messages, proto.CloneOf(message))
+			messages = append(messages, message)
 			counter = max(counter, messageIDSequence(message.Id))
 		}
 		counter = max(counter, stream.messageCounter)

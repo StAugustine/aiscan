@@ -51,7 +51,7 @@ import {
 import { fetchSessionCommands, uploadChatFile } from '../api'
 import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, DelegationDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import type { AgentListMetadata, CommandSpec, SCONode } from '../api'
+import type { AgentListMetadata, CommandSpec } from '../api'
 import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
 import ScannerToolCall from './chat/ScannerToolCall'
 import SubagentRunCard from './chat/SubagentRunCard'
@@ -62,7 +62,7 @@ import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
 const webUserAgent = 'cyber.web'
 
-function toExtensionItem(item: TimelineItem, scanResults: Map<string, SCONode[]>): ExtensionTimelineItem | null {
+function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
   switch (item.kind) {
     case 'scan_complete':
       return {
@@ -70,7 +70,7 @@ function toExtensionItem(item: TimelineItem, scanResults: Map<string, SCONode[]>
         kind: 'extension',
         timestamp: item.timestamp,
         extensionType: 'scan_complete',
-        data: { scanID: item.scanID || '', nodes: scanResults.get(item.scanID || '') },
+        data: { scanID: item.scanID || '' },
       }
     default:
       return null
@@ -361,7 +361,6 @@ function isUserMessageItem(
 
 function toViewerTimelineItem(
   item: TimelineItem,
-  scanResults: Map<string, SCONode[]>,
 ): ViewerTimelineItem | null {
   switch (item.kind) {
     case 'message': {
@@ -392,7 +391,7 @@ function toViewerTimelineItem(
         content: item.content || '',
       }
     case 'scan_complete':
-      return toExtensionItem(item, scanResults)
+      return toExtensionItem(item)
     default:
       return null
   }
@@ -408,7 +407,6 @@ interface Props {
   guardrailUnavailable?: boolean
   guardrailReviews: Review[]
   onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
-  scanResults: Map<string, SCONode[]>
   isThinking: boolean
   isBusy: boolean
   canPause: boolean
@@ -436,7 +434,6 @@ export default function ChatPanel({
   guardrailReviews,
   guardrailUnavailable = false,
   onResolveGuardrail,
-  scanResults,
   isThinking,
   isBusy,
   canPause,
@@ -468,7 +465,7 @@ export default function ChatPanel({
   const viewerTimeline = useMemo<ViewerTimelineItem[]>(() => {
     const source = liveThinkingItem && agentEvents.length === 0 ? [...timeline, liveThinkingItem] : timeline
     const platformItems = source
-      .map((item) => toViewerTimelineItem(item, scanResults))
+      .map((item) => toViewerTimelineItem(item))
       .filter((item): item is ViewerTimelineItem => item !== null)
       .filter((item) => agentEvents.length === 0
         || item.kind === 'extension'
@@ -497,7 +494,7 @@ export default function ChatPanel({
     return groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
     ), guardrailReviews, aopEvents, !guardrailUnavailable))
-  }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, scanResults, timeline, guardrailReviews, guardrailUnavailable])
+  }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
   // activity, so the conversation and composer never jump horizontally.
@@ -644,8 +641,8 @@ export default function ChatPanel({
           <div className="min-w-0 flex-1"><GuardrailReviewCard review={item.data.review as Review} unavailable={item.data.unavailable === true} intercepted={item.data.intercepted === true} outcome={item.data.outcome as string | undefined} actionable={item.data.actionable === true}
             reviewedAt={item.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} /></div>
         </div>
-      : timelineContent(item, scanResults, activeThinkingResponseID, onResolveGuardrail),
-    [activeThinkingResponseID, scanResults, onResolveGuardrail],
+      : timelineContent(item, activeThinkingResponseID, onResolveGuardrail),
+    [activeThinkingResponseID, onResolveGuardrail],
   )
   const renderViewerMark = useCallback(
     (item: ViewerTimelineItem) => <TimelineMark item={item} />,
@@ -816,7 +813,6 @@ export default function ChatPanel({
 
 function timelineContent(
   item: ViewerTimelineItem,
-  scanResults: Map<string, SCONode[]>,
   activeThinkingResponseID: string | null,
   onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>,
 ): ReactNode {
@@ -867,7 +863,7 @@ function timelineContent(
       return (
         <SubagentRunCard run={item}>
           {item.items.map((child) => (
-            <div key={child.id}>{timelineContent(child, scanResults, activeThinkingResponseID, onResolveGuardrail)}</div>
+            <div key={child.id}>{timelineContent(child, activeThinkingResponseID, onResolveGuardrail)}</div>
           ))}
         </SubagentRunCard>
       )
@@ -902,7 +898,7 @@ function timelineContent(
       const config = resolveTimelineRenderer(item.extensionType)
       if (!config) return null
       const Renderer = config.renderer
-      return <Renderer item={item} context={{ scanResults }} />
+      return <Renderer item={item} context={{}} />
     }
 
     case 'divider':

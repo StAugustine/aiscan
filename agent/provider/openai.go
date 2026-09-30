@@ -170,9 +170,9 @@ type openAIToolCall struct {
 type openAITool struct {
 	Type     string `json:"type"`
 	Function struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Parameters  map[string]any `json:"parameters"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
 }
 
@@ -266,15 +266,7 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 		t.Type = "function"
 		t.Function.Name = def.Name
 		t.Function.Description = def.Description
-		if def.InputSchema != nil {
-			var schema map[string]any
-			if err := json.Unmarshal(def.InputSchema.Data, &schema); err == nil {
-				t.Function.Parameters = schema
-			}
-		}
-		if t.Function.Parameters == nil {
-			t.Function.Parameters = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
+		t.Function.Parameters = toolInputSchema(def.InputSchema)
 		tools = append(tools, t)
 	}
 	body := map[string]any{

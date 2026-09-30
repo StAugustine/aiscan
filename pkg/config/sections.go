@@ -234,6 +234,11 @@ func (r *Sections) Decode(key string, fields map[string]any) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("unregistered extension configuration %q", key)
 	}
+	return s.Decode(fields)
+}
+
+// Decode applies this declaration's factory, normalization and validation.
+func (s Section) Decode(fields map[string]any) (any, error) {
 	value := s.New()
 	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
 		TagName: "json", Result: value, ErrorUnused: true,
@@ -279,16 +284,16 @@ func (r *Sections) Decode(key string, fields map[string]any) (any, error) {
 		return nil, err
 	}
 	if err := decoder.Decode(fields); err != nil {
-		return nil, fmt.Errorf("extension %s: %w", key, err)
+		return nil, fmt.Errorf("extension %s: %w", s.Key, err)
 	}
 	if s.Normalize != nil {
 		if err := s.Normalize(value); err != nil {
-			return nil, fmt.Errorf("extension %s: %w", key, err)
+			return nil, fmt.Errorf("extension %s: %w", s.Key, err)
 		}
 	}
 	if s.Validate != nil {
 		if err := s.Validate(value); err != nil {
-			return nil, fmt.Errorf("extension %s: %w", key, err)
+			return nil, fmt.Errorf("extension %s: %w", s.Key, err)
 		}
 	}
 	return value, nil

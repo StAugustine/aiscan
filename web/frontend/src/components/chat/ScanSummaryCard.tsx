@@ -13,13 +13,12 @@ import { buildCSTXMarkdownReport } from '../../lib/scan-report'
 
 interface Props {
   scanID: string
-  nodes?: SCONode[]
 }
 
-export default function ScanSummaryCard({ scanID, nodes: initialNodes }: Props) {
+export default function ScanSummaryCard({ scanID }: Props) {
   const { t } = useTranslation('scan')
   const { t: tf, i18n } = useTranslation('findings')
-  const [nodes, setNodes] = useState<SCONode[]>(initialNodes || [])
+  const [nodes, setNodes] = useState<SCONode[]>([])
   const model = useMemo(() => buildSCOModel(nodes), [nodes])
   const findings = useMemo(() => buildFindingsFromSCO(model), [model])
   const [tab, setTab] = useState('assets')
@@ -28,6 +27,7 @@ export default function ScanSummaryCard({ scanID, nodes: initialNodes }: Props) 
   const [loading, setLoading] = useState(true)
   useEffect(() => {
     let active = true
+    let initializing = true
     setLoading(true)
     setScan(undefined)
     setNodes([])
@@ -38,10 +38,15 @@ export default function ScanSummaryCard({ scanID, nodes: initialNodes }: Props) 
       } catch (error) { if (active) setFailure(String(error)) }
       finally { if (active) setLoading(false) }
     }
-    void syncCSTXArtifacts().then(load).catch((error) => {
-      if (active) { setFailure(String(error)); setLoading(false) }
-    })
-    const unsubscribe = subscribeCSTXChanges(() => void load())
+    const unsubscribe = subscribeCSTXChanges(() => { if (!initializing) void load() })
+    void (async () => {
+      let syncError = ''
+      try { await syncCSTXArtifacts() } catch (error) { syncError = String(error) }
+      initializing = false
+      if (!active) return
+      await load()
+      if (active && syncError) setFailure(syncError)
+    })()
     return () => { active = false; unsubscribe() }
   }, [scanID])
   const complete = !loading && !failure && scan?.status === ScanStatus.COMPLETED

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -164,11 +165,11 @@ type cacheControlMarker struct {
 }
 
 type anthropicTool struct {
-	Type         string                 `json:"type,omitempty"`
-	Name         string                 `json:"name"`
-	Description  string                 `json:"description,omitempty"`
-	InputSchema  map[string]interface{} `json:"input_schema"`
-	CacheControl *cacheControlMarker    `json:"cache_control,omitempty"`
+	Type         string              `json:"type,omitempty"`
+	Name         string              `json:"name"`
+	Description  string              `json:"description,omitempty"`
+	InputSchema  json.RawMessage     `json:"input_schema"`
+	CacheControl *cacheControlMarker `json:"cache_control,omitempty"`
 }
 
 func (p *AnthropicProvider) marshalRequest(req *ChatCompletionRequest) ([]byte, error) {
@@ -177,17 +178,10 @@ func (p *AnthropicProvider) marshalRequest(req *ChatCompletionRequest) ([]byte, 
 	var tools []anthropicTool
 	official := strings.Contains(p.config.BaseURL, "anthropic.com")
 	for _, def := range req.Tools {
-		inputSchema := map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
-		if def.InputSchema != nil {
-			var schema map[string]interface{}
-			if err := json.Unmarshal(def.InputSchema.Data, &schema); err == nil && schema != nil {
-				inputSchema = schema
-			}
-		}
 		at := anthropicTool{
 			Name:        def.Name,
 			Description: def.Description,
-			InputSchema: inputSchema,
+			InputSchema: toolInputSchema(def.InputSchema),
 		}
 		if official {
 			at.Type = "custom"
@@ -216,15 +210,12 @@ func (p *AnthropicProvider) marshalRequest(req *ChatCompletionRequest) ([]byte, 
 				blocks = append(blocks, map[string]interface{}{"type": "text", "text": text})
 			}
 			for _, call := range MessageToolCalls(m) {
-				var input interface{}
-				args := ""
-				if call.Arguments != nil {
-					args = strings.TrimSpace(string(call.Arguments.Data))
-				}
-				if args == "" {
-					input = map[string]interface{}{}
-				} else if err := json.Unmarshal([]byte(args), &input); err != nil {
-					return nil, fmt.Errorf("anthropic tool call %q has invalid JSON arguments: %w", call.Name, err)
+				input := json.RawMessage(`{}`)
+				if args := bytes.TrimSpace(call.GetArguments().GetData()); len(args) > 0 {
+					if !json.Valid(args) {
+						return nil, fmt.Errorf("anthropic tool call %q has invalid JSON arguments", call.Name)
+					}
+					input = args
 				}
 				blocks = append(blocks, map[string]interface{}{
 					"type":  "tool_use",
