@@ -21,7 +21,7 @@ import {
   sendChatMessage,
   subscribeAOPEvents,
 } from '../api'
-import type { AgentView, AOPEvent, AOPSession, SessionRecord } from '../api'
+import type { AgentView, AOPEvent, AOPSession, ChatSendOptions, SessionRecord } from '../api'
 import {
   isRootPath,
   parseRoute,
@@ -363,9 +363,9 @@ export function useChatSession() {
     }
   }
 
-  async function handleSendMessage(content: string, opts?: { persist?: boolean; evalCriteria?: string; evalRounds?: string; sessionID?: string }): Promise<boolean> {
+  async function handleSendMessage(content: string, opts?: ChatSendOptions & { sessionID?: string }): Promise<boolean> {
     const submissionScope = opts?.sessionID || activeSessionRef.current
-    if (!content.trim() || submittingSessions.current.has(submissionScope)) return false
+    if ((!content.trim() && !opts?.images?.length) || submittingSessions.current.has(submissionScope)) return false
     submittingSessions.current.add(submissionScope)
     let optimisticID = ''
     let sessionID: string | null = null

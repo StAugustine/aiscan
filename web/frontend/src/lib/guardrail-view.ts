@@ -185,6 +185,14 @@ export function groupGuardrailTurns(items: ViewerTimelineItem[]): ViewerTimeline
   const grouped = new Map<string, Extract<ViewerTimelineItem, { kind: 'assistant_response' }>>()
   const result: ViewerTimelineItem[] = []
   for (const item of source) {
+    const previous = result[result.length - 1]
+    if (item.kind === 'extension' && ['eval', 'compact'].includes(item.extensionType)
+      && previous?.kind === 'assistant_response' && previous.steps && previous.actorName === item.actorName) {
+      // A Goal can evaluate several rounds within one approved turn. Keep its
+      // feedback between the round responses inside the existing turn card.
+      previous.steps.push(item)
+      continue
+    }
     const prefix = item.kind === 'assistant_response' ? prefixes.find(value => item.id.startsWith(value))
       : item.kind === 'extension' && item.extensionType === 'guardrail' ? item.data.responsePrefix as string | undefined : undefined
     const first = prefix ? firstResponses.get(prefix) : undefined

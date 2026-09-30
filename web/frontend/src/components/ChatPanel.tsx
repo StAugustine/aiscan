@@ -275,7 +275,11 @@ function reduceConversationAOP(
   const reduce = (key: string, batch: AOPEvent[], live: boolean) => {
     let reducer = reducers.get(key)
     if (!reducer) {
-      reducer = createAOPTimelineReducer({ lifecycle: 'errors', responseBoundary: isGuardrailBoundary })
+      reducer = createAOPTimelineReducer({
+        lifecycle: 'errors',
+        responseBoundary: event => isGuardrailBoundary(event) || (event.payload.case === 'status'
+          && ['eval_start', 'compact_start'].includes(event.payload.value.state)),
+      })
       reducers.set(key, reducer)
     }
     return reducer(guardrailTimelineEvents(batch), live) as ViewerTimelineItem[]
@@ -1159,7 +1163,9 @@ function AssistantResponseEntry({
                 <GuardrailReviewCard review={step.data.review as Review} unavailable={step.data.unavailable === true} intercepted={step.data.intercepted === true} outcome={step.data.outcome as string | undefined} actionable={step.data.actionable === true}
                   reviewedAt={step.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} embedded />
               </div>
-            : null)}
+            : <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                {timelineContent(step, null, onResolveGuardrail)}
+              </div>)}
         </div>
       </div>}
     </AssistantResponse>

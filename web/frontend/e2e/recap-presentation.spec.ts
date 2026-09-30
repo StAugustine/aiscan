@@ -3,7 +3,7 @@ import { create, toBinary, type MessageInitShape } from '@bufbuild/protobuf'
 import { anyPack, timestampFromDate } from '@bufbuild/protobuf/wkt'
 import { EventSchema, type Event } from '../cyber-ui/packages/aop/src/gen/aop/event_pb'
 import { reduceAOPToTimeline } from '../cyber-ui/packages/viewer/src/lib/aop-reducer'
-import { RecapSchema, ReviewSchema, ReviewState } from '../src/cyber-proto'
+import { CompactDetailSchema, EvalDetailSchema, RecapSchema, ReviewSchema, ReviewState } from '../src/cyber-proto'
 import { withRecaps } from '../src/lib/recap-view'
 import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, withGuardrailReviews } from '../src/lib/guardrail-view'
 
@@ -90,6 +90,34 @@ test('failed work can display its recap without changing the terminal error', ()
   const result = project([answer(), failure, recap(3, 'Checked the code; verification failed.')])
   expect(result[0]).toHaveProperty('response.metadata.recap', 'Checked the code; verification failed.')
   expect(result.slice(1)).toEqual(base.slice(1))
+})
+
+test('approved Goal rounds preserve feedback and compaction order through recap replay', async ({ page }) => {
+  await page.goto(`http://127.0.0.1:${process.env.CYBER_E2E_FIXTURE_PORT || '38082'}/e2e/fixtures/recap.html`)
+  await page.waitForFunction(() => typeof (window as any).renderRecapEvents === 'function')
+  const events = [...reviewedTask().slice(0, -1),
+    event(6, { case: 'status', value: { state: 'eval_start' } }),
+    create(EventSchema, { ...event(7, { case: 'status', value: { state: 'eval_end' } }),
+      extensions: [anyPack(EvalDetailSchema, create(EvalDetailSchema, { round: 1, reason: 'Run the next round' }))] }),
+    event(8, { case: 'status', value: { state: 'compact_start' } }, ''),
+    create(EventSchema, { ...event(9, { case: 'status', value: { state: 'compact_end' } }, ''),
+      extensions: [anyPack(CompactDetailSchema, create(CompactDetailSchema, { tokensBefore: 100n, tokensAfter: 50n, keptMessages: 3n }))] }),
+    event(10, { case: 'message', value: { id: 'round-two', role: 'assistant',
+      content: [{ value: { case: 'text', value: { text: 'Second round answer' } } }] } }), ended(11),
+  ]
+  for (const history of [events, [...events, recap(12), recap(12)]]) {
+    await page.evaluate(values => (window as any).renderRecapEvents(values), history.map(value => Array.from(toBinary(EventSchema, value))))
+    await expect(page.getByText('Second round answer', { exact: true })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Run the next round' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: 'Context compacted' })).toBeVisible()
+    const order = await page.locator('[data-testid="assistant-response-content"], [role="status"]').allTextContents()
+    const second = order.findIndex(text => text.includes('Second round answer'))
+    expect(order.findIndex(text => text.includes('Run the next round'))).toBeLessThan(second)
+    expect(order.findIndex(text => text.includes('Context compacted'))).toBeLessThan(second)
+    await expect(page.locator('[data-guardrail-turn]')).toHaveCount(1)
+  }
+  await expect(page.getByTestId('task-recap')).toHaveText('Checked the implementation.')
+  await expect(page.getByTestId('assistant-response-footer')).toHaveCount(1)
 })
 
 test('ChatPanel renders one plain-text footer after the answer and preserves composer input', async ({ page }) => {

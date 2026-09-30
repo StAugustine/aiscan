@@ -65,10 +65,11 @@ for (const scenario of ['retry', 'reconnect']) {
     } else {
       await expect(content).toContainText('Intermediate step before reconnect.')
       await expect(pause).toBeVisible()
-      // Ensure the reconnect projection sees the intermediate assistant tail.
-      const reconciled = page.waitForResponse(response => response.url().includes('/ListEvents') && response.ok())
+      // Resume the existing cursor while preserving the intermediate response.
+      const socketCount = await page.evaluate(() => (window as any).testSockets.length)
       await page.evaluate(() => (window as any).testSockets.at(-1).close())
-      await (await reconciled).finished()
+      await expect.poll(() => page.evaluate(() => (window as any).testSockets.length)).toBeGreaterThan(socketCount)
+      await expect.poll(() => page.evaluate(() => (window as any).testSockets.at(-1).readyState)).toBe(1)
       const sessionID = new URL(page.url()).pathname.split('/').filter(Boolean).at(-1)
       const historyResponse = await page.request.post('/cyber.rpc.chat.SessionService/ListEvents', {
         headers: { Authorization: `Bearer ${process.env.ACCESS_KEY || 'test-token'}`, 'Connect-Protocol-Version': '1' },
