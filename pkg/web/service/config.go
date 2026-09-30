@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chainreactors/cyber/agent/provider"
 	"github.com/chainreactors/cyber/core/extension"
 	types "github.com/chainreactors/cyber/core/types"
+	cfg "github.com/chainreactors/cyber/pkg/config"
 	profile "github.com/chainreactors/cyber/pkg/profile"
 	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	"google.golang.org/protobuf/proto"
@@ -23,6 +25,7 @@ type ConfigStore interface {
 
 type PreparedConfig struct {
 	Config      *types.DistributeConfig
+	Runtime     *cfg.Option
 	RuntimePath string
 	TargetPath  string
 }
@@ -96,6 +99,58 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 	if proto.Equal(current, prepared.Config) {
 		return s.api.Config.View(ctx)
 	}
+	// Provider edits belong to the existing owner. Building an installation
+	// graph here would cancel local sessions and drop their model context.
+	previousGraph, nextGraph := proto.CloneOf(current), proto.CloneOf(prepared.Config)
+	if previousGraph != nil && nextGraph != nil {
+		previousGraph.Llm, nextGraph.Llm = nil, nil
+		if proto.Equal(previousGraph, nextGraph) {
+			s.appMu.Lock()
+			target, supported := s.profile.(interface {
+				CommitProvider(context.Context, provider.ProviderConfig, func() error) error
+			})
+			s.appMu.Unlock()
+			providerConfig := cfg.ProviderConfigFromProto(prepared.Config.GetLlm())
+			// Incomplete provider drafts still use the existing save path, whose
+			// optional startup permits an unconfigured provider. A hot update
+			// requires a client that can be validated before publication.
+			if supported && strings.TrimSpace(providerConfig.APIKey) != "" {
+				commit := func() error {
+					if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+						return err
+					}
+					committed = true
+					return nil
+				}
+				if err := target.CommitProvider(ctx, providerConfig, commit); err != nil {
+					return nil, managementapi.NewError(managementapi.CodeFailedPrecondition, fmt.Errorf("update provider: %w", err))
+				}
+				if s.agents != nil {
+					s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))
+				}
+				return s.api.Config.View(ctx)
+			}
+		}
+	}
+	if mode, onlyMode := cfg.GuardrailModeChange(current, prepared.Config); onlyMode {
+		s.appMu.Lock()
+		target, supported := s.profile.(interface{ SetGuardrailMode(string) error })
+		s.appMu.Unlock()
+		if supported {
+			if err := target.SetGuardrailMode(mode); err != nil {
+				return nil, fmt.Errorf("apply guardrail mode: %w", err)
+			}
+			if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+				previousMode, _ := cfg.GuardrailModeChange(prepared.Config, current)
+				return nil, errors.Join(err, target.SetGuardrailMode(previousMode))
+			}
+			committed = true
+			if s.agents != nil {
+				s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))
+			}
+			return s.api.Config.View(ctx)
+		}
+	}
 	// Candidate cleanup has its own budget: the request may already be canceled.
 	// An unfinished candidate remains owned here for Close or the next Save.
 	defer func() {
@@ -129,15 +184,20 @@ func (s *Service) saveConfig(ctx context.Context, config *types.DistributeConfig
 			return nil, fmt.Errorf("config candidate is not ready: profile is not active")
 		}
 	}
-	if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
-		return nil, err
+	commit := func() error {
+		if err := s.configStore.CommitDistributeConfig(ctx, prepared); err != nil {
+			return err
+		}
+		committed = true
+		return nil
 	}
-	committed = true
 	if next != nil {
-		if err := s.swapProfile(next); err != nil {
-			return nil, fmt.Errorf("config committed but activation failed: %w", err)
+		if err := s.swapProfile(next, commit); err != nil {
+			return nil, err
 		}
 		s.pending = nil
+	} else if err := commit(); err != nil {
+		return nil, err
 	}
 	if s.agents != nil {
 		s.agents.BroadcastConfigReload(s.configWithRuntimeLLM(prepared.Config))

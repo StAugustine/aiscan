@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	aop "github.com/chainreactors/cyber/aop"
 	"io"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -375,7 +377,13 @@ func (t *BashTool) start(ctx context.Context, command string, options BashExecOp
 	if spec, args, ok := t.literalBuiltin(script); ok {
 		execution.Command, execution.Args = spec.Name, args
 	}
-	info, err := t.tasks.Start(ctx, procSpec(options.Name, command, timeout), t.interpreterAttachment(script, execution, options))
+	sessionSpec := procSpec(options.Name, command, timeout)
+	if execution.Command == command {
+		sessionSpec.OutputFile = filepath.Join(workDir, ".cyber", "output", strings.ReplaceAll(aop.EnvelopeID(), ":", "-")+".log")
+		sessionSpec.OutputFileAfterBytes = truncate.DefaultMaxBytes
+		sessionSpec.OutputFileAfterLines = truncate.DefaultMaxLines
+	}
+	info, err := t.tasks.Start(ctx, sessionSpec, t.interpreterAttachment(script, execution, options))
 	if err != nil {
 		return nil, err
 	}
@@ -457,16 +465,17 @@ func (t *BashTool) background(execution *coretool.Execution, targetInbox inbox.I
 		<-t.tasks.Done(execution.ID)
 		return t.collectResult(execution)
 	}
-	t.startMonitor(info, targetInbox)
+	t.startMonitor(info, execution.Dir, targetInbox)
 	return coretool.TextResult(fmt.Sprintf(
 		"Command moved to background %s. It is still managed by tmux.\nsession id=%s name=%s\nUse `tmux capture-pane -t %s` to inspect output or `tmux kill-session -t %s` to stop. Completion is delivered to the calling Inbox when present.",
-		reason, info.ID, info.Name, info.ID, info.ID))
+		reason, info.ID, info.Name, info.ID, info.ID) + t.outputFileHint(info.ID, execution.Dir))
 }
 
 func (t *BashTool) collectResult(execution *coretool.Execution) *coretool.Result {
 	fullCapture := execution != nil && execution.Command == "tmux" && len(execution.Args) >= 2 &&
 		(execution.Args[0] == "capture-pane" || execution.Args[0] == "peek") && contains(execution.Args[1:], "--full")
-	raw := t.tasks.PeekOrEmpty(execution.ID, truncate.DefaultMaxLines)
+	data, total, _ := t.tasks.SnapshotBytes(execution.ID, 0)
+	raw := strings.TrimRight(string(data), "\r\n")
 	truncateOptions := truncate.Options{}
 	if fullCapture {
 		const markerHeadroom = 8 * 1024
@@ -477,12 +486,13 @@ func (t *BashTool) collectResult(execution *coretool.Execution) *coretool.Result
 	}
 	r := truncate.Tail(output.StripANSI(raw), truncateOptions)
 	text := r.Content
-	if r.Truncated {
+	if r.Truncated || total > int64(len(data)) {
 		startLine := r.TotalLines - r.OutputLines + 1
 		text += fmt.Sprintf(
 			"\n\n[truncated: showing lines %d-%d of %d (%s of %s). Use tmux read to access earlier output.]",
 			startLine, r.TotalLines, r.TotalLines, truncate.FormatSize(r.OutputBytes), truncate.FormatSize(r.TotalBytes))
 	}
+	text += t.outputFileHint(execution.ID, execution.Dir)
 	info, _ := t.tasks.Get(execution.ID)
 	if info.Reason != "" {
 		text += fmt.Sprintf("\n[command stopped: %s]", info.Reason)
@@ -529,7 +539,19 @@ func (t *BashTool) runEnv(overrides map[string]string) []string {
 	return out
 }
 
-func (t *BashTool) startMonitor(info proc.Info, targetInbox inbox.Inbox) {
+func (t *BashTool) outputFileHint(id, workDir string) string {
+	if path, err := t.tasks.OutputFile(id); path != "" {
+		if relative, relErr := filepath.Rel(workDir, path); relErr == nil {
+			path = relative
+		}
+		return fmt.Sprintf("\n\n[Full command output saved to %s. Read this file with offset/limit.]", path)
+	} else if err != nil {
+		return fmt.Sprintf("\n\n[Could not save full command output: %v. Earlier output is available only while retained by tmux.]", err)
+	}
+	return ""
+}
+
+func (t *BashTool) startMonitor(info proc.Info, workDir string, targetInbox inbox.Inbox) {
 	if targetInbox == nil {
 		return
 	}
@@ -538,6 +560,7 @@ func (t *BashTool) startMonitor(info proc.Info, targetInbox inbox.Inbox) {
 	}
 	producer := targetInbox.RegisterProducer("bash:" + info.ID)
 	t.tasks.Monitor(info.ID, monitorInterval, func(output string) {
+		output = truncate.Tail(strings.ToValidUTF8(output, "�"), truncate.Options{}).Content
 		msg := inbox.NewMessage(inbox.OriginSession, "user",
 			fmt.Sprintf("<session_output id=%q name=%q>\n%s\n</session_output>", info.ID, info.Name, output))
 		msg.Priority = inbox.PriorityLow
@@ -555,8 +578,8 @@ func (t *BashTool) startMonitor(info proc.Info, targetInbox inbox.Inbox) {
 		if !ok {
 			return
 		}
-		tail := t.tasks.PeekOrEmpty(info.ID, 20)
-		msg := inbox.NewMessage(inbox.OriginSession, "user", FormatCompletion(final, tail))
+		tail := truncate.Tail(strings.ToValidUTF8(t.tasks.PeekOrEmpty(info.ID, 20), "�"), truncate.Options{MaxLines: 20}).Content
+		msg := inbox.NewMessage(inbox.OriginSession, "user", FormatCompletion(final, tail)+t.outputFileHint(final.ID, workDir))
 		msg.Priority = inbox.PriorityHigh
 		msg.Meta = map[string]any{
 			"session_id":   final.ID,

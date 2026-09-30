@@ -1,20 +1,16 @@
 import { Bot, FileSearch } from 'lucide-react'
 import { registerTimelineRenderer } from '@/viewer'
 import i18n from '../i18n'
-import type { SCONode } from '../api'
 import ScanSummaryCard from '../components/chat/ScanSummaryCard'
 
 export function registerChatExtensions() {
   registerTimelineRenderer('scan_complete', {
-    renderer: ({ item, context }) => {
+    renderer: ({ item }) => {
       const scanID = item.data.scanID as string
       // Render the status even while the browser is rebuilding archived results.
-      const scanResults = context.scanResults as Map<string, SCONode[]> | undefined
-      const nodes = (item.data.nodes as SCONode[]) ?? scanResults?.get(scanID)
       return (
         <ScanSummaryCard
           scanID={scanID}
-          nodes={nodes}
         />
       )
     },

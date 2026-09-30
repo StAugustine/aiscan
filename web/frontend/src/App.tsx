@@ -19,6 +19,8 @@ import type { IOAMessage, IOANode, LLMProviderView, ServerStatus } from './api'
 import type { SCONode } from '@cyber/cstx-easm'
 import type { MentionPopupApi } from './viewer'
 import { useChatSession } from './hooks/useChatSession'
+import { useGuardrailReviews } from './hooks/useGuardrailReviews'
+import { GuardrailToggle } from './components/GuardrailToggle'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
 import type { IOAConsoleTarget } from './lib/ioa-navigation'
@@ -53,11 +55,21 @@ export default function App() {
   const { t: tc } = useTranslation('chat')
   const confirm = useConfirm()
   const chat = useChatSession()
+  const guardrailSessions = useMemo(() => {
+    const online = new Set(chat.agents.map(agent => agent.hello?.nodeId))
+    const ids = chat.sessions.filter(record => online.has(record.session?.nodeId) && record.session?.state !== 'closed')
+      .map(record => record.session?.id || '').filter(Boolean)
+    if (chat.activeSessionID && !ids.includes(chat.activeSessionID)) ids.push(chat.activeSessionID)
+    return ids
+  }, [chat.agents, chat.sessions, chat.activeSessionID])
+  const guardrails = useGuardrailReviews(guardrailSessions, chat.activeSessionID, chat.aopEvents)
+  const pendingReviewCounts = useMemo(() => Object.fromEntries(Object.entries(guardrails.bySession).map(([id, reviews]) => [id, reviews.length])), [guardrails.bySession])
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null)
   const [llmProfiles, setLLMProfiles] = useState<LLMProviderView[]>([])
   const [activeLLMProfile, setActiveLLMProfile] = useState('')
   const [switchingLLM, setSwitchingLLM] = useState(false)
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel | null>(null)
+  const [settingsSection, setSettingsSection] = useState<'llm' | 'jev'>('llm')
   const [ioaConsoleTarget, setIOAConsoleTarget] = useState<IOAConsoleTarget | null>(null)
   const [agentPanelFocusNodeID, setAgentPanelFocusNodeID] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(getInitialSidebarOpen)
@@ -66,6 +78,11 @@ export default function App() {
 
   const toggleToolPanel = useCallback((panel: ToolPanel) => {
     setActiveToolPanel((current) => current === panel ? null : panel)
+  }, [])
+
+  const openSettings = useCallback((section: 'llm' | 'jev' = 'llm') => {
+    setSettingsSection(section)
+    setActiveToolPanel('settings')
   }, [])
 
   const openIOAConsole = useCallback((target?: IOAConsoleTarget) => {
@@ -118,16 +135,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    void refreshSCONodes()
     const unsubscribe = subscribeCSTXChanges(() => { void refreshSCONodes() })
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
-    void refreshIOA()
     return unsubscribe
-  }, [refreshSCONodes, refreshIOA])
+  }, [refreshSCONodes])
   // Refresh mentionables when scans finish (timeline changes often signal new results)
   useEffect(() => {
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
+    void syncCSTXArtifacts().catch(() => {})
     void refreshIOA()
-  }, [chat.timeline.length, refreshSCONodes, refreshIOA])
+  }, [chat.timeline.length, refreshIOA])
 
   const mentionables = useMemo(() => assetMentionables(scoNodes), [scoNodes])
 
@@ -164,11 +180,11 @@ export default function App() {
       await refreshStatus()
       setHealthNonce((nonce) => nonce + 1)
     } catch {
-      setActiveToolPanel('settings')
+      openSettings()
     } finally {
       setSwitchingLLM(false)
     }
-  }, [activeLLMProfile, refreshStatus])
+  }, [activeLLMProfile, refreshStatus, openSettings])
   const activeSession = chat.activeSessionRecord?.session?.id === chat.activeSessionID ? chat.activeSessionRecord : chat.sessions.find((s) => s.session?.id === chat.activeSessionID) || null
   const executionNode = chat.agents.find((a) => a.hello?.nodeId === (activeSession?.session?.nodeId || chat.selectedNodeID))
   // The open session's bound agent has dropped off the live roster (its node
@@ -252,10 +268,11 @@ export default function App() {
               onChange={handleSwitchLLM}
             />
             <span className="hidden sm:contents">
-              <LLMHealth onOpenSettings={() => setActiveToolPanel('settings')} reloadSignal={healthNonce} />
+              <LLMHealth onOpenSettings={() => openSettings()} reloadSignal={healthNonce} />
             </span>
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
+            <GuardrailToggle disabled={activeToolPanel === 'settings'} onConfigure={() => openSettings('jev')} />
             <AssetPoolButton count={scoNodes.length} open={activeToolPanel === 'assets'} onClick={() => toggleToolPanel('assets')} />
             <IOAConsoleButton open={activeToolPanel === 'ioa'} onClick={() => {
               setIOAConsoleTarget(null)
@@ -267,7 +284,10 @@ export default function App() {
             {/* Separate workspace nav (assets / IOA / agents / connect) from the
                 account utilities (settings / logout) so the row reads as two groups. */}
             <span className="mx-0.5 hidden h-5 w-px shrink-0 bg-border/70 sm:block" aria-hidden="true" />
-            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => toggleToolPanel('settings')}>
+            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => {
+              if (activeToolPanel === 'settings') setActiveToolPanel(null)
+              else openSettings()
+            }}>
               <Settings className="h-3.5 w-3.5" />
             </HeaderIconButton>
             <HeaderIconButton label={t('logout')} onClick={() => { void logout() }}>
@@ -282,6 +302,7 @@ export default function App() {
             onToggle={() => setSidebarOpen(!sidebarOpen)}
             agents={chat.agents}
             sessions={chat.sessions}
+            pendingReviewCounts={pendingReviewCounts}
             filters={chat.sessionFilters}
             onFilter={chat.filterSessions}
             onUpdateSession={chat.updateSession}
@@ -296,8 +317,10 @@ export default function App() {
 
           <ChatPanel
             timeline={chat.timeline}
+            guardrailUnavailable={guardrails.unavailable[chat.activeSessionID || ''] === true}
+            guardrailReviews={guardrails.bySession[chat.activeSessionID || ''] || []}
+            onResolveGuardrail={(review, approve) => guardrails.resolve(chat.activeSessionID!, review, approve)}
             aopEvents={chat.aopEvents}
-            scanResults={chat.scanResults}
             isThinking={chat.isThinking}
             isBusy={chat.busy}
             canPause={chat.canPause}
@@ -324,6 +347,7 @@ export default function App() {
       <ConfigPanel
         open={activeToolPanel === 'settings'}
         status={serverStatus}
+        initialSection={settingsSection}
         onClose={() => setActiveToolPanel(null)}
         onSaved={() => { refreshStatus(); setHealthNonce((n) => n + 1) }}
       />

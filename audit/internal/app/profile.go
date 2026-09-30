@@ -107,7 +107,7 @@ func newAuditProfile(request profile.Request, workDir string, bashTimeout int, r
 		values = append(values, recorder)
 	}
 	values = append(values,
-		arsenalext.New(manager), okfext.New(),
+		&arsenalext.Extension{Manager: manager}, okfext.New(),
 		extension.Func{LoadFunc: func(scope *extension.Scope) error { return extension.Add(scope, reportCommand(reportDir)) }},
 		protonext.New(protonext.Config{Directory: workDir, ExcludePaths: []string{filepath.Join(workDir, ".cyber"), filepath.Join(workDir, ".git")}}),
 		auditext.New(auditext.Config{Workspace: workDir, ReportDir: reportDir, ToolSummary: summary.String(), SearchExclusions: exclusions}),

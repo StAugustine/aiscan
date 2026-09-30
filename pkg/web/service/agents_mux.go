@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	operationpb "github.com/chainreactors/cyber/aop/operation"
+	"github.com/chainreactors/cyber/pkg/exts/guardrail"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log/slog"
 
@@ -27,6 +28,19 @@ func namespaceMessage[T protobuf.Message](message protobuf.Message) (T, error) {
 }
 
 func (p *AgentPool) registerAgentNamespaces(mux *aop.NamespaceMux, agent *remoteAgent) error {
+	if err := mux.Register(&guardrail.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
+		value, err := namespaceMessage[*guardrail.ProtocolMessage](message)
+		if err != nil {
+			return err
+		}
+		if value.GetPendingResult() == nil && value.GetResolved() == nil {
+			return fmt.Errorf("unsupported guardrail reply")
+		}
+		p.finishAgentTask(agent, envelope.ReplyTo, protobuf.CloneOf(value))
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := mux.Register(&aop.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
 		value, err := namespaceMessage[*aop.ProtocolMessage](message)
 		if err != nil {
@@ -123,11 +137,7 @@ func (p *AgentPool) handleAgentCoreMessage(agent *remoteAgent, envelope *aop.Env
 			agent.openSessions[accepted.Id] = struct{}{}
 			agent.mu.Unlock()
 		}
-		result := taskResult{}
-		if rejected := response.GetRejected(); rejected != nil {
-			result.Err = rejected.Message
-		}
-		p.finishAgentTask(agent, correlationID, result)
+		p.finishAgentTask(agent, correlationID, protobuf.CloneOf(response))
 
 	case *aop.ProtocolMessage_CloseSessionResponse:
 		response := payload.CloseSessionResponse
@@ -136,31 +146,22 @@ func (p *AgentPool) handleAgentCoreMessage(agent *remoteAgent, envelope *aop.Env
 			delete(agent.openSessions, accepted.Id)
 			agent.mu.Unlock()
 		}
-		result := taskResult{}
-		if rejected := response.GetRejected(); rejected != nil {
-			result.Err = rejected.Message
-		}
-		p.finishAgentTask(agent, correlationID, result)
+		p.finishAgentTask(agent, correlationID, protobuf.CloneOf(response))
 
 	case *aop.ProtocolMessage_RunTurnResponse:
 		if rejected := payload.RunTurnResponse.GetRejected(); rejected != nil {
-			p.finishAgentTask(agent, correlationID, taskResult{Err: rejected.Message})
+			p.finishAgentTask(agent, correlationID, protobuf.CloneOf(payload.RunTurnResponse))
 		}
 
 	case *aop.ProtocolMessage_CancelTurnResponse:
-		result := taskResult{}
-		if rejected := payload.CancelTurnResponse.GetRejected(); rejected != nil {
-			result.Code = rejected.Code
-			result.Err = rejected.Message
-		}
-		p.finishAgentTask(agent, correlationID, result)
+		p.finishAgentTask(agent, correlationID, protobuf.CloneOf(payload.CancelTurnResponse))
 
 	case *aop.ProtocolMessage_Event:
 		p.forwardAOPFrame(agent, correlationID, payload.Event)
 
 	case *aop.ProtocolMessage_ProtocolError:
 		if payload.ProtocolError != nil {
-			p.finishAgentTask(agent, correlationID, taskResult{Code: payload.ProtocolError.Code, Err: payload.ProtocolError.Message})
+			p.finishAgentTask(agent, correlationID, protobuf.CloneOf(payload.ProtocolError))
 		}
 	}
 }
@@ -176,7 +177,7 @@ func (p *AgentPool) handleAgentCommandMessage(agent *remoteAgent, envelope *aop.
 		return
 	}
 	if result := value.GetResult(); result != nil {
-		p.finishAgentTask(agent, envelope.ReplyTo, taskResult{})
+		p.finishAgentTask(agent, envelope.ReplyTo, protobuf.CloneOf(result))
 	}
 }
 
@@ -185,7 +186,7 @@ func (p *AgentPool) handleAgentFileMessage(agent *remoteAgent, envelope *aop.Env
 		return
 	}
 	if result := value.GetResult(); result != nil {
-		p.finishAgentTask(agent, envelope.ReplyTo, taskResult{File: protobuf.CloneOf(result)})
+		p.finishAgentTask(agent, envelope.ReplyTo, protobuf.CloneOf(result))
 	}
 }
 
@@ -211,7 +212,7 @@ func (p *AgentPool) handleAgentReloadMessage(agent *remoteAgent, value *types.Re
 	agent.mu.Unlock()
 }
 
-func (p *AgentPool) finishAgentTask(agent *remoteAgent, taskID string, result taskResult) {
+func (p *AgentPool) finishAgentTask(agent *remoteAgent, taskID string, result protobuf.Message) {
 	if agent == nil {
 		return
 	}

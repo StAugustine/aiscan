@@ -23,7 +23,7 @@ func (s *Service) providers() *provider.State {
 
 // swapProfile runs under configGate. Stop admission before cancellation; wait
 // without appMu so accepted work can finish its own cleanup.
-func (s *Service) swapProfile(next profile.Profile) error {
+func (s *Service) swapProfile(next profile.Profile, commit func() error) error {
 	if s == nil || next == nil {
 		return fmt.Errorf("service and profile are required")
 	}
@@ -38,11 +38,24 @@ func (s *Service) swapProfile(next profile.Profile) error {
 	prev := s.profile
 	if prev == next {
 		s.appMu.Unlock()
+		if commit != nil {
+			return commit()
+		}
 		return nil
 	}
 	s.stopWork()
 	s.appMu.Unlock()
 	s.work.Wait()
+	if commit != nil {
+		if err := commit(); err != nil {
+			// The previous profile is still active. Reopen its existing admission
+			// gate after a failed file commit; the candidate remains pending.
+			s.appMu.Lock()
+			s.workContext, s.stopWork = context.WithCancel(context.Background())
+			s.appMu.Unlock()
+			return err
+		}
+	}
 	if prev != nil {
 		if err := prev.Close(context.Background()); err != nil {
 			slog.Error("close previous profile", "error", err)

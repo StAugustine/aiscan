@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"google.golang.org/protobuf/proto"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -332,7 +333,7 @@ func TestCancelTaskQueuesBehindFullSendChannel(t *testing.T) {
 	pool := NewAgentPool(NewHub(), nil)
 	remote, sent := newFakeAgent("agent-1", 1)
 	remote.toolCalls = map[string]struct{}{"scan-1": {}}
-	remote.tasks["scan-1"] = make(chan taskResult, 1)
+	remote.tasks["scan-1"] = make(chan proto.Message, 1)
 	sent <- aop.MustWrap("busy", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}}) // saturate the buffer
 	pool.agents[remote.nodeID] = remote
 
@@ -367,7 +368,7 @@ func TestCancelTaskWaitsForSaturatedSendChannel(t *testing.T) {
 	pool := NewAgentPool(NewHub(), nil)
 	remote, sent := newFakeAgent("agent-1", 1)
 	remote.toolCalls = map[string]struct{}{"scan-1": {}}
-	resultCh := make(chan taskResult, 1)
+	resultCh := make(chan proto.Message, 1)
 	remote.tasks["scan-1"] = resultCh
 	sent <- aop.MustWrap("reload", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}})
 	pool.agents[remote.nodeID] = remote
@@ -569,7 +570,7 @@ func TestScanConsoleDisabledContract(t *testing.T) {
 	pool := NewAgentPool(svc.Hub(), nil)
 	svc.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	bindAgentQueue(fake, 1)

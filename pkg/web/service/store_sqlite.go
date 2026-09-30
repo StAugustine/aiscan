@@ -351,7 +351,11 @@ func (s *SQLiteStore) AddAOPEvent(ctx context.Context, sessionID string, event *
 	return err
 }
 
-func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, event *aop.Event) (cursor int64, persisted bool, err error) {
+func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, event *aop.Event) (int64, bool, error) {
+	return s.appendAOPEvent(ctx, sessionID, event, 0)
+}
+
+func (s *SQLiteStore) appendAOPEvent(ctx context.Context, sessionID string, event *aop.Event, after int64) (cursor int64, persisted bool, err error) {
 	if event == nil || event.GetMessageDelta() != nil || event.GetToolCallDelta() != nil {
 		return 0, false, nil
 	}
@@ -361,7 +365,7 @@ func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, even
 	if strings.TrimSpace(event.Id) == "" {
 		return 0, false, fmt.Errorf("AOP event id is required")
 	}
-	raw, err := marshalProtoJSON(event)
+	raw, err := protobuf.Marshal(event)
 	if err != nil {
 		return 0, false, err
 	}
@@ -381,6 +385,16 @@ func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, even
 		if !errors.Is(lookupErr, sql.ErrNoRows) {
 			return lookupErr
 		}
+		if event.GetTurnEnded() != nil && event.TurnId != "" {
+			terminal, err := turnTerminalCursor(ctx, tx, sessionID, event.SessionId, event.TurnId, after)
+			if err != nil {
+				return err
+			}
+			if terminal > 0 {
+				cursor = terminal
+				return nil
+			}
+		}
 		if err := tx.NewSelect().Model((*aopEventModel)(nil)).
 			ColumnExpr("COALESCE(MAX(cursor), 0) + 1").Where("session_id = ?", sessionID).Scan(ctx, &cursor); err != nil {
 			return err
@@ -388,7 +402,7 @@ func (s *SQLiteStore) AppendAOPEvent(ctx context.Context, sessionID string, even
 		_, err := tx.NewInsert().Model(&aopEventModel{
 			ID: generateID(), SessionID: sessionID, EventID: event.Id, Cursor: cursor,
 			TurnID: event.GetTurnId(), Emitter: event.GetEmitter(), Sequence: event.GetSeq(),
-			EventJSON: raw, CreatedAt: createdAt,
+			EventProto: raw, CreatedAt: createdAt,
 		}).Exec(ctx)
 		if err == nil {
 			persisted = true
@@ -413,6 +427,38 @@ func (s *SQLiteStore) ListAOPEvents(ctx context.Context, sessionID string, limit
 	return events, nil
 }
 
+// turnTerminalCursor checks only the requested turn, stopping at its latest
+// start. Terminal identity survives Web restarts and different event IDs.
+func turnTerminalCursor(ctx context.Context, db bun.IDB, sessionID, originID, turnID string, after int64) (int64, error) {
+	var events []aopEventModel
+	if err := db.NewSelect().Model(&events).Column("cursor", "event_proto").
+		Where("session_id = ? AND turn_id = ? AND cursor > ?", sessionID, turnID, after).
+		OrderExpr("cursor DESC").Scan(ctx); err != nil {
+		return 0, err
+	}
+	for _, stored := range events {
+		event, err := eventFromProto(stored.EventProto)
+		if err != nil {
+			return 0, err
+		}
+		if event.SessionId != originID {
+			continue
+		}
+		if event.GetTurnEnded() != nil {
+			return stored.Cursor, nil
+		}
+		if event.GetTurnStarted() != nil {
+			break
+		}
+	}
+	return 0, nil
+}
+
+func (s *SQLiteStore) HasTurnEnded(ctx context.Context, sessionID, turnID string) (bool, error) {
+	cursor, err := turnTerminalCursor(ctx, s.orm, sessionID, sessionID, turnID, 0)
+	return cursor > 0, err
+}
+
 func (s *SQLiteStore) MaxAOPEventSeq(ctx context.Context, sessionID string) (uint64, error) {
 	var maximum uint64
 	err := s.orm.NewSelect().Model((*aopEventModel)(nil)).
@@ -427,7 +473,7 @@ func (s *SQLiteStore) ListAOPEventPage(ctx context.Context, sessionID string, be
 	if limit > 10000 {
 		limit = 10000
 	}
-	query := s.orm.NewSelect().Model((*aopEventModel)(nil)).Column("cursor", "event_json").
+	query := s.orm.NewSelect().Model((*aopEventModel)(nil)).Column("cursor", "event_proto").
 		Where("session_id = ?", sessionID).OrderExpr("cursor DESC").Limit(limit + 1)
 	if before > 0 {
 		query = query.Where("cursor < ?", before)
@@ -442,8 +488,11 @@ func (s *SQLiteStore) ListAOPEventPage(ctx context.Context, sessionID string, be
 	}
 	events := make([]*aop.EventDelivery, 0, len(models))
 	for i := len(models) - 1; i >= 0; i-- {
-		event, err := eventFromJSON(models[i].EventJSON)
-		if err != nil || event.GetSessionId() == "" || event.GetPayload() == nil {
+		event, err := eventFromProto(models[i].EventProto)
+		if err != nil {
+			return nil, 0, fmt.Errorf("decode AOP event at cursor %d: %w", models[i].Cursor, err)
+		}
+		if event.GetSessionId() == "" || event.GetPayload() == nil {
 			continue
 		}
 		events = append(events, &aop.EventDelivery{Cursor: strconv.FormatInt(models[i].Cursor, 10), Event: event})
@@ -456,11 +505,7 @@ func (s *SQLiteStore) ListAOPEventPage(ctx context.Context, sessionID string, be
 }
 
 func (s *SQLiteStore) ListAOPEventsAfter(ctx context.Context, sessionID string, after int64, limit int) ([]*aop.EventDelivery, error) {
-	if after <= 0 {
-		events, _, err := s.ListAOPEventPage(ctx, sessionID, 0, limit)
-		return events, err
-	}
-	query := s.orm.NewSelect().Model((*aopEventModel)(nil)).Column("cursor", "event_json").
+	query := s.orm.NewSelect().Model((*aopEventModel)(nil)).Column("cursor", "event_proto").
 		Where("session_id = ? AND cursor > ?", sessionID, after).OrderExpr("cursor ASC")
 	if limit > 0 {
 		if limit > 10000 {
@@ -474,8 +519,11 @@ func (s *SQLiteStore) ListAOPEventsAfter(ctx context.Context, sessionID string, 
 	}
 	events := make([]*aop.EventDelivery, 0, len(models))
 	for _, model := range models {
-		event, err := eventFromJSON(model.EventJSON)
-		if err != nil || event.GetSessionId() == "" || event.GetPayload() == nil {
+		event, err := eventFromProto(model.EventProto)
+		if err != nil {
+			return nil, fmt.Errorf("decode AOP event at cursor %d: %w", model.Cursor, err)
+		}
+		if event.GetSessionId() == "" || event.GetPayload() == nil {
 			continue
 		}
 		events = append(events, &aop.EventDelivery{Cursor: strconv.FormatInt(model.Cursor, 10), Event: event})
@@ -483,9 +531,9 @@ func (s *SQLiteStore) ListAOPEventsAfter(ctx context.Context, sessionID string, 
 	return events, nil
 }
 
-func eventFromJSON(raw string) (*aop.Event, error) {
+func eventFromProto(raw []byte) (*aop.Event, error) {
 	event := new(aop.Event)
-	if err := unmarshalProtoJSON(raw, event, "AOP event"); err != nil {
+	if err := protobuf.Unmarshal(raw, event); err != nil {
 		return nil, err
 	}
 	return event, nil

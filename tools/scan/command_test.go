@@ -117,7 +117,7 @@ func TestBroadPOCDerivesUnfingerprintedTarget(t *testing.T) {
 		Status:    http.StatusOK,
 	}
 	var events []event
-	deriveWebProbeResult(true, capSprayCheck, result, func(event event) {
+	deriveWebProbeResult(true, capSprayCheck, targetEvent(capSprayCheck, newWebProbeTarget("", result)), func(event event) {
 		events = append(events, event)
 	})
 
@@ -565,7 +565,7 @@ func TestZombieTargetFromGogoSkipsHTTPService(t *testing.T) {
 	}
 
 	var events []event
-	deriveServiceResult(false, capGogoPortscan, result, func(event event) {
+	deriveServiceResult(false, capGogoPortscan, targetEvent(capGogoPortscan, serviceTarget{Result: result}), func(event event) {
 		events = append(events, event)
 	})
 	if hasTargetKind(events, targetWeakpass) {
@@ -676,7 +676,7 @@ func TestScanDerivesTargetsFromResults(t *testing.T) {
 	}
 
 	var events []event
-	deriveServiceResult(false, capGogoPortscan, result, func(event event) {
+	deriveServiceResult(false, capGogoPortscan, targetEvent(capGogoPortscan, serviceTarget{Result: result}), func(event event) {
 		events = append(events, event)
 	})
 
@@ -740,7 +740,7 @@ func TestFocusFingerprintIsDerivedAsHighPriority(t *testing.T) {
 	result.Frameworks = common.Frameworks{"struts2": frame}
 
 	var events []event
-	deriveServiceResult(false, capGogoPortscan, result, func(event event) {
+	deriveServiceResult(false, capGogoPortscan, targetEvent(capGogoPortscan, serviceTarget{Result: result}), func(event event) {
 		events = append(events, event)
 	})
 
@@ -805,8 +805,8 @@ func TestScanPipelineFanoutAndDedup(t *testing.T) {
 	if len(coll.seenFinger) != 1 {
 		t.Fatalf("fingerprints = %d, want 1", len(coll.seenFinger))
 	}
-	if len(coll.gogoResults) != 1 {
-		t.Fatalf("gogo results = %d, want 1", len(coll.gogoResults))
+	if coll.services != 1 {
+		t.Fatalf("gogo results = %d, want 1", coll.services)
 	}
 	if len(coll.trace) != 0 {
 		t.Fatalf("trace entries = %d, want 0 without debug", len(coll.trace))
@@ -927,6 +927,7 @@ func TestScanPipelineCancelReturns(t *testing.T) {
 
 func TestScanSummaryJSONLines(t *testing.T) {
 	coll := newCollector([]string{"seed"}, nil, false, false)
+	coll.json = true
 	coll.Observe(pipeline.Observation[event]{Action: pipeline.ActionAccept, Event: targetEvent("test", serviceTarget{Result: parsers.NewGOGOResult("127.0.0.1", "80")})})
 	coll.Observe(pipeline.Observation[event]{Action: pipeline.ActionAccept, Event: targetEvent("spray_check", newWebProbeTarget("", &parsers.SprayResult{
 		IsValid:   true,
@@ -935,10 +936,7 @@ func TestScanSummaryJSONLines(t *testing.T) {
 		Distance:  1,
 	}))})
 
-	out, err := formatJSONLines(coll)
-	if err != nil {
-		t.Fatalf("JSONLines() error = %v", err)
-	}
+	out := formatJSONLines(coll)
 	if hasANSI(out) {
 		t.Fatalf("json output contains ANSI: %q", out)
 	}
@@ -1032,11 +1030,11 @@ func TestScanSkipsFailedSprayProbeResults(t *testing.T) {
 			if got := buf.String(); got != "" {
 				t.Fatalf("stream output = %q, want empty", got)
 			}
-			if len(coll.sprayResults) != 0 {
-				t.Fatalf("spray results = %d, want 0", len(coll.sprayResults))
+			if coll.probes != 0 {
+				t.Fatalf("spray results = %d, want 0", coll.probes)
 			}
 			var derived []event
-			deriveWebProbeResult(false, "spray_check", tc.result, func(event event) {
+			deriveWebProbeResult(false, "spray_check", targetEvent("spray_check", newWebProbeTarget("", tc.result)), func(event event) {
 				derived = append(derived, event)
 			})
 
@@ -1067,8 +1065,8 @@ func TestScanSkipsInternalPluginCheckBaseline(t *testing.T) {
 	if got := buf.String(); got != "" {
 		t.Fatalf("stream output = %q, want empty", got)
 	}
-	if len(coll.sprayResults) != 0 {
-		t.Fatalf("spray results = %d, want 0", len(coll.sprayResults))
+	if coll.probes != 0 {
+		t.Fatalf("spray results = %d, want 0", coll.probes)
 	}
 
 	checkEvent := targetEvent(capSprayCheck, newWebProbeTarget("", result))
@@ -1277,9 +1275,7 @@ func TestProjectorSlowStreamDoesNotHoldStateLock(t *testing.T) {
 
 	jsonDone := make(chan struct{})
 	go func() {
-		if _, err := formatJSONLines(coll); err != nil {
-			t.Errorf("JSONLines() error = %v", err)
-		}
+		_ = formatJSONLines(coll)
 		close(jsonDone)
 	}()
 
@@ -1318,7 +1314,7 @@ func TestScanPlainTextStripsANSI(t *testing.T) {
 	}
 }
 
-func TestCollectorKeepsScannerValues(t *testing.T) {
+func TestCollectorCountsAcceptedScannerValues(t *testing.T) {
 	coll := newCollector([]string{"seed"}, nil, false, false)
 	service := parsers.NewGOGOResult("127.0.0.1", "8080")
 	service.Protocol = "http"
@@ -1335,11 +1331,11 @@ func TestCollectorKeepsScannerValues(t *testing.T) {
 	}))})
 	coll.Finish()
 
-	if len(coll.gogoResults) != 1 || coll.gogoResults[0].Port != "8080" {
-		t.Fatalf("gogo results = %#v", coll.gogoResults)
+	if coll.services != 1 {
+		t.Fatalf("services = %d", coll.services)
 	}
-	if len(coll.sprayResults) != 1 || coll.sprayResults[0].UrlString != "http://127.0.0.1:8080/admin" {
-		t.Fatalf("spray results = %#v", coll.sprayResults)
+	if coll.probes != 1 {
+		t.Fatalf("probes = %d", coll.probes)
 	}
 }
 
@@ -1523,7 +1519,7 @@ func TestCleanupGogoTempFilesIgnoresMissingFile(t *testing.T) {
 	engine.CleanupGogoTempFiles()
 }
 
-func TestEmitStructuredDataPublishesScannerFacts(t *testing.T) {
+func TestAcceptedArtifactsPublishScannerFacts(t *testing.T) {
 	bus := coreevents.New()
 	cmd := New(&engine.Set{}, WithEvents(bus))
 
@@ -1536,13 +1532,14 @@ func TestEmitStructuredDataPublishesScannerFacts(t *testing.T) {
 	ctx := operation.ContextWithInvocation(context.Background(), operation.Invocation{
 		CallID: "scan-call-1", SessionID: "scan-session", TurnID: "scan-turn", Emitter: "scan",
 	})
-	coll := newCollector(nil, nil, false, false)
-	coll.gogoResults = []*parsers.GOGOResult{{Ip: "127.0.0.1", Port: "8080", Protocol: "http"}}
-	coll.sprayResults = []*parsers.SprayResult{{
-		IsValid: true, UrlString: "http://127.0.0.1:8080/", Status: 200,
-	}}
-	if err := cmd.emitStructuredData(ctx, coll); err != nil {
-		t.Fatal(err)
+	inputs := []event{
+		targetEvent(capGogoPortscan, serviceTarget{Result: &parsers.GOGOResult{Ip: "127.0.0.1", Port: "8080", Protocol: "http"}}),
+		targetEvent(capSprayCheck, newWebProbeTarget("", &parsers.SprayResult{IsValid: true, UrlString: "http://127.0.0.1:8080/", Status: 200})),
+	}
+	for _, input := range inputs {
+		if err := cmd.emitAcceptedArtifact(ctx, input.Artifact); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if len(events) != 2 {
@@ -1564,7 +1561,7 @@ func TestEmitStructuredDataPublishesScannerFacts(t *testing.T) {
 	}
 }
 
-func TestEmitStructuredDataPublishesNativeArtifactAndLoot(t *testing.T) {
+func TestAcceptedArtifactAndFinalLootShareResultIdentity(t *testing.T) {
 	bus := coreevents.New()
 	cmd := New(&engine.Set{}, WithEvents(bus))
 	var events []*aop.Event
@@ -1578,18 +1575,22 @@ func TestEmitStructuredDataPublishesNativeArtifactAndLoot(t *testing.T) {
 		Target: "http://127.0.0.1:5000", TemplateID: "test-rce", Severity: "critical", Matched: true,
 		Request: "GET / HTTP/1.1", Response: "HTTP/1.1 200 OK",
 	}
+	artifactRecord, err := newArtifactResult("neutron", toolpb.ArtifactKindVuln, record.Target, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactRecord.ResultID = "result-1"
+	if err := cmd.emitAcceptedArtifact(ctx, artifactRecord); err != nil {
+		t.Fatal(err)
+	}
 	coll := &collector{
-		artifacts: []artifactResult{{
-			ResultID: "result-1", Tool: "neutron", Kind: toolpb.ArtifactKindVuln,
-			Target: record.Target, Data: record,
-		}},
 		loots: []parsers.Loot{{
 			Kind: parsers.LootVuln, Target: record.Target, Priority: "critical",
 			Tags: []string{"rce"}, Data: map[string]any{
 				"result_id": "result-1", "artifact_tool": "neutron", "verification_status": "confirmed",
 			},
 		}}}
-	if err := cmd.emitStructuredData(ctx, coll); err != nil {
+	if err := cmd.emitLoots(ctx, coll); err != nil {
 		t.Fatal(err)
 	}
 

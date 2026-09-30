@@ -192,7 +192,7 @@ require (
 	github.com/go-ldap/ldap/v3 v3.4.13 // indirect
 	github.com/go-redis/redis v6.15.9+incompatible // indirect
 	github.com/go-sql-driver/mysql v1.10.0 // indirect
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/gobwas/glob v0.2.3 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
 	github.com/gofrs/uuid/v5 v5.3.2 // indirect

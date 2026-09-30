@@ -63,13 +63,13 @@ func TestExecuteToolRequestPreservesStructuredResult(t *testing.T) {
 	}
 }
 
-func TestExecuteToolRequestUsesExecutionErrorText(t *testing.T) {
+func TestExecuteToolRequestPreservesPartialOutputOnExecutionError(t *testing.T) {
 	event, err := coretool.ExecuteToolRequest(context.Background(), "call-error", toolRequest(t, "call-error", "scan", nil), testRegistry(t, structuredResultExecutor{err: errors.New("failed")}), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result := event.GetToolResult()
-	if !result.IsError || result.Output[0].GetText().GetText() != "failed" {
+	if !result.IsError || len(result.Output) != 2 || result.Output[0].GetText().GetText() != "partial" || result.Output[1].GetMedia() == nil {
 		t.Fatalf("result = %+v", result)
 	}
 }

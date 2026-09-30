@@ -5,8 +5,10 @@ import (
 	"github.com/chainreactors/cyber/core/resource"
 	hostcli "github.com/chainreactors/cyber/pkg/cli"
 	cfg "github.com/chainreactors/cyber/pkg/config"
+	guardrailext "github.com/chainreactors/cyber/pkg/exts/guardrail"
 	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
 	ioaserver "github.com/chainreactors/cyber/pkg/exts/ioa/server"
+	jevext "github.com/chainreactors/cyber/pkg/exts/jev"
 
 	recordext "github.com/chainreactors/cyber/pkg/exts/record"
 	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
@@ -52,6 +54,8 @@ func declareResources(cli *hostcli.Registry, agentOptions *cfg.AgentOptions) *cf
 		})
 	}))
 	mustDeclare(recordext.Declare(resources))
+	mustDeclare(guardrailext.Declare(resources))
+	mustDeclare(jevext.Declare(resources))
 	mustDeclare(scannerext.Declare(resources))
 	mustDeclare(searchext.Declare(resources))
 	if agentOptions != nil {

@@ -1,7 +1,7 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus, Settings, Trash2, Zap } from 'lucide-react'
-import { create } from '@bufbuild/protobuf'
+import { create, equals } from '@bufbuild/protobuf'
 import { AgentConfigSchema, ConnectionCheckSchema, DistributeConfigSchema, LLMProbeResultSchema } from '../cyber-proto'
 import { getConfigStatus, llmConfigured, saveConfig, testLLM, testConn, listLLMModels } from '../api'
 import type { ConfigView, ConnectionCheck, DistributeConfig, LLMProbeResult, ServerStatus } from '../api'
@@ -39,7 +39,22 @@ interface ConfigFormState {
   extensions: DistributeConfig['extensions']
 }
 
-function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
+function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormState): DistributeConfig {
+  // Opening LLM settings must not materialize empty defaults in every other
+  // extension. Those apparent graph changes used to cancel active sessions.
+  const extensions = { ...form.extensions }
+  const editSection = (key: string, values: object, previous: object | undefined, serialized = values) => {
+    if (!original || JSON.stringify(values) !== JSON.stringify(previous)) {
+      extensions[key] = { ...extensions[key], ...Object.fromEntries(Object.entries(serialized).filter(([, value]) => value !== undefined)) }
+    }
+  }
+  editSection('cyberhub', form.cyberhub, original?.cyberhub)
+  editSection('recon', form.recon, original?.recon, { ...form.recon, limit: form.recon.limit ?? 0 })
+  editSection('scan', form.scan, original?.scan)
+  editSection('search', form.search, original?.search)
+  editSection('ioa.client', form.ioa, original?.ioa, {
+    url: form.ioa.url, token: form.ioa.token, node_name: form.ioa.node_name, space: form.ioa.space,
+  })
   return create(DistributeConfigSchema, {
     llm: {
       activeProfile: form.llm.active_profile,
@@ -57,28 +72,8 @@ function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
         images: profile.images,
       })),
     },
-    search: { tavilyKeys: form.search.tavily_keys },
-    extensions: {
-      ...form.extensions,
-      cyberhub: {
-        ...form.extensions.cyberhub,
-        url: form.cyberhub.url,
-        key: form.cyberhub.key,
-        mode: form.cyberhub.mode,
-        proxy: form.cyberhub.proxy,
-        ...(form.cyberhub.mitm === undefined ? {} : { mitm: form.cyberhub.mitm }),
-      },
-      recon: { ...form.extensions.recon, ...form.recon, limit: form.recon.limit ?? 0 },
-      scan: { ...form.extensions.scan, ...form.scan },
-      'ioa.client': {
-        ...form.extensions['ioa.client'],
-        url: form.ioa.url,
-        token: form.ioa.token,
-        node_name: form.ioa.node_name,
-        space: form.ioa.space,
-      },
-    },
-    agent: form.agent,
+    extensions,
+    agent: original && equals(AgentConfigSchema, original.agent, form.agent) ? undefined : form.agent,
     traffic: form.traffic,
   })
 }
@@ -86,20 +81,22 @@ function formToDistributeConfig(form: ConfigFormState): DistributeConfig {
 interface ConfigPanelProps {
   open: boolean
   status: ServerStatus | null
+  initialSection?: 'llm' | 'jev'
   onClose: () => void
   onSaved: () => void
 }
 
-type TabKey = 'llm' | 'cyberhub' | 'recon' | 'scan' | 'search' | 'ioa' | 'agent'
+type TabKey = 'llm' | 'guardrail' | 'cyberhub' | 'recon' | 'scan' | 'search' | 'ioa' | 'agent'
 
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'llm', label: 'LLM' },
-  { key: 'cyberhub', label: 'Cyberhub' },
-  { key: 'recon', label: 'Recon' },
-  { key: 'scan', label: 'Scan' },
-  { key: 'search', label: 'Search' },
-  { key: 'ioa', label: 'Server' },
-  { key: 'agent', label: 'Agent' },
+const TABS: { key: TabKey; labelKey: string }[] = [
+  { key: 'llm', labelKey: 'tabLLM' },
+  { key: 'guardrail', labelKey: 'tabGuardrail' },
+  { key: 'cyberhub', labelKey: 'tabCyberhub' },
+  { key: 'recon', labelKey: 'tabRecon' },
+  { key: 'scan', labelKey: 'tabScan' },
+  { key: 'search', labelKey: 'tabSearch' },
+  { key: 'ioa', labelKey: 'tabServer' },
+  { key: 'agent', labelKey: 'tabAgent' },
 ]
 
 type LLMProtocol = 'openai' | 'anthropic'
@@ -223,7 +220,10 @@ function sectionStatus(
   switch (tab) {
     case 'llm':
       const ok = llmConfigured(status)
-      return [{ key: 'llm', label: ok ? t('llmConfigured') : t('llmNotConfigured'), ok }]
+      return [
+        { key: 'llm', label: ok ? t('llmConfigured') : t('llmNotConfigured'), ok },
+        ...(cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []),
+      ]
     case 'cyberhub':
       return [tag('Cyberhub', !!(cs?.extensions.cyberhub?.values?.url && cs?.extensions.cyberhub?.configuredSecrets.includes('key')))]
     case 'recon':
@@ -232,7 +232,10 @@ function sectionStatus(
         tag('Hunter', !!cs?.extensions.recon?.configuredSecrets.includes('hunter_api_key')),
       ]
     case 'search':
-      return [tag('Tavily', !!cs?.search?.tavilyKeysConfigured)]
+      return [tag('Tavily', !!cs?.extensions.search?.configuredSecrets.includes('tavily_keys'))]
+    case 'guardrail':
+      // The settings view contains stored values; an environment key stays server-side.
+      return cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []
     case 'ioa': {
       const ioa = cs?.extensions['ioa.client']
       return [tag('Server', !!(ioa?.values?.url && ioa.configuredSecrets.includes('token')))]
@@ -242,7 +245,7 @@ function sectionStatus(
   }
 }
 
-export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPanelProps) {
+export default function ConfigPanel({ open, status, initialSection = 'llm', onClose, onSaved }: ConfigPanelProps) {
   const { t } = useTranslation('config')
   const [cs, setCs] = useState<ConfigView | null>(null)
   const [form, setForm] = useState<ConfigFormState>(() => emptyForm(t('newProfileName')))
@@ -252,9 +255,13 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
   const [activeTab, setActiveTab] = useState<TabKey>('llm')
   const [selectedLLMProfileID, setSelectedLLMProfileID] = useState('default')
   const [invalidModelProfileID, setInvalidModelProfileID] = useState('')
+  const jevInputRef = useRef<HTMLInputElement>(null)
+  const [focusJEV, setFocusJEV] = useState(false)
 
   useEffect(() => {
     if (!open) return
+    setActiveTab('llm')
+    setFocusJEV(initialSection === 'jev')
     setLoading(true)
     setError('')
     setInvalidModelProfileID('')
@@ -267,7 +274,14 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
       })
       .catch((err: Error) => setError(err.message || t('failedLoad')))
       .finally(() => setLoading(false))
-  }, [open])
+  }, [open, initialSection])
+
+  useEffect(() => {
+    if (!open || loading || activeTab !== 'llm' || !focusJEV || !jevInputRef.current) return
+    jevInputRef.current.focus()
+    jevInputRef.current.scrollIntoView({ block: 'center' })
+    setFocusJEV(false)
+  }, [open, loading, activeTab, focusJEV])
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault()
@@ -284,7 +298,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
     setSaving(true)
     setError('')
     try {
-      await saveConfig(formToDistributeConfig(form))
+      await saveConfig(formToDistributeConfig(form, cs ? statusToForm(cs) : undefined))
       onSaved()
       onClose()
     } catch (err: unknown) {
@@ -311,7 +325,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               key={tab.key} type="button" variant="ghost" size="sm"
               active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)}
               className={cn('h-8 text-xs', activeTab !== tab.key && 'text-muted-foreground')}
-            >{tab.label}</Button>
+            >{t(tab.labelKey)}</Button>
           ))}
         </div>
 
@@ -333,6 +347,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
               <div className="min-h-[12rem]">
                 {activeTab === 'llm' && (
                   <LLMTab
+                    jevInputRef={jevInputRef}
                     form={form}
                     setForm={setForm}
                     cs={cs}
@@ -352,6 +367,10 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
                   />
                 )}
                 {activeTab === 'cyberhub' && <CyberhubTab form={form} setForm={setForm} cs={cs} />}
+                {activeTab === 'guardrail' && <GuardrailTab form={form} setForm={setForm} onConfigureJEV={() => {
+                  setActiveTab('llm')
+                  setFocusJEV(true)
+                }} />}
                 {activeTab === 'recon' && <ReconTab form={form} setForm={setForm} cs={cs} />}
                 {activeTab === 'scan' && <ScanTab form={form} setForm={setForm} />}
                 {activeTab === 'search' && <SearchTab form={form} setForm={setForm} cs={cs} />}
@@ -376,6 +395,7 @@ export default function ConfigPanel({ open, status, onClose, onSaved }: ConfigPa
 type TabProps = { form: ConfigFormState; setForm: React.Dispatch<React.SetStateAction<ConfigFormState>>; cs?: ConfigView | null }
 
 function LLMTab({
+  jevInputRef,
   form,
   setForm,
   cs,
@@ -385,6 +405,7 @@ function LLMTab({
   onInvalidModel,
   onModelChange,
 }: TabProps & {
+  jevInputRef: RefObject<HTMLInputElement>
   selectedProfileID: string
   onSelectProfile: (id: string) => void
   invalidModelProfileID: string
@@ -623,6 +644,22 @@ function LLMTab({
             placeholder={configuredProfile?.apiKeyConfigured ? t('configuredKeep') : t('apiKeyRequired')} />
         </Field>
       </div>
+      <div className="sm:col-span-2">
+        <Field label={t('jevApiKey')} hint={t('jevKeyInLLMHint')}>
+          <Input
+            ref={jevInputRef}
+            aria-label={t('jevApiKey')}
+            type="password"
+            autoComplete="new-password"
+            value={typeof form.extensions.jev?.api_key === 'string' ? form.extensions.jev.api_key : ''}
+            onChange={(e) => setForm(current => ({
+              ...current,
+              extensions: { ...current.extensions, jev: { ...current.extensions.jev, api_key: e.target.value } },
+            }))}
+            placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'}
+          />
+        </Field>
+      </div>
       <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" onClick={handleTest} disabled={testing || !profile.model.trim()}>
           {testing ? <ProbePulse /> : <Zap className="h-4 w-4" />}
@@ -711,7 +748,7 @@ function SearchTab({ form, setForm, cs }: TabProps) {
     <div className="grid gap-3">
       <Field label={t('tavilyKeys')}>
         <Input type="password" value={form.search.tavily_keys} onChange={(e) => setForm((f) => ({ ...f, search: { tavily_keys: e.target.value } }))}
-          placeholder={cs?.search?.tavilyKeysConfigured ? t('configuredKeep') : t('tavilyHint')} />
+          placeholder={cs?.extensions.search?.configuredSecrets.includes('tavily_keys') ? t('configuredKeep') : t('tavilyHint')} />
       </Field>
       <ConnTest section="search" form={form} />
     </div>
@@ -728,6 +765,56 @@ function IOATab({ form, setForm, cs }: TabProps) {
       <Field label={t('nodeName')}><Input value={form.ioa.node_name} onChange={(e) => u('node_name', e.target.value)} placeholder={t('autoRegisterNode')} /></Field>
       <Field label={t('space')}><Input value={form.ioa.space} onChange={(e) => u('space', e.target.value)} placeholder="default" /></Field>
 		<ConnTest section="ioa.client" form={form} />
+    </div>
+  )
+}
+
+function GuardrailTab({ form, setForm, onConfigureJEV }: TabProps & { onConfigureJEV: () => void }) {
+  const { t } = useTranslation('config')
+  const jev = form.extensions.jev ?? {}
+  const update = (key: string, value: string | boolean) => setForm(f => ({
+    ...f, extensions: { ...f.extensions, jev: { ...f.extensions.jev, [key]: value } },
+  }))
+  const value = (key: string, fallback = '') => typeof jev[key] === 'string' ? jev[key] as string : fallback
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Callout className="sm:col-span-2">{t('guardrailReloadHint')}</Callout>
+      <div className="sm:col-span-2">
+        <Button type="button" variant="outline" size="sm" onClick={onConfigureJEV}>
+          <Settings className="h-4 w-4" />{t('configureJEV')}
+        </Button>
+      </div>
+      <Field label={t('guardrailMode')}>
+        <Select value={form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'} onValueChange={mode => {
+          setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, mode } } }))
+        }}>
+          <SelectTrigger aria-label={t('guardrailMode')} className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['auto', 'safe'].map(mode => <SelectItem key={mode} value={mode}>{t('guardrailMode_' + mode)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'))}</p>
+      <Field label={t('guardrailLevel')}>
+        <Select value={value('level', 'standard')} onValueChange={v => update('level', v)}>
+          <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['permissive', 'standard', 'strict'].map(v => <SelectItem key={v} value={v}>{t('guardrailLevel_' + v)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <Field label={t('guardrailOnError')}>
+        <Select value={value('on_error', 'block') === 'record' ? 'review' : value('on_error', 'block')} onValueChange={v => update('on_error', v)}>
+          <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
+          <SelectContent>{['block', 'review'].map(v => <SelectItem key={v} value={v}>{t('guardrailAction_' + v)}</SelectItem>)}</SelectContent>
+        </Select>
+      </Field>
+      <Field label={t('guardrailModel')}><Input value={value('model', 'jev-1.13.0')} onChange={e => update('model', e.target.value)} /></Field>
+      <Field label={t('guardrailTimeout')}><Input value={value('timeout', '10s')} onChange={e => update('timeout', e.target.value)} placeholder="10s" /></Field>
+      <Field label={t('guardrailReviewTimeout')}>
+        <Input value={String(form.extensions.guardrail?.review_timeout ?? '5m')} placeholder="5m" onChange={e => {
+          const timeout = e.target.value
+          setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, review_timeout: timeout } } }))
+        }} />
+      </Field>
+      <p className="sm:col-span-2 text-xs text-muted-foreground">{t('guardrailTestHint')}</p>
+      <ConnTest section="jev" form={form} />
     </div>
   )
 }
@@ -770,7 +857,7 @@ function ProbePulse({ className }: { className?: string }) {
 // one result row per external dependency probed (Recon returns FOFA + Hunter).
 // The whole form is sent so unsaved edits are tested; blank secrets fall back to
 // the stored values on the server.
-function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' | 'ioa.client'; form: ConfigFormState }) {
+function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' | 'ioa.client' | 'jev'; form: ConfigFormState }) {
   const { t } = useTranslation('config')
   const [testing, setTesting] = useState(false)
   const [checks, setChecks] = useState<ConnectionCheck[] | null>(null)
@@ -805,7 +892,7 @@ function ConnTest({ section, form }: { section: 'cyberhub' | 'recon' | 'search' 
 }
 
 const CHECK_LABELS: Record<string, string> = {
-  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'Server',
+  fofa: 'FOFA', hunter: 'Hunter', cyberhub: 'Cyberhub', tavily: 'Tavily', ioa: 'Server', jev: 'JEV',
 }
 
 function ConnCheckRow({ check }: { check: ConnectionCheck }) {

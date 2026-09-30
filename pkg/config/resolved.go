@@ -1,7 +1,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 )
 
@@ -28,8 +27,8 @@ func (r *Resolved) Values() Values {
 	return CloneValues(r.values)
 }
 
-// Get returns an owned configuration copy. T is the value type returned by the
-// section's New function (usually a pointer to its feature's Options).
+// Get borrows a read-only resolved section. Feature Read functions return value
+// copies and copy their mutable fields when ownership is required.
 func Get[T any](r *Resolved, key string) (T, error) {
 	var out T
 	if r == nil {
@@ -39,22 +38,11 @@ func Get[T any](r *Resolved, key string) (T, error) {
 	if !ok {
 		return out, fmt.Errorf("configuration %q is not declared", key)
 	}
-	if _, ok := value.(T); !ok {
+	typed, ok := value.(T)
+	if !ok {
 		return out, fmt.Errorf("configuration %q has type %T", key, value)
 	}
-	b, err := json.Marshal(value)
-	if err != nil {
-		return out, err
-	}
-	err = json.Unmarshal(b, &out)
-	return out, err
-}
-
-func cloneFields(fields map[string]any) map[string]any {
-	if fields == nil {
-		return map[string]any{}
-	}
-	return CloneValues(Values{"value": fields})["value"]
+	return typed, nil
 }
 
 // ResolveValues applies CLI > application env > file > protocol env > defaults.
@@ -77,7 +65,7 @@ func (r *Sections) ResolveValues(file, cli Values, lookup func(string) (string, 
 		var overrides, fallbacks map[string]any
 		if section.Environment != nil {
 			var err error
-			overrides, fallbacks, err = section.Environment(Sources{File: cloneFields(file[key]), CLI: cloneFields(cli[key]), LookupEnv: lookup})
+			overrides, fallbacks, err = section.Environment(Sources{File: CloneDocument(file[key]), CLI: CloneDocument(cli[key]), LookupEnv: lookup})
 			if err != nil {
 				return nil, fmt.Errorf("configuration %s: %w", key, err)
 			}
@@ -100,10 +88,10 @@ func (r *Sections) ResolveValues(file, cli Values, lookup func(string) (string, 
 		mark(file[key], "file")
 		mark(overrides, "environment")
 		mark(cli[key], "cli")
-		fields := cloneFields(fallbacks)
-		mergeFields(fields, cloneFields(file[key]))
-		mergeFields(fields, cloneFields(overrides))
-		mergeFields(fields, cloneFields(cli[key]))
+		fields := CloneDocument(fallbacks)
+		mergeFields(fields, CloneDocument(file[key]))
+		mergeFields(fields, CloneDocument(overrides))
+		mergeFields(fields, CloneDocument(cli[key]))
 		value, err := r.Decode(key, fields)
 		if err != nil {
 			return nil, err

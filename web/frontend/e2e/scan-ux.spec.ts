@@ -6,6 +6,9 @@ import { ArtifactSchema, LootSchema } from '../cyber-ui/packages/aop/src/gen/aop
 import { RefSchema, Correlation } from '../cyber-ui/packages/aop/src/gen/aop/operation/protocol_pb'
 import { SyncArtifactsRequestSchema, SyncArtifactsResponseSchema } from '../src/gen/types/artifact_pb'
 import { ListAgentsResponseSchema } from '../src/gen/types/agent_pb'
+import { GetScanResponseSchema, ScanStatus, SessionScanEventSchema } from '../src/gen/types/scan_pb'
+import { GetSessionRequestSchema, GetSessionResponseSchema } from '../src/gen/types/chat_pb'
+import { ListEventsRequestSchema, ListEventsResponseSchema } from '../cyber-ui/packages/aop/src/gen/aop/chat_pb'
 
 const preamble = `<script type="module">import RefreshRuntime from '/@react-refresh'; RefreshRuntime.injectIntoGlobalHook(window); window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => (type) => type; window.__vite_plugin_react_preamble_installed__ = true;</script>`
 const fixtureURL = `http://127.0.0.1:${process.env.CYBER_E2E_FIXTURE_PORT || '38082'}`
@@ -95,6 +98,130 @@ test('pagination remains complete beyond 5000 assets', async ({ page }) => {
   expect(result.total).toBeGreaterThan(5000)
   expect(result.count).toBe(result.total)
   expect(result.unique).toBe(result.total)
+})
+
+test('scoped CSTX reads use existing indexes and include descendants once', async ({ page }) => {
+  const entries = [
+    artifact('root-data', 'root-op', { ip: '127.0.0.1', port: '80' }),
+    artifact('grandchild-data', 'grandchild', { ip: '127.0.0.2', port: '81' }),
+    artifact('child-data', 'child', { ip: '127.0.0.3', port: '82' }),
+    artifact('unrelated-data', 'unrelated', { ip: '127.0.0.4', port: '83' }),
+  ]
+  for (const [index, operationId, parentOperationId, callId] of [
+    [1, 'grandchild', 'child', 'inner'], [2, 'child', 'root-op', 'inner'], [3, 'unrelated', '', 'other'],
+  ] as const) entries[index].extensions = [anyPack(RefSchema, create(RefSchema, { operationId, parentOperationId, callId, correlation: Correlation.EXPLICIT }))]
+  await archive(page, entries)
+  const result = await page.evaluate(async () => {
+    const runtime = (window as any).runtime
+    await runtime.syncCSTXArtifacts()
+    const reads: { store: string; index?: string; full: boolean }[] = []
+    const originalStore = IDBObjectStore.prototype.getAll
+    const originalIndex = IDBIndex.prototype.getAll
+    IDBObjectStore.prototype.getAll = function (...args: any[]) {
+      reads.push({ store: this.name, full: args[0] === undefined })
+      return Reflect.apply(originalStore, this, args)
+    }
+    IDBIndex.prototype.getAll = function (...args: any[]) {
+      reads.push({ store: this.objectStore.name, index: this.name, full: args[0] === undefined })
+      return Reflect.apply(originalIndex, this, args)
+    }
+    try {
+      const scoped = await runtime.listSCONodes({ scanId: 'outer-call' })
+      const scopedReads = reads.splice(0)
+      await runtime.listSCONodes()
+      const globalReads = reads.splice(0)
+      await runtime.cstxFailures()
+      return { scoped, scopedReads, globalReads, failureReads: reads }
+    } finally {
+      IDBObjectStore.prototype.getAll = originalStore
+      IDBIndex.prototype.getAll = originalIndex
+    }
+  })
+  const operations = new Set(result.scoped.items.flatMap((node: any) => node._evidence.map((item: any) => item.operation_id)))
+  expect([...operations].sort()).toEqual(['child', 'grandchild', 'root-op'])
+  expect(result.scopedReads.filter(read => read.store === 'observations')).toEqual(Array.from({ length: 4 }, () => ({ store: 'observations', index: 'operation_id', full: false })))
+  expect(result.scopedReads.filter(read => read.store === 'evidence').every(read => !read.full)).toBeTruthy()
+  expect(result.globalReads).toEqual([{ store: 'nodes', full: true }, { store: 'evidence', full: true }])
+  expect(result.failureReads).toEqual([{ store: 'failures', full: true }])
+})
+
+test('CSTX notifies only committed changes and coalesces concurrent syncs', async ({ page }) => {
+  const entries: AOPEvent[] = []
+  await archive(page, entries)
+  await page.evaluate(() => {
+    ;(window as any).changes = 0
+    ;(window as any).runtime.subscribeCSTXChanges(() => { (window as any).changes++ })
+  })
+  await page.evaluate(async () => {
+    await (window as any).runtime.syncCSTXArtifacts()
+    await (window as any).runtime.retryCSTXFailures()
+  })
+  expect(await page.evaluate(() => (window as any).changes)).toBe(0)
+  entries.push(artifact('new-data', 'op', { ip: '127.0.0.1', port: '80' }))
+  await page.evaluate(async () => { const r = (window as any).runtime; await Promise.all([r.syncCSTXArtifacts(), r.syncCSTXArtifacts(), r.syncCSTXArtifacts()]) })
+  expect(await page.evaluate(() => (window as any).changes)).toBe(1)
+  entries.push(artifact('bad-data', 'op', {}, 'unsupported-parser'))
+  await page.evaluate(() => (window as any).runtime.syncCSTXArtifacts())
+  expect(await page.evaluate(() => (window as any).changes)).toBe(2)
+  await page.evaluate(() => (window as any).runtime.retryCSTXFailures())
+  expect(await page.evaluate(() => (window as any).changes)).toBe(2)
+  await page.evaluate(() => (window as any).runtime.syncCSTXArtifacts())
+  expect(await page.evaluate(() => (window as any).changes)).toBe(2)
+})
+
+test('result cards load once on mount and once for an actual archive change', async ({ page }) => {
+  const entries = [artifact('initial', 'op', { ip: '127.0.0.1', port: '80' })]
+  await archive(page, entries)
+  let scanReads = 0
+  await page.route('**/GetScan', route => {
+    scanReads++
+    return route.fulfill({ contentType: 'application/proto', body: Buffer.from(toBinary(GetScanResponseSchema, create(GetScanResponseSchema, { scan: { id: 'outer-call', status: ScanStatus.COMPLETED } }))) })
+  })
+  await page.route('**/cleanup-result-test', route => route.fulfill({ contentType: 'text/html', body: `<html><head>${preamble}</head><body><div id="root"></div><script type="module" src="/e2e/fixtures/cleanup-results.tsx"></script></body></html>` }))
+  await page.goto(`${fixtureURL}/cleanup-result-test`)
+  await expect.poll(() => page.evaluate(() => (window as any).operationReads)).toBe(4)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(scanReads).toBe(1)
+  await page.evaluate(async () => { const r = await import('/src/lib/cstx-runtime.ts'); await r.syncCSTXArtifacts() })
+  expect(await page.evaluate(() => (window as any).operationReads)).toBe(4)
+  expect(scanReads).toBe(1)
+  entries.push(artifact('additional', 'op', { ip: '127.0.0.2', port: '81' }))
+  await page.evaluate(async () => { const r = await import('/src/lib/cstx-runtime.ts'); await r.syncCSTXArtifacts() })
+  await expect.poll(() => page.evaluate(() => (window as any).operationReads)).toBe(8)
+  expect(scanReads).toBe(2)
+  await page.reload()
+  await expect.poll(() => page.evaluate(() => (window as any).operationReads)).toBe(4)
+  expect(scanReads).toBe(3)
+})
+
+test('session cards restore from native events without fetching another node snapshot', async ({ page }) => {
+  await page.route('**/cyber.rpc.*/**', route => route.fulfill({ contentType: 'application/proto', body: '' }))
+  let archiveReads = 0
+  await page.route('**/SyncArtifacts', route => { archiveReads++; return route.fulfill({ contentType: 'application/proto', body: '' }) })
+  const events = [
+    create(EventSchema, { id: 'scan-ended', sessionId: 's1', payload: { case: 'extension', value: anyPack(SessionScanEventSchema, create(SessionScanEventSchema, { scanId: 'root-scan', status: ScanStatus.CANCELED })) } }),
+    create(EventSchema, { id: 'child-ended', sessionId: 'child', payload: { case: 'extension', value: anyPack(SessionScanEventSchema, create(SessionScanEventSchema, { scanId: 'child-scan', status: ScanStatus.COMPLETED })) } }),
+  ]
+  await page.route('**/ListEvents', route => {
+    const request = fromBinary(ListEventsRequestSchema, route.request().postDataBuffer()!)
+    return route.fulfill({ contentType: 'application/proto', body: Buffer.from(toBinary(ListEventsResponseSchema, create(ListEventsResponseSchema, {
+      events: request.sessionId === 's1' && !request.afterCursor ? events.map((event, index) => ({ event, cursor: String(index + 1) })) : [],
+    }))) })
+  })
+  await page.route('**/GetSession', route => {
+    const request = fromBinary(GetSessionRequestSchema, route.request().postDataBuffer()!)
+    return route.fulfill({ contentType: 'application/proto', body: Buffer.from(toBinary(GetSessionResponseSchema, create(GetSessionResponseSchema, { session: { session: { id: request.sessionId } } }))) })
+  })
+  await page.route('**/cleanup-session-test', route => route.fulfill({ contentType: 'text/html', body: `<html><head>${preamble}</head><body><div id="root"></div><script type="module" src="/e2e/fixtures/cleanup-session.tsx"></script></body></html>` }))
+  await page.goto(`${fixtureURL}/cleanup-session-test`)
+  await expect(page.getByTestId('scan-ids')).toBeAttached()
+  await page.evaluate(() => (window as any).session.selectSession('s1'))
+  await expect(page.getByTestId('scan-ids')).toHaveText('root-scan')
+  await page.evaluate(() => (window as any).session.selectSession('s2'))
+  await expect(page.getByTestId('scan-ids')).toHaveText('')
+  await page.evaluate(() => (window as any).session.selectSession('s1'))
+  await expect(page.getByTestId('scan-ids')).toHaveText('root-scan')
+  expect(archiveReads).toBe(0)
 })
 
 test('composer preserves failed drafts, attachments and edits during submission', async ({ page }) => {

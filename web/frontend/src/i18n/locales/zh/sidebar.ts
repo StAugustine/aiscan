@@ -1,4 +1,8 @@
 export default {
+  needsAttention: '待介入',
+  pendingApprovals: '{{count}} 项待授权',
+  sessionsNeedAttention: '{{count}} 个会话待介入',
+
   newTask: '新建任务',
   newTaskForNode: '在 {{name}} 新建任务',
   tasks: '任务',

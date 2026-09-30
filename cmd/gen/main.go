@@ -41,6 +41,7 @@ var typeProtos = []string{
 	"types/chat.proto",
 	"types/command.proto",
 	"types/config.proto",
+	"types/guardrail.proto",
 	"types/reload.proto",
 	"types/scan.proto",
 	"types/system.proto",

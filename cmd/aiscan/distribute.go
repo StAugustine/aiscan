@@ -15,14 +15,14 @@ func DistributeFromOption(option *cfg.Option) (*types.DistributeConfig, error) {
 	if _, err := scannerext.ReadCyberhub(option); err != nil {
 		return nil, err
 	}
-	recon, err := scannerext.ReadRecon(option)
+	_, err := scannerext.ReadRecon(option)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := scannerext.ReadScan(option); err != nil {
 		return nil, err
 	}
-	searchKeys, err := searchext.ReadKeys(option)
+	_, err = searchext.ReadKeys(option)
 	if err != nil {
 		return nil, err
 	}
@@ -30,6 +30,6 @@ func DistributeFromOption(option *cfg.Option) (*types.DistributeConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	value.Search = &types.SearchConfig{TavilyKeys: tavilyKeys(recon.TavilyKey, searchKeys)}
+	cfg.NormalizeLLMConfig(value.Llm)
 	return value, nil
 }

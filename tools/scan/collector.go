@@ -12,25 +12,26 @@ import (
 )
 
 type collector struct {
-	mu           sync.Mutex
-	inputs       int
-	debug        bool
-	startedAt    time.Time
-	finishedAt   time.Time
-	tasks        int64
-	requests     int64
-	gogoResults  []*parsers.GOGOResult
-	sprayResults []*parsers.SprayResult
-	artifacts    []artifactResult
-	loots        []parsers.Loot
-	errors       []string
-	canceled     bool
-	trace        []string
-	seenWeb      map[string]struct{}
-	seenFinger   map[string]struct{}
-	stream       io.Writer
-	streamColor  bool
-	fileLines    []string
+	mu          sync.Mutex
+	inputs      int
+	debug       bool
+	startedAt   time.Time
+	finishedAt  time.Time
+	tasks       int64
+	requests    int64
+	services    int
+	probes      int
+	json        bool
+	jsonLines   strings.Builder
+	loots       []parsers.Loot
+	errors      []string
+	canceled    bool
+	trace       []string
+	seenWeb     map[string]struct{}
+	seenFinger  map[string]struct{}
+	stream      io.Writer
+	streamColor bool
+	fileLines   []string
 }
 
 func newCollector(inputs []string, stream io.Writer, streamColor, debug bool) *collector {
@@ -53,7 +54,7 @@ func (c *collector) Observe(pe pipeline.Observation[event]) {
 		traceEntry = formatTraceEvent(pe)
 	}
 	var plain string
-	if accepted {
+	if accepted && c.stream == nil && !c.json {
 		plain = formatEventLine(pe.Event, false)
 	}
 
@@ -97,12 +98,16 @@ func (c *collector) recordTargetEvent(event event) {
 		c.seenWeb[target.Key()] = struct{}{}
 	case serviceTarget:
 		if target.Result != nil {
-			c.gogoResults = append(c.gogoResults, target.Result)
+			c.services++
 		}
 	case webProbeTarget:
 		if reportableSprayResultForCapability(target.Result, event.Source) {
-			c.sprayResults = append(c.sprayResults, target.Result)
+			c.probes++
 		}
+	}
+	if c.json && event.Artifact != nil {
+		c.jsonLines.Write(event.Artifact.Data)
+		c.jsonLines.WriteByte('\n')
 	}
 }
 
@@ -111,9 +116,6 @@ func (c *collector) recordLootEvent(event event) {
 		return
 	}
 	loot := *event.Loot
-	if event.Artifact != nil {
-		c.artifacts = append(c.artifacts, *event.Artifact)
-	}
 	switch loot.Kind {
 	case parsers.LootFingerprint:
 		fingers := loot.Tags

@@ -2,9 +2,12 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+
+	aop "github.com/chainreactors/cyber/aop"
 
 	coreregistry "github.com/chainreactors/cyber/core/registry"
 )
@@ -13,6 +16,7 @@ var (
 	ErrInvalidCommand   = errors.New("invalid command registration")
 	ErrDuplicateCommand = coreregistry.ErrDuplicate
 	ErrUnavailable      = coreregistry.ErrUnavailable
+	ErrStaleChoice      = errors.New("observed choice is stale")
 )
 
 // Command is an immutable native command declaration. Its dependencies are
@@ -26,6 +30,11 @@ type Command struct {
 	QuickReference  string
 	DescriptionPath string
 	Run             func(context.Context, *Execution) (any, error)
+	// Observe reads current tool-owned state and returns native calls that are
+	// valid for that observation. It must not execute actions. Calls are checked
+	// again by the tool at execution. Observations and candidates are facts and
+	// possibilities, not recommendations; the consumer decides what to execute.
+	Observe func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error)
 }
 
 // StripShellSyntax rejects shell constructs a pseudo-command cannot honor.

@@ -233,7 +233,6 @@ func ConfigView(config *types.DistributeConfig, path string, loaded bool) *types
 		view.Llm.Active = view.Llm.Providers[0]
 		view.Llm.ActiveProfile = view.Llm.Active.Id
 	}
-	view.Search = &types.SearchView{TavilyKeysConfigured: config.GetSearch().GetTavilyKeys() != ""}
 	view.Agent = proto.CloneOf(config.GetAgent())
 	view.Traffic = proto.CloneOf(config.GetTraffic())
 	return view

@@ -362,6 +362,51 @@ func (x *CompactDetail) GetTokensBefore() uint64 {
 	return 0
 }
 
+// Display-only task recap. Correlation and time belong to the AOP envelope.
+type Recap struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Recap) Reset() {
+	*x = Recap{}
+	mi := &file_types_agent_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Recap) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Recap) ProtoMessage() {}
+
+func (x *Recap) ProtoReflect() protoreflect.Message {
+	mi := &file_types_agent_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Recap.ProtoReflect.Descriptor instead.
+func (*Recap) Descriptor() ([]byte, []int) {
+	return file_types_agent_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *Recap) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 type DelegationDetail struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -376,7 +421,7 @@ type DelegationDetail struct {
 
 func (x *DelegationDetail) Reset() {
 	*x = DelegationDetail{}
-	mi := &file_types_agent_proto_msgTypes[6]
+	mi := &file_types_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -388,7 +433,7 @@ func (x *DelegationDetail) String() string {
 func (*DelegationDetail) ProtoMessage() {}
 
 func (x *DelegationDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[6]
+	mi := &file_types_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -401,7 +446,7 @@ func (x *DelegationDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DelegationDetail.ProtoReflect.Descriptor instead.
 func (*DelegationDetail) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{6}
+	return file_types_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DelegationDetail) GetAgentId() string {
@@ -444,58 +489,6 @@ func (x *DelegationDetail) GetTask() string {
 		return x.Task
 	}
 	return ""
-}
-
-type EvalControl struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Criteria      string                 `protobuf:"bytes,1,opt,name=criteria,proto3" json:"criteria,omitempty"`
-	MaxRounds     uint32                 `protobuf:"varint,2,opt,name=max_rounds,json=maxRounds,proto3" json:"max_rounds,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *EvalControl) Reset() {
-	*x = EvalControl{}
-	mi := &file_types_agent_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *EvalControl) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*EvalControl) ProtoMessage() {}
-
-func (x *EvalControl) ProtoReflect() protoreflect.Message {
-	mi := &file_types_agent_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use EvalControl.ProtoReflect.Descriptor instead.
-func (*EvalControl) Descriptor() ([]byte, []int) {
-	return file_types_agent_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *EvalControl) GetCriteria() string {
-	if x != nil {
-		return x.Criteria
-	}
-	return ""
-}
-
-func (x *EvalControl) GetMaxRounds() uint32 {
-	if x != nil {
-		return x.MaxRounds
-	}
-	return 0
 }
 
 type EvalDetail struct {
@@ -919,7 +912,9 @@ const file_types_agent_proto_rawDesc = "" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12#\n" +
 	"\rkept_messages\x18\x02 \x01(\x04R\fkeptMessages\x12!\n" +
 	"\ftokens_after\x18\x03 \x01(\x04R\vtokensAfter\x12#\n" +
-	"\rtokens_before\x18\x04 \x01(\x04R\ftokensBefore\"\xbd\x01\n" +
+	"\rtokens_before\x18\x04 \x01(\x04R\ftokensBefore\"\x1b\n" +
+	"\x05Recap\x12\x12\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\"\xbd\x01\n" +
 	"\x10DelegationDetail\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
@@ -928,11 +923,7 @@ const file_types_agent_proto_rawDesc = "" +
 	"agent_type\x18\x03 \x01(\tR\tagentType\x12!\n" +
 	"\fcontext_mode\x18\x04 \x01(\tR\vcontextMode\x12\x19\n" +
 	"\brun_mode\x18\x05 \x01(\tR\arunMode\x12\x12\n" +
-	"\x04task\x18\x06 \x01(\tR\x04task\"H\n" +
-	"\vEvalControl\x12\x1a\n" +
-	"\bcriteria\x18\x01 \x01(\tR\bcriteria\x12\x1d\n" +
-	"\n" +
-	"max_rounds\x18\x02 \x01(\rR\tmaxRounds\"\x83\x01\n" +
+	"\x04task\x18\x06 \x01(\tR\x04task\"\x83\x01\n" +
 	"\n" +
 	"EvalDetail\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12\x1d\n" +
@@ -986,8 +977,8 @@ var file_types_agent_proto_goTypes = []any{
 	(*AgentRunOptions)(nil),       // 3: cyber.agent.AgentRunOptions
 	(*CommandDetail)(nil),         // 4: cyber.agent.CommandDetail
 	(*CompactDetail)(nil),         // 5: cyber.agent.CompactDetail
-	(*DelegationDetail)(nil),      // 6: cyber.agent.DelegationDetail
-	(*EvalControl)(nil),           // 7: cyber.agent.EvalControl
+	(*Recap)(nil),                 // 6: cyber.agent.Recap
+	(*DelegationDetail)(nil),      // 7: cyber.agent.DelegationDetail
 	(*EvalDetail)(nil),            // 8: cyber.agent.EvalDetail
 	(*BudgetWarning)(nil),         // 9: cyber.agent.BudgetWarning
 	(*LLMRequestDetail)(nil),      // 10: cyber.agent.LLMRequestDetail

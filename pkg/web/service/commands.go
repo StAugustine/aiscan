@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"strings"
 
 	aop "github.com/chainreactors/cyber/aop"
@@ -157,8 +158,19 @@ func (s *Service) sessionAgent(sessionID string) *remoteAgent {
 }
 
 func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) {
+	taskID := strings.TrimSpace(request.TurnId)
+	if taskID == "" {
+		taskID = generateID()
+	}
+	request.TurnId = taskID
+	request.SessionId = sessionID
+	if err := s.resetTurnTerminal(sessionID, taskID); err != nil {
+		s.broadcastHubTurnEnded(sessionID, taskID, "storage_error", err.Error())
+		return
+	}
 	workCtx, admitted := s.beginWork()
 	if !admitted {
+		s.broadcastHubTurnEnded(sessionID, taskID, "service_closing", "web service is closing")
 		return
 	}
 	defer s.work.Done()
@@ -166,16 +178,10 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 	if agent == nil {
 		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
 			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
+		s.broadcastHubTurnEnded(sessionID, taskID, "agent_not_connected", "agent disconnected before turn dispatch")
 		return
 	}
 
-	taskID := strings.TrimSpace(request.TurnId)
-	if taskID == "" {
-		taskID = generateID()
-	}
-	request.TurnId = taskID
-	request.SessionId = sessionID
-	s.resetTurnTerminal(sessionID, taskID)
 	s.registerSessionTask(taskID, sessionID)
 	resultCh, err := s.agents.DispatchRun(agent.NodeID(), request)
 	if err != nil {
@@ -187,7 +193,7 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 	s.work.Add(1)
 	go func() {
 		defer s.work.Done()
-		var res taskResult
+		var res proto.Message
 		var ok bool
 		select {
 		case res, ok = <-resultCh:
@@ -202,8 +208,8 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 			s.broadcastHubTurnEnded(sessionID, taskID, "agent_disconnected", "agent disconnected")
 			return
 		}
-		if res.Err != "" {
-			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", res.Err)
+		if failure := taskError(res); failure != nil {
+			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", failure.Message)
 		}
 	}()
 }
@@ -258,7 +264,7 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 	s.work.Add(1)
 	go func() {
 		defer s.work.Done()
-		var res taskResult
+		var res proto.Message
 		var ok bool
 		select {
 		case res, ok = <-resultCh:
@@ -272,11 +278,11 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 		if !ok {
 			return
 		}
-		if res.Err != "" {
+		if failure := taskError(res); failure != nil {
 			// The agent's error text is a raw Go string ("context canceled" and
 			// friends). Code it so the client frames it in the reader's language
 			// instead of rendering the string bare.
-			s.broadcastHubError(sessionID, "command_failed", res.Err, map[string]any{"error": res.Err})
+			s.broadcastHubError(sessionID, "command_failed", failure.Message, map[string]any{"error": failure.Message})
 		}
 	}()
 	return taskID, nil

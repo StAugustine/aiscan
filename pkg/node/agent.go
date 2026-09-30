@@ -63,7 +63,11 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 	}
 	defer func() { _ = current.Close(context.Background()) }()
 	currentOption := option
-	var applied *types.DistributeConfig
+	currentConfig, err := cfg.SharedFromOption(currentOption)
+	if err != nil {
+		return err
+	}
+	configured := false
 	started := false
 	for {
 		var candidate profile.Profile
@@ -93,27 +97,83 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 			if err != nil {
 				return err
 			}
-			// Reload prepares a complete candidate; sessions never migrate.
-			reload := func(distributed *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
-				if applied != nil && proto.Equal(applied, distributed) {
-					return reloadStatus(current)
+			startTask := func() error {
+				if started {
+					return nil
 				}
-				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
-				// The hub sends its configuration on every connection, including
-				// startup. An equivalent configuration must not close a connection
-				// that has already accepted the user's first session.
-				if err == nil && sameSharedConfig(currentOption, nextOption) {
-					applied = proto.CloneOf(distributed)
-					return reloadStatus(current)
+				providers, err := current.Providers()
+				if err != nil {
+					return err
 				}
-				var next profile.Profile
-				if err == nil {
-					mode := profile.ProviderOptional
-					if len(distributed.GetLlm().GetProviders()) == 0 {
-						mode = profile.ProviderDisabled
+				if active, _ := providers.Current(); active == nil {
+					return nil
+				}
+				task, err := webAgentTask(option)
+				if err != nil {
+					return err
+				}
+				if task != "" {
+					if _, err := rt.EnsureSession(agentsession.SessionOptions{ID: "startup"}); err != nil {
+						return err
 					}
-					next, err = build(nextOption, mode)
+					if _, err := rt.RunSession(connectionCtx, "startup", agentsession.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}}); err != nil {
+						return err
+					}
 				}
+				started = true
+				return nil
+			}
+			// Graph changes prepare a complete candidate; provider-only changes
+			// are applied in place so sessions retain their conversation history.
+			reload := func(distributed *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
+				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				nextConfig, err := cfg.SharedFromOption(nextOption)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				unchanged := proto.Equal(currentConfig, nextConfig)
+				if configured && unchanged {
+					currentOption = nextOption
+					return reloadStatus(current)
+				}
+				if mode, onlyMode := cfg.GuardrailModeChange(currentConfig, nextConfig); configured && onlyMode {
+					if target, ok := current.(interface{ SetGuardrailMode(string) error }); ok {
+						if err := target.SetGuardrailMode(mode); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						currentOption, currentConfig = nextOption, nextConfig
+						return reloadStatus(current)
+					}
+				}
+				// Rebuilding a profile for a model/API update cancels live runs and
+				// drops their in-memory transcript. Delegate to the provider owner;
+				// active turns keep their provider snapshot and later turns use the
+				// new one.
+				before, after := proto.CloneOf(currentConfig), proto.CloneOf(nextConfig)
+				before.Llm, after.Llm = nil, nil
+				if !unchanged && proto.Equal(before, after) {
+					if reloader, ok := current.(interface {
+						ReloadProvider(context.Context, agent.ProviderConfig) error
+					}); ok {
+						if reloadErr := reloader.ReloadProvider(connectionCtx, cfg.ProviderConfig(nextOption)); reloadErr != nil {
+							return &types.ReloadResult{Error: reloadErr.Error()}, nil
+						}
+						currentOption, currentConfig, configured = nextOption, nextConfig, true
+						if err := startTask(); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						return reloadStatus(current)
+					}
+					return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
+				}
+				mode := profile.ProviderOptional
+				if len(distributed.GetLlm().GetProviders()) == 0 {
+					mode = profile.ProviderDisabled
+				}
+				next, err := build(nextOption, mode)
 				if err != nil {
 					return &types.ReloadResult{Error: err.Error()}, nil
 				}
@@ -126,7 +186,7 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 					_ = next.Close(context.Background())
 					return result, nil
 				}
-				candidate, candidateOption, candidateConfig = next, nextOption, proto.CloneOf(distributed)
+				candidate, candidateOption, candidateConfig = next, nextOption, nextConfig
 				return result, status
 			}
 			commit := func() {
@@ -134,26 +194,8 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 					cancel()
 				}
 			}
-			if !started {
-				providers, err := current.Providers()
-				if err != nil {
-					return err
-				}
-				if active, _ := providers.Current(); active != nil {
-					task, err := webAgentTask(option)
-					if err != nil {
-						return err
-					}
-					started = true
-					if task != "" {
-						if _, err := rt.EnsureSession(agentsession.SessionOptions{ID: "startup"}); err != nil {
-							return err
-						}
-						if _, err := rt.RunSession(connectionCtx, "startup", agentsession.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}}); err != nil {
-							return err
-						}
-					}
-				}
+			if err := startTask(); err != nil {
+				return err
 			}
 			return connect(connectionCtx, connectionConfig{
 				ServerURL: option.ServerURL, Name: rt.NodeName(), Executor: rt.Tools(), Events: events,
@@ -167,7 +209,7 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 		if err := current.Close(context.Background()); err != nil {
 			logger.Warnf("close previous profile: %v", err)
 		}
-		current, currentOption, applied = candidate, candidateOption, candidateConfig
+		current, currentOption, currentConfig, configured = candidate, candidateOption, candidateConfig, true
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

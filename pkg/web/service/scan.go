@@ -12,6 +12,7 @@ import (
 
 	aop "github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/pkg/output"
 	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
@@ -30,7 +31,7 @@ var (
 // scansEnabled reports whether the service mounts the scan console.
 func (s *Service) scansEnabled() bool { return s.sem != nil }
 
-// scanStatusToDB maps the proto enum to the string stored in scans.status.
+// scanStatusToDB formats scan states for messages and diagnostics.
 func scanStatusToDB(value scanpb.ScanStatus) string {
 	switch value {
 	case scanpb.ScanStatus_SCAN_STATUS_RUNNING:
@@ -242,7 +243,7 @@ func (s *Service) runScanViaAgent(ctx context.Context, scan *scanpb.Scan) {
 	// Progress lines stream to the SSE hub as tool.data events while the scan
 	// runs; the terminal tool.result carries the full text and the structured
 	// scan result in its details.
-	var res taskResult
+	var res proto.Message
 	var ok bool
 	select {
 	case <-ctx.Done():
@@ -260,11 +261,12 @@ func (s *Service) runScanViaAgent(ctx context.Context, scan *scanpb.Scan) {
 		_, _ = s.failScan(scan, "agent disconnected")
 		return
 	}
-	if res.Err != "" {
-		_, _ = s.failScan(scan, res.Err)
+	if failure := taskError(res); failure != nil {
+		_, _ = s.failScan(scan, failure.Message)
 		return
 	}
-	if progress := lastOutputLine(res.Output); progress != "" {
+	result, _ := res.(*aop.ToolResult)
+	if progress := lastOutputLine(coretool.ResultText(result)); progress != "" {
 		scan.Progress = progress
 	}
 

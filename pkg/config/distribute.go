@@ -42,15 +42,61 @@ func MarshalDistributeConfigYAML(pb *types.DistributeConfig) ([]byte, error) {
 	if pb == nil {
 		return nil, nil
 	}
-	jsonData, err := (protojson.MarshalOptions{UseProtoNames: true, EmitDefaultValues: true}).Marshal(pb)
-	if err != nil {
-		return nil, err
+	return yaml.Marshal(DistributeConfigDocument(pb))
+}
+
+// DistributeConfigDocument projects the transport config directly into the
+// document consumed by the existing option decoder and file editor.
+func DistributeConfigDocument(pb *types.DistributeConfig) map[string]any {
+	document := map[string]any{"extensions": map[string]any{}}
+	if pb == nil {
+		return document
 	}
-	var raw map[string]any
-	if err := json.Unmarshal(jsonData, &raw); err != nil {
-		return nil, err
+	extensions := document["extensions"].(map[string]any)
+	for key, value := range pb.Extensions {
+		if value == nil {
+			extensions[key] = nil
+		} else {
+			extensions[key] = value.AsMap()
+		}
 	}
-	return yaml.Marshal(raw)
+	if llm := pb.Llm; llm != nil {
+		providers := make([]any, 0, len(llm.Providers))
+		for _, p := range llm.Providers {
+			fields := map[string]any{
+				"id": p.GetId(), "name": p.GetName(), "provider": p.GetProvider(),
+				"base_url": p.GetBaseUrl(), "api_key": p.GetApiKey(), "model": p.GetModel(),
+				"proxy": p.GetProxy(), "max_tokens": int(p.GetMaxTokens()),
+				"context_window": int(p.GetContextWindow()), "timeout": int(p.GetTimeout()),
+			}
+			if p != nil && p.Images != nil {
+				fields["images"] = *p.Images
+			}
+			providers = append(providers, fields)
+		}
+		document["llm"] = map[string]any{"active_profile": llm.ActiveProfile, "providers": providers}
+	}
+	if agent := pb.Agent; agent != nil {
+		fields := map[string]any{
+			"tools": append([]string{}, agent.Tools...), "heartbeat": int(agent.Heartbeat),
+			"eval_criteria": agent.EvalCriteria, "eval_model": agent.EvalModel,
+			"eval_rounds": agent.EvalRounds, "capture_provider_frames": agent.CaptureProviderFrames,
+		}
+		if agent.Timeout != nil {
+			fields["timeout"] = int(*agent.Timeout)
+		}
+		document["agent"] = fields
+	}
+	if node := pb.Node; node != nil {
+		document["node"] = map[string]any{"id": node.Id, "name": node.Name}
+	}
+	if traffic := pb.Traffic; traffic != nil {
+		document["traffic"] = map[string]any{
+			"body_storage": traffic.BodyStorage, "body_max_bytes": traffic.BodyMaxBytes,
+			"body_retention_bytes": traffic.BodyRetentionBytes,
+		}
+	}
+	return document
 }
 
 // ActiveLLMProvider returns the selected LLM profile, or the first when the

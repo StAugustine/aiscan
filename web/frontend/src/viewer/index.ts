@@ -16,7 +16,10 @@ export interface SubagentRunTimelineItem {
   items: ViewerTimelineItem[]
 }
 
-export type ViewerTimelineItem = CyberTimelineItem | SubagentRunTimelineItem
+// Host presentation only: reuse timeline entries inside an approved tool turn.
+export type ViewerTimelineItem = Exclude<CyberTimelineItem, { kind: 'assistant_response' }>
+  | (Extract<CyberTimelineItem, { kind: 'assistant_response' }> & { steps?: CyberTimelineItem[] })
+  | SubagentRunTimelineItem
 
 export {
   stripAnsiControl,
@@ -36,7 +39,7 @@ export { default as AssistantResponse } from '../../cyber-ui/packages/viewer/src
 export { default as ChatInput } from '../../cyber-ui/packages/viewer/src/components/chat/ChatInput'
 export { AgentVoiceCard } from '../../cyber-ui/packages/viewer/src/components/chat/AgentVoiceCard'
 export { ChatPanel } from '../../cyber-ui/packages/viewer/src/components/chat/ChatPanel'
-export { reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
+export { createAOPTimelineReducer, reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
 
 export type {
   TimelineRendererConfig,

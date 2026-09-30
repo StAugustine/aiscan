@@ -21,6 +21,7 @@ import (
 	"github.com/chainreactors/cyber/core/proc"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	loopext "github.com/chainreactors/cyber/pkg/exts/agent"
+	"github.com/chainreactors/cyber/pkg/exts/guardrail"
 	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
 	subagentext "github.com/chainreactors/cyber/pkg/exts/subagent"
 	terminaltool "github.com/chainreactors/cyber/tools/terminal"
@@ -42,6 +43,7 @@ type Config struct {
 // publishes. Constructing a Harness does not start resources; call Load
 // before using any accessor and Close it even when Load fails.
 type Harness struct {
+	guardrail *guardrail.Runtime
 	set       *extension.Set
 	providers *provider.State
 	events    *events.Stream
@@ -78,6 +80,9 @@ func New(config Config) (*Harness, error) {
 	entries = append(entries, extension.Func{LoadFunc: func(scope *extension.Scope) error {
 		var err error
 		if h.providers, err = extension.Use[*provider.State](scope); err != nil {
+			return err
+		}
+		if h.guardrail, err = extension.Use[*guardrail.Runtime](scope); err != nil {
 			return err
 		}
 		if h.events, err = extension.Use[*events.Stream](scope); err != nil {
@@ -195,4 +200,12 @@ func (h *Harness) Processes() (*proc.Manager, error) {
 		return nil, fmt.Errorf("harness is not active")
 	}
 	return h.processes, nil
+}
+
+// SetGuardrailMode preserves all running sessions and pending invocations.
+func (h *Harness) SetGuardrailMode(mode string) error {
+	if !h.Active() || h.guardrail == nil {
+		return fmt.Errorf("guardrail runtime is unavailable")
+	}
+	return h.guardrail.SetMode(guardrail.Mode(mode))
 }

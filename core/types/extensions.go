@@ -65,16 +65,6 @@ func SetDelegation(event *aop.Event, value *DelegationDetail) error {
 	return aop.SetTypedExtension(event, value)
 }
 
-func GetEvalControl(event *aop.Event) (*EvalControl, bool, error) {
-	value := new(EvalControl)
-	ok, err := aop.FindTypedExtension(event, value)
-	return value, ok, err
-}
-
-func SetEvalControl(event *aop.Event, value *EvalControl) error {
-	return aop.SetTypedExtension(event, value)
-}
-
 func GetEvalDetail(event *aop.Event) (*EvalDetail, bool, error) {
 	value := new(EvalDetail)
 	ok, err := aop.FindTypedExtension(event, value)

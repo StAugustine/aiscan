@@ -39,9 +39,9 @@ func formatScanSummaryLine(d *collector, color bool) string {
 	}
 	parts := []string{status}
 	parts = appendCount(parts, d.inputs, "target", "targets")
-	parts = appendCount(parts, len(d.gogoResults), "service", "services")
+	parts = appendCount(parts, d.services, "service", "services")
 	parts = appendCount(parts, len(d.seenWeb), "web", "web")
-	parts = appendCount(parts, len(d.sprayResults), "probe", "probes")
+	parts = appendCount(parts, d.probes, "probe", "probes")
 	parts = appendCount(parts, len(d.seenFinger), "fingerprint", "fingerprints")
 	parts = appendCount(parts, len(d.loots), "loot", "loots")
 	parts = appendCount(parts, len(d.errors), "error", "errors")

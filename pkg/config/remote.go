@@ -16,12 +16,8 @@ func ResolveDistributedRuntime(distributed *types.DistributeConfig, host *Option
 	if distributed == nil || host == nil {
 		return nil, fmt.Errorf("distributed configuration and host options are required")
 	}
-	data, err := MarshalDistributeConfigYAML(distributed)
-	if err != nil {
-		return nil, err
-	}
 	loaded := Option{Sections: host.Sections}
-	if err := LoadConfigBytes(data, &loaded); err != nil {
+	if err := LoadConfigDocument(DistributeConfigDocument(distributed), &loaded); err != nil {
 		return nil, err
 	}
 	option := *host

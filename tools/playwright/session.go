@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/chainreactors/cyber/core/operation"
 	"github.com/chainreactors/cyber/tools/headless"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/proto"
@@ -28,6 +29,8 @@ const (
 
 // Session holds a persistent page across multiple Execute() calls.
 type Session struct {
+	owner     string
+	pending   map[string]observedAction // protected by opMu; consumed once
 	Name      string
 	Page      *rod.Page
 	Incognito *rod.Browser // incognito context
@@ -407,6 +410,7 @@ func (c *Command) execOpen(ctx context.Context, args []string) (string, error) {
 	}
 
 	sess := &Session{
+		owner:     operation.InvocationFromContext(ctx).SessionID,
 		Name:      o.sessName,
 		Page:      page,
 		Incognito: incognito,
@@ -494,7 +498,10 @@ func (c *Command) execClose(ctx context.Context, args []string) (string, error) 
 	}
 	delete(c.sessions, name)
 	c.sessionsMu.Unlock()
+	return c.closeSession(sess, saveStor, saveHAR)
+}
 
+func (c *Command) closeSession(sess *Session, saveStor, saveHAR string) (string, error) {
 	var sb strings.Builder
 
 	// Save storage state before cleanup.
@@ -535,7 +542,7 @@ func (c *Command) execClose(ctx context.Context, args []string) (string, error) 
 	}
 
 	sess.cleanup()
-	sb.WriteString(fmt.Sprintf("Session %q closed", name))
+	sb.WriteString(fmt.Sprintf("Session %q closed", sess.Name))
 	return sb.String(), nil
 }
 
@@ -671,6 +678,7 @@ func (c *Command) execAttach(ctx context.Context, args []string) (string, error)
 	copy(tabs, pages)
 
 	sess := &Session{
+		owner:            operation.InvocationFromContext(ctx).SessionID,
 		Name:             sessName,
 		Page:             page,
 		Incognito:        b,

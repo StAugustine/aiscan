@@ -57,7 +57,12 @@ func ReadRecon(option *cfg.Option) (ReconOptions, error) {
 		if err != nil {
 			return ReconOptions{}, err
 		}
-		return *decoded, nil
+		value := *decoded
+		if value.Limit != nil {
+			copy := *value.Limit
+			value.Limit = &copy
+		}
+		return value, nil
 	}
 	registry := cfg.NewSections()
 	if _, err := registry.Add(ReconSection()); err != nil {

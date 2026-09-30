@@ -1,28 +1,15 @@
 package tool
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	aop "github.com/chainreactors/cyber/aop"
-	"github.com/chainreactors/cyber/core/operation"
 )
 
-// Tool results feed the model context, so their budget is set by what the model
-// can usefully absorb, not by what the transport can carry. Artifact payloads are
-// already bounded separately (see tools/toolargs) for the transport; the inline
-// ToolResult channel had no budget at all, so one large tool result could be
-// marshaled as a single WebSocket message big enough to trip the control plane's
-// read limit and sever the connection for every in-flight call.
-//
-// The budget sits at the point where more raw bytes stop helping the model reason
-// (~tens of KB): past it, a bounded preview plus an on-disk reference beats a full
-// dump. It is deliberately not scaled by context-window size — a larger window
-// holds more results, it does not make any single result more absorbable.
+// The transport bounds inline text. Recoverable output stays at its source;
+// this boundary never creates a second storage or reference mechanism.
 const (
 	// toolResultBudgetBytes caps the inline text of one tool result. 64 KiB is
 	// ~16-20k tokens, ~2% of a 1M context window.
@@ -35,15 +22,10 @@ const (
 	// toolResultHeadBytes keeps the structure at the top; head + tail + reserve
 	// equals the budget.
 	toolResultHeadBytes = toolResultBudgetBytes - toolResultTailBytes - toolResultMarkerReserve
-	// spillDirName is the workspace-relative directory the full output is written
-	// to, so the read tool can page it back with offset/limit.
-	spillDirName = ".cairn/spill"
 )
 
-// boundToolResultOutput collapses an over-budget result to a head+tail preview
-// plus an actionable reference to the spilled full output. Results within budget
-// are returned unchanged.
-func boundToolResultOutput(ctx context.Context, result *aop.ToolResult) {
+// boundToolResultOutput bounds text while preserving media and result metadata.
+func boundToolResultOutput(result *aop.ToolResult) {
 	if result == nil {
 		return
 	}
@@ -66,60 +48,29 @@ func boundToolResultOutput(ctx context.Context, result *aop.ToolResult) {
 	}
 	full := sb.String()
 
-	workDir := operation.WorkDirFromContext(ctx, "")
-	ref, spilled := spillToolResultOutput(workDir, result.CallId, full)
-
 	var preview strings.Builder
 	preview.WriteString(headBytes(full, toolResultHeadBytes))
 	preview.WriteString("\n\n...[output truncated]...\n\n")
 	preview.WriteString(tailBytes(full, toolResultTailBytes))
 	preview.WriteString("\n\n")
-	if spilled {
-		fmt.Fprintf(&preview,
-			"[output too large: %d bytes total; full output saved to %s — read it with offset/limit, or download it after the task halts]",
-			total, ref)
-	} else {
-		fmt.Fprintf(&preview,
-			"[output too large: %d bytes total; truncated to fit the context budget]", total)
-	}
+	fmt.Fprintf(&preview,
+		"[output too large: %d bytes total; truncated to fit the context budget. Read the original source for more.]", total)
 	// Final clamp guarantees the inline output never exceeds the budget even if
 	// the marker is longer than the reserve.
 	out := headBytes(preview.String(), toolResultBudgetBytes)
-	result.Output = []*aop.Content{aop.Text(out)}
-}
-
-// spillToolResultOutput writes the full output under the workspace and returns
-// the workspace-relative path the read tool can open. It reports false when there
-// is no usable workspace or the write fails, in which case the result is only
-// truncated.
-func spillToolResultOutput(workDir, callID, full string) (string, bool) {
-	if workDir == "" {
-		return "", false
-	}
-	dir := filepath.Join(workDir, spillDirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", false
-	}
-	name := sanitizeSpillFilename(callID) + ".log"
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(full), 0o600); err != nil {
-		return "", false
-	}
-	return filepath.Join(spillDirName, name), true
-}
-
-func sanitizeSpillFilename(callID string) string {
-	if callID == "" {
-		return "output"
-	}
-	var b strings.Builder
-	for _, r := range callID {
-		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
-			b.WriteRune(r)
+	output := make([]*aop.Content, 0, len(result.Output))
+	addedText := false
+	for _, content := range result.Output {
+		if content.GetText() != nil {
+			if !addedText {
+				output = append(output, aop.Text(out))
+				addedText = true
+			}
 		} else {
-			b.WriteByte('_')
+			output = append(output, content)
 		}
 	}
-	return b.String()
+	result.Output = output
 }
 
 // headBytes returns the first n bytes of s, cut on a rune boundary. The input is
