@@ -130,22 +130,28 @@ func (r *CommandRegistry) DescriptionPath(name string) string {
 	return entry.Value.DescriptionPath
 }
 
-// ChoiceCommands shares the command registration lifetime; it is not another
+// ObserveCommands shares the command registration lifetime; it is not another
 // registry. Consumers cannot retain callbacks beyond an acquired observation.
-func (r *CommandRegistry) ChoiceCommands() map[string]string {
-	result := make(map[string]string)
+func (r *CommandRegistry) ObserveCommands() []string {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	var result []string
 	for _, entry := range r.store.Entries() {
-		if entry.Value.Choices != nil && entry.Value.Contract != "" {
-			result[entry.Name] = entry.Value.Contract
+		if entry.Value.Observe != nil {
+			result = append(result, entry.Name)
 		}
 	}
 	return result
 }
 
-func (r *CommandRegistry) Choices(ctx context.Context, name string, messages []*aop.Message) (state json.RawMessage, choices map[string]*aop.Content, err error) {
+func (r *CommandRegistry) Observe(ctx context.Context, name string, messages []*aop.Message) (state json.RawMessage, candidates map[string]*aop.Content, err error) {
+	if r == nil || r.store == nil {
+		return nil, nil, ErrUnavailable
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			state, choices, err = nil, nil, operation.PanicError("command observation", name)
+			state, candidates, err = nil, nil, operation.PanicError("command observation", name)
 			slog.ErrorContext(ctx, "command observation panicked", "command", name, "error", recovered, "stack", string(debug.Stack()))
 		}
 	}()
@@ -154,10 +160,10 @@ func (r *CommandRegistry) Choices(ctx context.Context, name string, messages []*
 		return nil, nil, err
 	}
 	defer release()
-	if entry.Value.Choices == nil {
+	if entry.Value.Observe == nil {
 		return nil, nil, nil
 	}
-	return entry.Value.Choices(call, messages)
+	return entry.Value.Observe(call, messages)
 }
 
 func (r *CommandRegistry) Execute(ctx context.Context, name string, execution *Execution) (result any, err error) {

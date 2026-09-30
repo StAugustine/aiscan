@@ -1,5 +1,5 @@
 // Package guardrail implements tool admission as an optional extension over
-// the native JEV API. It has no dependency on Reflex learning or execution.
+// the native JEV API. It has no dependency on Reflex declaration or execution.
 package guardrail
 
 import (

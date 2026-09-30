@@ -278,7 +278,7 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string, stdout 
 	} else {
 		scannerArgs = append([]string(nil), scannerRest...)
 	}
-	if boolFlagEnabled(scannerArgs, "--debug") {
+	if scannerBoolFlagEnabled(scannerArgs, "--debug") {
 		option.Debug = true
 	}
 	if err := validateOutputFlags(&option); err != nil {
@@ -688,19 +688,6 @@ func truthyFlagValue(value string) bool {
 	default:
 		return false
 	}
-}
-
-func boolFlagEnabled(args []string, flag string) bool {
-	for _, arg := range args {
-		if arg == flag {
-			return true
-		}
-		if strings.HasPrefix(arg, flag+"=") {
-			v := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, flag+"=")))
-			return v != "false" && v != "0" && v != "no"
-		}
-	}
-	return false
 }
 
 type signalHandler struct {

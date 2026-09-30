@@ -1,205 +1,140 @@
-# JEV 可插拔加速扩展：实现架构与验收
+# JEV 可插拔旁路：Claim → Compile → Reflex
 
-本文固定 [研究稿](jev-harness-design-20260926.md) 在当前 aiscan harness 中的实现边界。名称保持 `jev`；配置使用 `mode: off | learn | auto`，不引入名为 optimization 的独立对象或子系统。
+本文件是当前实现契约，替代原稿中的学习、训练、历史重放和激活流程。[研究稿](jev-harness-design-20260926.md) 保留为历史推导；其中样本一致率和启用门槛不适用于本实现。最新完整 ab5 证明连续短路和部分任务 LLM token 减少 80% 已生效，但全链路 token / 费用仍增加、原性能门槛未全部通过，详见 [验证记录](jev-validation-20260928.md)。
 
-## L1 的优化单位
+## 核心抽象
 
-L1 替代的是 L2 的能力选择和实时操作决策。浏览器场景包括“当前任务是否需要进入 Playwright”以及“根据当前页面，接下来使用哪个已有操作”。Playwright 仍执行操作；JEV 替代为这些操作反复 thinking 的模型调用。
+LLM 创造判断结构，JEV 在有限空间中判别。扩展只有两个领域类型：
 
-Reflex 保存可泛化的能力入口和决策准则，例如按用户目标选择当前可见控件、缺少输入值时交回 L2。它不保存访问路径、selector、任务 URL、步骤编号或动作序列。页面 ID、控件顺序、按钮变成链接、任务目标改变，都由每次实时观察重新建立候选。学习历史用于提炼准则和验证是否值得启用；历史动作不直接成为可执行模板。
+```go
+type Claim struct {
+    When     string
+    Question string
+    Options  map[string]string
+}
+type Reflex struct {
+    When    string
+    Decide  string
+    Sources []string
+}
+```
 
-固定路径向导仅保留为机制回归。浏览器能力测试另覆盖从无会话进入浏览器，并用同一条 Reflex 在未见过的页面结构和任务目标上实时选择。真实验收需要同时证明这种覆盖、正确性和整体收益，不能只证明某一条向导路径少调用了 L2。
+Claim 声明一次有限问题，例如“当前请求适合浏览器、HTTP，还是交回模型”。它没有 Chose、正确标签、示范动作或训练样本。声明只允许在来源任务及原用户约束仍有效时消费一次，包括 defer；完成任务之后生成的声明仅保留为编译材料。相同问题再次出现时，JEV 匹配已有声明，不重新创建或消费它。
 
-## 架构
+Reflex 是可复用场景，例如“根据用户目标操作网页”。When 定义入口，Decide 定义选择和退出准则，Sources 引用工具提供的通用 `Observe` 能力。Reflex 不保存 URL、selector、动作序列或当前步骤。每一轮的实际选项由实时工具状态绑定。
+
+Compile 是当前 LLM 的一次旁路生成调用。JEV 结合当前交互、相关 Claim 和已注册观察能力，判断能否形成具有明确退出边界的有限操作场景，再由 LLM 生成 Reflex。语义上足够完整的一个或多个 Claim 均可编译；数量不是启用门槛，未来尚未出现的具体参数由运行时绑定，不能因此要求场景覆盖一切操作。结构与能力引用合法后即发布。
+
+上述三个 JSON 字段就是声明式 Reflex DSL，不引入可执行代码、页面脚本 DSL 或 `jev compile` 命令。后台 discovery 同时提供已有 Claim 和 Reflex，由 JEV 匹配能力级场景；页面 click/fill/select/wait 和控件变化不应产生新的页面级声明。自然语言中的通用性由模型判别，结构校验不冒充语义正确性证明。
+
+`core/tool.Command.Observe` 是可选字段，签名为 `func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error)`。注册表只增加对应的 `ObserveCommands() []string` 和 `Observe(ctx, name, messages)` 调用，复用已有 Command 生命周期和原生 AOP，不新增 DTO 或执行器。普通工具没有此字段也可执行；宿主只有原 CommandExecutor 而没有观察协议时，JEV 不安装加速 hooks。Reflex 持久化格式仍是 version 1，已有通用场景无需迁移。
+
+## 架构与数据流
 
 ```mermaid
 flowchart TD
-  A[Agent 普通决策边界] --> B[BeforeModel 通用追加钩子]
-  B --> C[jev Extension]
-  C --> D[已有 Command.Choices 观察当前状态]
-  D --> E[当前候选 + Reflex]
-  E --> F[agent/provider/jev Client 单次批量请求]
-  F --> G{入口 + 当前候选选择}
-  G -->|defer / 故障 / 不满足条件| H[普通 L2]
-  G -->|已有动作| I[原有 Executor]
-  I --> J[独立 Guardrail]
-  J --> K[原有工具执行并检查状态]
-  K --> D
-  C --> L[追加简短观察回执]
-  L --> H
-  H --> M[实际 L2 选择与执行结果]
-  M --> N[异步编译、跨任务验证、抽样审计]
-  N --> E
+    A[用户输入或工具批次完成] --> B[BeforeModel]
+    B --> C[JEV 选择 Claim / Reflex / defer]
+    C -->|Claim| D[一次判断，持久化消费，追加结果]
+    C -->|Reflex| E[JEV 判别当前场景下一步]
+    E -->|动作| X[原生 Executor]
+    X --> O[即时 Observe]
+    E -->|observe| O
+    O --> E
+    C -->|defer| L[普通 LLM]
+    D --> L
+    E -->|report / defer，追加执行回执| L
+    L --> F[AfterModel：已接受的完整输出]
+    F --> G[后台 JEV：已有 Claim / Reflex / new / defer]
+    G -->|new| H[旁路 LLM 声明 Claim]
+    H --> I[JEV：归并相关声明，判断能否 Compile]
+    G -->|尚未被 Reflex 覆盖的已有 Claim| I
+    I -->|可以| J[旁路 LLM Compile]
+    J --> K[发布场景 Reflex]
+    K --> C
 ```
 
-Agent 内核没有 JEV、Reflex、浏览器或扫描器依赖。未安装扩展时走零处理器路径；`mode: off` 不借用客户端、不注册钩子或命令。扩展故障返回普通 L2，不能成为正常 Agent 工作的前置条件。初始化时显式配置错误仍报错，避免“用户以为启用了，实际没启用”。
+- `agent/provider/jev` 只实现原生协议、重试、用量；不认识 Claim/Reflex。429/529、响应头前 EOF 与响应体截断共用最多三次尝试、250/500 ms 退避及原总超时预算；重试只重新请求判别，失败尝试的缺失用量仍记为未知，不重放工具。
+- JEV 标准 HTTP transport 为 provider 自己的副本，限定 HTTP/1.1，并同步 TLS ALPN、保留连接复用及原代理/TLS 设置，避免实测 HTTP/2 推理请求长时间无响应。不会修改全局 transport、其他模型请求或进程 GODEBUG；宿主注入的自定义 RoundTripper 继续保留。
+- Agent 的 `BeforeModel` 返回追加的原生观察消息；`AfterModel` 在接受完整模型输出后、执行其工具调用前触发一次。二者都在请求重试之外，提供历史副本；最终回答也进入 AfterModel。
+- `pkg/exts/jev` 独占声明、编译、持久化、候选判别及执行循环。AfterModel 只提交快照，网络工作在单个有界后台队列进行。旁路调用直接使用现有 Provider，不运行 Agent，所以不递归触发 hooks。
+- 未匹配 Reflex 的新用户约束边界提交一次后台判别，使首次浏览器请求能产生能力选择 Claim；已匹配场景的入口不重复 discovery。普通 LLM 不等待声明或编译。Reflex 发布后只能在后续安全边界接管；每次 LLM 输出仍进入 AfterModel 判别。
+- LLM 一次输出中的文本和多个 toolcall 分别作为判别问题，合并成一次 JEV 请求。无需将 LLM 参数与历史候选精确匹配。
+- 新声明以及当前输出匹配到的未编译声明进入相关性归并和可编译性判断。匹配已有 Claim 不重新生成或消费该 Claim；已发布 Reflex 覆盖的声明直接复用。当前交互和观察能力名称进入判别，支持浏览器以外的有限操作。是否编译仍由 JEV 决定，没有强制通过、计数门槛或循环重试。
+- 编译去重记录仅代表已经持久化的 Reflex。生成失败、无效结果和 null 不永久标记完成；后续普通交互可以再次触发判别。加载旧库时从已发布 Reflex 的支持声明重建完成记录，清除旧实现中仅尝试过生成的遗留标记。后台流程不执行用户工具。
+- 轮前将入口问题、Reflex 的候选选择及未消费 Claim 的判别放在一个原生 JEV 请求中，共享状态。只执行入口选中的分支；未选中分支不授权任何动作。
+- 已选 Reflex 在当前 BeforeModel 边界持续拥有控制权，后续请求仅判别其下一步；入口 When 不再被错误用作终点状态的持续条件。运行时保留 `observe`（刷新状态）、`report`（已有足够证据组织回答）、`defer`（缺参数/新策略/未知情况）三个出口，持久化 Reflex 仍只有三个字段。
+- 每次场景请求同时判别共享的 `generation` 问题，以 ready / parameter / strategy / defer 区分已绑定、缺参数、缺策略和无法可靠判断；只有 ready 才接受场景动作。用户要求的填写即使 HTML 未标 required 也必须满足；不存在对应绑定时交给 LLM，不能选提交来跳过。尚未出现的条件要求不制造当前缺口。它与场景判断共享一次请求，不新增字段、配置参数或额外网络调用，不使用置信度阈值。
+- 完整候选参数在共享 `state.candidates` 发送一次，场景选项只引用候选 ID；缺参数判别直接可见真正可执行的绑定，不依赖其他问题的选项上下文。来源和去重限制仍控制每个场景的可选集合。
+- 工具只可选提供通用 `Observe(ctx, messages) (state, candidates, error)`；它只读取工具状态并生成当前原生候选，执行前自行做 stale/权限校验。JEV 不进入工具包，工具不认识 JEV。仍通过当前 Executor、CommandRegistry 和独立 Guardrail 执行；没有工具代理、第二个注册表、脚本解释器、provider 包装器或 kernel optimization 对象。
 
-JEV provider 只提供原生 `choice / score / noul` API；Reflex 是 `pkg/exts/jev` 的扩展抽象。Guardrail 是另一个独立扩展，直接使用 `choice` 实现 `tool.before`，不依赖 Reflex。
+## 连续浏览器场景
 
-JEV provider 位于 `agent/provider/jev`，使用厂商原生有限选择请求；普通 LLM 继续使用既有 ChatCompletion。两者都属于 Agent 的模型接入能力，不再保留 `pkg/jev` 中转包。Reflex、学习、验证、接管循环只存在于 `pkg/exts/jev`，Agent 执行循环不导入它。
+Reflex 的闭环是“通用 Observe → JEV 选择 → 原生 Executor 执行 → 再 Observe”。没有会话时 Playwright 的 Observe 提供当前用户明确 URL 的 open 候选；已有会话时 Observe 读取所属页面，提供点击、下拉选项、滚动、等待、关闭及已知值填写。每次重新绑定当前节点，候选只能消费一次。其他工具可以用同一接口加入场景，不需要修改 JEV。
 
-| 位置 | 唯一职责 | 不承担的职责 |
-| --- | --- | --- |
-| `agent/hooks.BeforeModel` | 每次模型决策前接受追加的观察消息；重试不重复运行 | 不认识 JEV，不修改历史，不接收伪造 assistant/tool 消息 |
-| `core/tool.Command.Choices`、`Contract` | 在原有注册生命周期内提供观察与有限的原生候选 | 不执行动作，不建立第二个注册表 |
-| `agent/provider/jev.Client` | TypeSafe 原生 HTTP 协议、有限重试、用量统计 | 不做风险策略、学习或工具执行 |
-| `pkg/exts/jev.Extension` | Reflex 的学习、验证、选择、执行循环、持久化和日志 | 不定义执行器、DSL、脚本运行时或工具代理层 |
-| `pkg/exts/guardrail` | 独立的准入、风险判断与复核，可独立使用同一 JEV 客户端 | 不因加速命中而放宽权限 |
-| `tools/playwright` / `tools/curl` | 候选空间和实际状态的所有权 | 不依赖 JEV 扩展或替 JEV 决定策略 |
-| `cmd/aiscan/profile.go` | 组合已有扩展，提供一个共享客户端，迁移旧配置 | 不转发每次推理或每次工具请求 |
+Playwright 返回 required/invalid/readonly/disabled、当前值、下拉选项和文档 mutation revision 等原始事实；disabled 控件保留事实但无执行候选。工具不按表单语义禁止提交，JEV 根据当前目标和事实判断前置条件，信息不足则交给 LLM。观察不隐式等待；即使 readyState 已完成，也提供显式 `wait-for --stable` 候选，只有选中时才调用工具的原稳定等待（500 ms）。等待绑定同一文档而允许其 DOM revision 改变，其他动作仍要求完整观察状态一致。这个等待不保证业务异步任务已完成，后续仍须重新观察。关闭候选沿用已有清理流程，返回关闭前页面证据；不能关闭同名重建会话。
 
-核心对象只有 `Reflex`：**入口条件 + 决策说明 + 已有能力绑定**。其 source/contract 指向工具声明的能力；enter 决定当前空间是否足够，decide 从本轮重新观察的候选中选择。一个能力可以有多条 Reflex。它不是固定动作序列，也不是生成并执行的程序。
+观察候选使用普通调用 ID。Playwright 记录已发出的 DOM 动作 ID，并在工具自己的执行入口检查；没有调用 ID 前缀协议。新观察使上一候选集合失效，已消费、旧文档和关闭/重建会话的调用均拒绝，不能落回普通命令重放。ID 记录在 Command 生命周期内最多 65,536 项，达到上限后停止提供新候选并回退；不驱逐旧 ID 来换取不安全的重放。URL open 候选没有 DOM 绑定，仍按普通工具准入执行。
 
-`Reflex.Labels` 可描述有限结论；工具候选直接复用 `aop.Content` 的 ToolCall/Text。私有 sample/check 仅是学习过程的内部记录，不形成新增传输协议。核心 `Executor` 接口保持原样。
+用户当前消息里明确引用的值（双引号、反引号或中文双引号，最多八项，每项最多 1000 字符）可成为非敏感输入框的填写候选。已成功执行的原生 fill 值仍可复用。远端页面文字和 JEV 回执不能引入新的输入值或授权。不能可靠确定字段和值时 defer，由 LLM 生成新参数。
 
-## 逐项抽象与 API 审查（2026-09-28）
+每步依据最新状态判断下一动作，不按固定路径运行。已观察到结果时仍由 JEV 完成所需清理，再选择 report；需要新参数或策略才 defer。LLM 从一次追加回执中的真实结果报告，或只补齐具体缺口，不能因为调用来自 JEV 就再次读取。真实工具错误、拒绝、未知效果、新用户输入或预算耗尽结束当前执行。最终回答与漏洞确认仍由 LLM 完成，report 本身不是成功证据。
 
-| 对象 / API | 必要性及收敛后的约定 |
-| --- | --- |
-| `Reflex` | 唯一领域对象。Source/Contract 绑定已有能力；Enter/Decide 描述判断；Labels 仅用于有限结论。ID 是内容与环境的指纹，不是新的身份服务。 |
-| Reflex 的 Environment/Phase/TrainingTasks/Checks/Uses | 都是同一规则的本地验证状态：隔离环境、禁止训练泄漏、记录激活证据和抽样进度。没有再拆成 Registry/Manager/PolicyEngine。 |
-| `sample` | 一次实际决策的本地记录。保留原生消息前缀、现有候选及真实结果用于重放，不传给工具，不建立 claim DTO。 |
-| `check` | 一次验证的可审计结果，记录一致性、L2 自洽性、是否必须 defer、延迟与成本；字段直接服务于激活门槛。 |
-| `Command.Choices(ctx, messages)` | ctx 提供取消和会话身份；messages 用于已知值和任务范围；返回原生观察 JSON 与原生 Content 候选。没有额外 Candidate/Action/Execution DTO。 |
-| `Command.Contract` | 候选语义改变时使旧验证失效。它是能力版本，不是业务选择条件。 |
-| 候选 `ToolCall.Id` | 是工具发出的本次观察绑定，执行器必须原样保留。浏览器使用保留前缀识别受状态校验的调用，再以会话内记录验证参数、节点、文档与一次性消费；前缀本身不授权执行。 |
-| `ChoiceCommands/Choices` | 原 CommandRegistry 的查询与有生命周期的观察。扩展对现有 CommandExecutor 做窄能力检查，不再安装一个候选注册表。 |
-| `BeforeModel` | 通用追加观察边界。只返回原生消息，动作通过当前执行器完成；没有 KernelOptimization/AcceleratorRuntime。 |
-| `Client.New(key, model, timeout)` | 一个真实 HTTP 客户端供两个扩展共享。超时包括重试；模型只保存在客户端，请求不再重复携带 Model 参数。HTTP 实现私有，Endpoint 仅供显式端点选择与测试。 |
-| 原生 Request/Question/Response | 支持 choice、score、noul，直接对应厂商协议，不再包装应用层 wire。Confidence 仅保留为原生观测值，控制流程不用置信度阈值。 |
-| `Rules / Export / Import` | 返回规则快照、导出纯规则、导入后清除验证。没有强制激活 API。 |
-| `WaitLearning(ctx)` | 前台任务停止提交后等待已接纳学习批次，供 harness 结算完整开销。它不参与模型决策。Close 则取消在途任务、卸载钩子并丢弃尚未开始的批次。 |
-| `canonical` | 私有的调用参数规范化。不能精确匹配的 L2 选择不形成动作训练标签；不增加 shell 程序分析器来追求训练命中率。 |
+已确认未执行的 stale 候选重新 Observe 后由 JEV 选择，不能重放旧调用。扩展通过一个生命周期级 CommandCompleted 订阅关联在途 Invocation.CallID，恢复被 shell 丢失的单条命令 typed error；复合调用和执行器自身未知错误不得按此恢复。原失败完整记入审计及私有上下文；无效果且已恢复的 stale 不进入最终报告回执，未知失败仍标记 Attempted 并交回模型。
 
-删除了无用 worker 互斥锁、Content 类型别名、公开的 canonical 辅助函数、重复的客户端请求计数入口、公开 HTTP 客户端字段、Request.Model，以及 Guardrail 内重复的 key 脱敏与 model 转发。不引入复合 shell 首动作解析器、命令完成订阅或额外样本字段来适配某个测试路径。规则快照使用字段复制；同一任务上下文与同一能力观察在批量请求里各发送一次。候选问题使用短 ID，实际执行仍保留原生调用 ID。
+运行上限是 32 次判别、120 秒、64 个候选，包含 observe 与 stale 后重新判别。所选能力的相同物理状态下已派发动作从候选排除，相同状态的观察可由 JEV 在总预算内继续选择，避免过早将待完成效果交给模型；其他能力的时间戳或历史追加不会掩盖重复。它们是资源边界，不是历史学习门槛。支持的范围是文本/DOM 有限操作；任意视觉理解、复杂 iframe 或需要生成代码的操作仍交回普通模型。
 
-`tools/toolargs.TaskURLs` 只合并 curl 与 Playwright 对当前用户明确 URL 的相同提取规则，不定义范围管理服务。编译时将重复的上下文消息按内容共享、每个样本保留有序引用，完整保留约束和证据；不建立额外领域 DTO。编译的 8192 token 上限包括模型 reasoning 与规则 JSON，耗尽时失败并计费，不强制启用规则。
+curl 为已知 URL 提供 body/header/combined 读取，以及多个已知 URL 的对应批量候选。候选仍是普通 shell 原生调用，JEV 根据请求是否独立、是否需要全部读取来选择，不内置固定扫描路径；每条命令仍经过原准入。批量候选减少连续独立读取的 JEV 网络往返，没有新执行器或批处理 DTO。
 
-三个学习集合有明确寿命：pending 只保存等待下一次 L2 选择的观察；tasks 只保存当前任务已绑定的决策，任务成功后提交；training 只保存跨成功任务的有界编译材料，由单个后台 worker 独占。它们不是三个服务，也不是可扩展插件点。
+任一观察源错误、无效或超限时，本轮交回模型，不丢弃该能力后从剩余候选中强行选择。工具返回空观察且无候选表示当前没有可观察状态，可以正常跳过。
 
-固定策略常量与资源边界分开：编译门槛为 8 决策 / 2 任务 / 4 正样本；验证为 32 决策 / 3 任务 / 8 defer / 8 正向一致；每 10 次合格决策审计。运行边界为 32 动作 / 120 秒 / 16 规则 / 64 候选。它们是本版明确的验证策略和资源上限，不暴露成未经验证的配置旋钮。没有隐藏 DSL、动态代码、自动放宽阈值或失败后强制接管路径。
+## 生命周期、上下文和配置
 
-## 一次接管
-
-1. 读取完整任务约束和有界近期证据，再让已有 Command 观察当前状态。
-2. 从当前环境、能力契约匹配且验证通过的 Reflex 中选择。入口问题和所有推测性选择问题放入**一次** JEV 请求；同一能力的观察不重复发送。
-3. 只验证并执行选中分支。未选中分支不能授权动作。选择不在本轮候选内时回退并退役规则。
-4. 原生 ToolCall 经过当前 Executor 和原有 Guardrail；浏览器再验证会话所有者、文档、节点身份和状态。每个候选只能消费一次。
-5. 动作完成后重新观察，再做下一次选择。最多 32 个动作、120 秒；新输入、取消、失败、停滞、未知内容或预算耗尽均交回 L2。
-6. 只追加一条含结果摘要及证据日志路径的 user 观察消息。结论明确标注为待审核判断；最终回答与任务完成判断仍由 L2 负责。
-
-JEV 不生成新工具参数、payload、策略、脚本或自由文本。遇到新的表单值、未知证据或授权不明时需要 L2。HTTP 成功、DOM 变化、工具成功均不自动等于漏洞确认。
-
-## 上下文与 KV cache
-
-- 模型已提交的 system、user、assistant、reasoning、tool 历史均不被 JEV 重写。
-- 通用扩展说明在运行开始时加入一次，内容固定，不随学习出的规则增长。关闭与开启扩展之间可能有一次前缀差异；同一启用配置内不动态改写前缀。
-- BeforeModel 收到历史副本，只能追加观察；同一个模型请求的重试不会重复接管或重复追加。
-- JEV 私有观察投影保留所有文本任务约束，近期证据受大小限制，明确标记被省略的证据；约束本身超限则回退。这个投影不替换 L2 历史。
-- 输入包含无法保持的图片/音频内容时回退。学习采集检查观察时的消息前缀；压缩、前缀变化或期间出现新输入时放弃旧样本，避免给旧状态贴上新任务的标签。
-- 如安装了 `TransformContext` 或 `Context` 重写回调，本版不接管也不采样，因为这些回调在此边界之后才能确定实际模型输入。普通 Agent 继续运行，不增加第二条上下文变换流水线。
-- 内部动作和完整工具返回写入 `.cyber/jev/execution-<task>.jsonl`，不发布无对应 assistant call 的根 tool.result，不伪造 assistant 思考。回执按正常消息 ID 与事件路径持久化。
-- Agent 原有的显式压缩和上下文溢出恢复仍按其既有策略工作；JEV 不承诺服务端实际缓存命中率，验收记录真实 cache read/write 用量。
-
-## 自动学习与规则寿命
-
-普通任务的真实 L2 选择及成功执行结果是训练材料；不读取隐藏思考，不要求用户提示“编程 Reflex”。任务无错误地结束只代表允许收集材料，不等于业务结果已被独立证明。无法精确绑定的选择记为未知，不冒充负样本。
-
-
-- 至少 8 个决策、2 个任务、4 个可绑定正样本才调用 L2 编译，每次最多 4 条自然语言规则。
-- 编译输出只能描述 entry/decide 和有限结论，不允许 executable code/DSL。工具候选始终由代码维护。
-- 编译任务不能进入自身验证。至少 32 个验证决策、3 个不同任务、8 个 defer 样本；保留最多 24 个正样本和 8 个负样本的窗口。
-- 激活要求：没有不应接管却接管的样本；一致率不低于 L2 重放自洽率；至少 8 次正确正向选择；测得的决策延迟与费用均低于 L2 重放。费用或用量未知禁止激活。
-- `learn` 执行学习和验证但不接管；`auto` 满足同样门槛后接管。每 10 个符合条件的决策抽样交回 L2；审计能包括一次内部动作之后的真实模型前缀。
-- 错误绑定、错误接管或激活规则不再满足验证条件时退役。失败工具调用和过期 DOM 先让出控制，避免将正常状态变化误判为永久策略错误。
-- 模型/端点、系统提示、工具定义、生成参数、JEV 版本、价格配置及能力 contract 影响复用。不同环境保存独立验证实例，不能用另一个部署的成功记录直接激活。
-- 已验证规则及检查结果原子写入 `reflex-*.json`；导出只包含规则，导入清除环境、训练任务、验证与激活状态，重新验证。
-
-当前进程内保留尚未编译的样本；进程重启后从新的普通任务重新积累这些样本。已编译规则和验证窗口会恢复。学习队列有界，饱和时放弃该批学习并记录日志，不阻塞普通任务。
-
-## 已接入能力
-
-**Playwright**：同一能力覆盖进入浏览器及操作实时页面。未持有会话时，将当前用户明确给出的 URL 绑定为普通 `playwright open` 候选；是否需要浏览器由 JEV 的能力入口判断。持有会话后只观察当前 Agent 拥有的页面。候选观察本身不启动浏览器。候选包括当前可见的点击、下拉选项、滚动、加载等待，以及本会话 L2 已成功填写过的值。未知文本必须交给 L2。快照使用工具提供的固定 JS，保存节点引用；不生成脚本、不修改页面属性。文档或节点替换、遮挡、禁用、跨会话、候选复用都会拒绝执行。
-
-没有会话且没有当前任务 URL 时，观察是明确的空对象，候选为空。有 URL 时则包含进入浏览器的候选；任务已经完成时入口必须 defer，不能重开浏览器。
-
-**aiscan / curl**：对当前用户给出的 URL 或普通 L2 已选过的 URL，提供已有 GET、GET+headers、HEAD 调用。候选中不从远端响应文本自动扩展扫描范围，不构造新 payload。工具结果、内部执行回执及独立证据进入下一轮观察。有限结论可加速证据是否足够等重复判断，但不能代替独立漏洞证据。
-
-当前选择绑定采用原生调用参数规范化；复合 shell 程序、不同 CSS/semantic selector 不会被猜测为相同动作。复杂 iframe/shadow DOM、大于候选限制、上下文约束超限、需要新策略等情况会降低命中率并回退。它们是实时验收应量出的覆盖限制，不能用手工规则绕过。
-
-## 配置与操作
+- 工作区 `library.json` 保存带版本的 Claim/Reflex 定义、消费状态和编译去重记录。原 `reflex-*.json` 不自动迁移为新场景。动态时间、模型价格和系统提示哈希不再控制复用；每次用实际当前约束判别。
+- 库上限为 32 个 Claim、16 个 Reflex；一次后台输出最多 32 个问题、一次分组最多 32 个 Claim，超限记录并回退，不丢弃竞争候选后强行执行。后台队列最多 64 项，每项最多两分钟；失败不阻断普通任务。
+- `WaitIdle(ctx)` 只用于结算已提交后台工作的耗时和用量，不是运行期门槛。Close 取消后台请求和在途控制循环，卸载 hooks 并等待 worker 退出。
+- 主对话已提交的 system/user/assistant/reasoning/tool 前缀不被改写。扩展不再通过 BeforeRun 修改系统提示；控制器说明仅随实际判断或执行回执追加，未接管且没有回执时不增加主模型提示。后台生成使用独立消息，不将编译材料注入主历史。
+- 私有判别上下文采用有界文本投影，保留参数 JSON、调用/结果关联、错误/终止信息，去除 protobuf 包装和 base64 冗余。全部 system/真实 user 约束保留；旧证据省略会显式标记。它不改变主对话，也不假设 JEV 支持服务端增量状态。
+- 媒体约束无法保留、文本约束超限或安装了后置上下文重写回调时，扩展回退。Agent 原有压缩是独立行为；缓存是否真正命中以供应商用量为准。
+- 主 LLM 的并行 toolcall 完成后才进入下一 BeforeModel；后台发布不会抢占它们。
 
 ```yaml
 extensions:
   jev:
-    mode: auto                     # off 为默认；learn 只学习/验证
+    mode: auto           # 默认 off；不存在 learn 模式
     model: jev-1.13.0
     timeout: 10s
-    # api_key: 使用 TYPESAFE_API_KEY 注入
+    # api_key: 使用 TYPESAFE_API_KEY
     # directory: 默认工作区 .cyber/jev
-    # prices: 按实际供应商账单填写，单位为每百万 token
-    #   <L2 模型名>: {input: ..., output: ..., cache_read: ..., cache_write: ...}
-    #   jev-1.13.0: {input: ..., output: ..., cache_read: ...}
   guardrail:
-    provider: jev                  # 或 none，风险策略独立选择
-    mode: auto
-    jev:
-      level: standard
-      on_error: block
+    provider: none       # 或 jev，与加速独立
 ```
 
-以上配置放在现有 aiscan 配置文件的 `extensions` 下。不提供猜测的价格默认值。API 未报告用量、重试费用未知或 cache_write 未定价时，不能声称费用优势。
+旧的 enabled/level/on_error/criteria 仅保留给 aiscan 的风险配置兼容。配置 key 不自动开启加速。`jev status` 显示当前库；没有强制激活、学习或导入旧规则命令。
 
-兼容旧的 `jev.enabled/api_key/level/on_error/criteria`：当 `guardrail.provider` 未指定时迁移到原有风险策略。**只配置 API key 不启用加速**；明确 `guardrail.provider: none` 时可只使用加速。反过来 `jev.mode: off` 不会关闭独立 Guardrail。
+`decisions.jsonl` 记录发现、归并、Claim/Compile 模型用量、运行判别和失败；`execution-<task>.jsonl` 保存完整调用、工具结果及最终观察。所有旁路成本都应计入性能评估。
 
-启用扩展后，已有命令体系提供 `jev status`、`jev export <file>`、`jev import <file>`。不提供手动强制激活接口。`learning.jsonl` 记录编译、重放、选择、用量及退役；证据日志属于工作区数据，包含真实工具返回。
+## 验证
 
-## 验证与测量
+确定性集成测试从空库覆盖后台声明、Compile、下一边界连续执行、一次性消费、跨任务隔离、持久化、重试、流式完整输出、多个 toolcall、Guardrail、取消、过期候选和只追加历史。执行器单元测试可以预置场景，但不作为自动生成证明。
 
-定向回归命令：
+实际 Chromium 集成测试从普通浏览器任务开始，自动编译后复用到不同标签和结构的页面。设置 `JEV_BROWSER_LIVE=1` 及两组凭据后使用真实 JEV/LLM；`JEV_BROWSER_REPORT` 保存库、实际动作、正确性、前缀变化及全部后台用量。
+
+`TestLiveAutomaticReflexAB` 比较 off/auto：一个普通发现任务后，默认至少 20 对任务；轮换顺序，核对最终页面、服务端访问记录和答案。没有预置规则、特殊任务提示或激活操作。`JEV_BENCH_PAIRS` 可缩小为冒烟测试，但不足 20 对时报告明确不能建立性能验收。
+
+任务失败或没有实际接管会记录并拒绝验收，同时继续收集后续配对。后台用量在独立于前台任务 deadline 的有限窗口内结算；结算失败保留当前行并标记费用未知，停止后续归因。`JEV_BENCH_RESUME=1` 可从指定报告及原持久化库继续尚未记录的配对，要求模型、价格和样本数一致；中断记录不能算零成本。该开关只属于测试，不是扩展运行期机制。HTTP 测试要求普通报告以明确的 `Verdict: ...` 行结束，避免解释中提及另一个结论被误判。
+
+费用由测试环境 `JEV_BENCH_PRICES` 提供，仅用于核算，不影响运行。统计主 LLM、旁路声明和编译、全部 JEV 请求与失败请求；reasoning 是 output 子集。没有实际 Reflex 动作、正确性失败、用量缺失或代理计价未知时，不宣称生产节省。
+
+验收目标保持：浏览器复用阶段主 LLM 调用下降 50%、全部 LLM output 下降 30%、有完整计量时 reasoning 下降 30%、中位耗时下降 20%；aiscan 中位耗时及总费用下降 15%；p95 退化不超过 10%。首次发现成本单独报告，不能从总成本中排除。
+
+额外报告 80% 目标：分别按全部 LLM input+output（包含后台 Claim/Compile）和 LLM+JEV 全供应商 token，统计减少至少 80% 且耗时下降的正确配对任务数；output 和 reasoning 子项独立列出。同步报告参考费用，不能把模型调用减少或 LLM token 节省等同于全链路节省。
 
 ```powershell
-go test ./agent/provider/jev ./pkg/exts/jev ./pkg/exts/guardrail ./core/tool ./agent ./agent/provider ./tools/curl -count=1
+go test ./agent ./agent/provider ./agent/provider/jev ./core/tool ./pkg/exts/jev ./pkg/exts/guardrail ./tools/curl ./tools/toolargs ./pkg/harness -count=1
 go test -tags full ./tools/playwright ./pkg/exts/browser ./pkg/exts/jev -count=1
 go test -tags 'full sqlite' ./cmd/aiscan -count=1
+go test -race ./agent/provider/jev ./pkg/exts/jev ./core/tool -count=1
 ```
 
-测试分别覆盖：空库自动编译/验证/激活、训练与验证任务分离、动态重新观察、有限结论、选中分支绑定、Guardrail 拦截、新输入取消、无进展退出、跨环境证据隔离、导入重新验证、未知价格拒绝激活、模型重试用量、reasoning/cache 分类、追加上下文与重试前缀一致、真实 Chromium 的旧节点及一次性候选。
-
-`TestBrowserAutomaticallyCompilesReflexFromOrdinaryTasks` 使用真实浏览器和普通 Agent/Executor，模型推理为确定性替身；从空库验证浏览器自动接管机制。它不能证明真实 JEV/L2 泛化或真实费用下降。
-
-真实验收入口为 `TestLiveAutomaticReflexABC`，显式设置 `JEV_BENCH_LIVE=1` 后运行，使用实际 L2 和 JEV：
-
-```powershell
-# 先配置 CYBER_API_KEY、CYBER_MODEL、CYBER_BASE_URL、TYPESAFE_API_KEY。
-# JEV_BENCH_PRICES 是包含上述两个模型实际价格的 JSON；可选 CYBER_PROVIDER。
-$env:JEV_BENCH_LIVE = '1'
-$env:JEV_BENCH_REPORT = 'D:\path\to\jev-live.json'
-go test -tags full ./pkg/exts/jev -run '^TestLiveAutomaticReflexABC$' -count=1 -v -timeout 120m
-```
-
-每个场景从空库运行同样的三组普通任务，默认每组 40 个训练任务，至少 20 个配对留出任务，轮换 A/B/C 顺序。没有预置规则、手动激活或任务中的 Reflex 提示。场景是浏览器多步向导（重排、延迟、重绘、新文本）和四端点 HTTP 独立证据检查（包含失败证据）。结果由浏览器最终状态、服务端动作/请求记录及最终答案共同检查。
-
-报告在每个完成的任务后写入，保留前台与包含学习的耗时、前台 L2 次数、全部 L2/JEV 请求和用量、cache/reasoning、费用是否完整、正确性与模型调用记录。`JEV_BENCH_PRICE_SOURCE` 标记价格来源；使用参考价格时，费用结果只是估算，不代表代理供应商实际账单。编译/标签映射/重放/失败请求计入费用；reasoning 是 output 的子集，不重复计费。冷启动额外费用与达到收支平衡的任务数单独报告。
-
-浏览器目标：留出任务 L2 次数减少 ≥50%，全部 L2 output 减少 ≥30%，reasoning 已报告时同样减少 ≥30%，中位耗时减少 ≥20%，p95 退化 ≤10%。aiscan 目标：中位耗时和费用各减少 ≥15%，p95 退化 ≤10%。任何正确性失败、未知费用或无法自动激活均不能通过。
-
-真实模型验收需要有效凭据和真实价格。没有这些条件时测试明确 SKIP，机制测试的数字不应当写成生产性能结论。
-
-## 当前验证记录
-
-2026-09-28 补充：真实 JEV + 真实 L2 的三页浏览器接管验证、aiscan 默认流式 profile 冒烟验证已通过；空库自动学习与性能验收仍未通过。完整数字、失败证据及本轮回执 / reasoning 续接修复见 [JEV 实测验证](jev-validation-20260928.md)。以下保留较早的分层测试记录，不能混同为最新性能结论。
-
-2026-09-28：真实 `jev-1.13.0` 的入口与候选选择批量请求通过，单次请求约 3.10 秒，usage 为 497 input / 68 output。该数值包含当前网络条件，只是连通性与协议验证。JEV 会报告 output token；[官方价格说明](https://docs.typesafe.ai/models.md) 当前按 input 收费（$0.042 / 百万），output 免费，不能将“免费 output”误写成“没有 output”。
-
-当前代理环境中 Go 默认 TLS 握手超时，测试进程以 `GODEBUG=tlsmlkem=0` 运行后成功。没有把这个环境兼容设置写进 JEV 的业务机制。
-
-新提供的 `https://api.chainreactors.cn/v1` / `deepseek-v4.1-flash` 已能完成真实浏览器任务。初步普通路径约 7–12 次前台 L2 调用、31–47 秒；尚无通过留出验收的加速比例。代理实际计价未确认，测试只使用厂商公开参考价格，并在报告标明估算来源。
-
-真实冷启动暴露了两个问题：普通 L2 经常使用复合 shell 调用或不同 selector，无法精确绑定为候选；首次编译重复传入长上下文，约 53,634 input / 4,096 output token，输出全部用于 reasoning，未返回规则 JSON。编译输入现已共享重复消息，并明确输出预算。未继续为向导路径堆叠 shell 解析及标签机制。初步记录在 `.runlogs/jev-live-chainreactors-final-20260928.json`，这是调整前的诊断记录，不是当前架构的性能验收。
-
-实际 Chromium + 确定性推理的空库自动学习测试覆盖不同任务 DOM ID 和按钮/链接控件，要求规则中没有任务专用 selector 或 URL；通用有限动作场景为暖路径 2 次 L2、普通路径 5 次。
-
-`TestBrowserReflexRoutesAndOperatesUnseenPages` 用同一条能力规则完成进入浏览器和三种未见页面的实时操作，每任务只由 L2 进行一次结果读取与最终回答（2 次调用）。使用真实 `jev-1.13.0` 通过：三个任务共 9 次 JEV 请求，总测试约 18.64 秒。首次 10 秒请求预算遇到超时；以 15 秒测试预算重跑通过，生产默认值仍为 10 秒。该测试明确预装一条规则、L2 使用确定性替身以隔离能力控制机制，不把它算作自动学习或真实 L2 性能证明。可用 `JEV_BROWSER_LIVE=1`、`TYPESAFE_API_KEY` 单独运行。
-
-默认包、`full` 浏览器包、`full sqlite` aiscan 组合测试及定向 race 测试通过。真实“空库 → 自动编译 → 自动激活 → 至少 20 对留出任务”的成本与速度验收仍未通过，不能声称已验证生产加速。
+实测结果见 [验证记录](jev-validation-20260928.md)。历史 seeded/学习版本与 Observe 基线的数据不能视为本修订的验收。[JEV 主导执行设计](jev-controller-design-20260928.md) 记录本次控制权、恢复和交接的实现边界。

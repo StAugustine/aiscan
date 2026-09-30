@@ -57,6 +57,7 @@ import ScannerToolCall from './chat/ScannerToolCall'
 import SubagentRunCard from './chat/SubagentRunCard'
 import { GuardrailReviewCard } from './GuardrailReviews'
 import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, withGuardrailReviews } from '../lib/guardrail-view'
+import { withRecaps } from '../lib/recap-view'
 import { ReviewState, type Review } from '../cyber-proto'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
@@ -491,9 +492,9 @@ export default function ChatPanel({
     }
     const visibleAopItems = aopItems.filter((item) => !matchedEchoes.has(item))
 
-    return groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
+    return withRecaps(groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
-    ), guardrailReviews, aopEvents, !guardrailUnavailable))
+    ), guardrailReviews, aopEvents, !guardrailUnavailable)), aopEvents)
   }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
@@ -1104,6 +1105,8 @@ function AssistantResponseEntry({
         </div>
       ) : undefined}
       response={hasResponse ? <MarkdownContent content={trimDisplayContent(message?.content || '')} compact /> : undefined}
+      footer={!embedded && typeof message?.metadata?.recap === 'string'
+        ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       labels={{ tools: toolsLabel, thinking: t('thinkingLabel'), response: t('responseLabel') }}
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}

@@ -284,7 +284,10 @@ export default function App() {
             {/* Separate workspace nav (assets / IOA / agents / connect) from the
                 account utilities (settings / logout) so the row reads as two groups. */}
             <span className="mx-0.5 hidden h-5 w-px shrink-0 bg-border/70 sm:block" aria-hidden="true" />
-            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => toggleToolPanel('settings')}>
+            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => {
+              if (activeToolPanel === 'settings') setActiveToolPanel(null)
+              else openSettings()
+            }}>
               <Settings className="h-3.5 w-3.5" />
             </HeaderIconButton>
             <HeaderIconButton label={t('logout')} onClick={() => { void logout() }}>
@@ -304,13 +307,12 @@ export default function App() {
             onFilter={chat.filterSessions}
             onUpdateSession={chat.updateSession}
             activeSessionID={chat.activeSessionID}
+            activeSessionNodeID={activeSession?.session?.nodeId || null}
+            activeSessionBusy={chat.busy}
             selectedNodeID={chat.selectedNodeID}
-            terminalNodeID={activeToolPanel === 'agents' ? agentPanelFocusNodeID : null}
-            onSelectNode={chat.selectNode}
             onSelectSession={handleSelectSession}
             onCreateSession={handleCreateSession}
             onDeleteSession={handleDeleteSession}
-            onOpenTerminal={handleOpenTerminal}
           />
 
           <ChatPanel

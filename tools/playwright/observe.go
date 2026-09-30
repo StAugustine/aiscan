@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -22,8 +23,6 @@ import (
 	"github.com/go-rod/rod/lib/proto"
 	"mvdan.cc/sh/v3/syntax"
 )
-
-const ChoiceContract = "playwright-live-v2"
 
 func (c *Command) execScroll(ctx context.Context, args []string) (string, error) {
 	if len(args) != 2 || (args[1] != "up" && args[1] != "down") {
@@ -43,10 +42,10 @@ func (c *Command) execScroll(ctx context.Context, args []string) (string, error)
 	})
 }
 
-//go:embed choices.js
-var choiceSnapshot string
+//go:embed observe.js
+var pageObservation string
 
-type observedChoice struct {
+type observedAction struct {
 	args     []string
 	node     int
 	state    [32]byte
@@ -54,6 +53,7 @@ type observedChoice struct {
 }
 type observedPage struct {
 	Document string `json:"document"`
+	Revision uint64 `json:"revision"`
 	URL      string `json:"url"`
 	Title    string `json:"title"`
 	Text     string `json:"text"`
@@ -69,19 +69,23 @@ type observedPage struct {
 		Checked   bool    `json:"checked"`
 		Expanded  *string `json:"expanded"`
 		Readonly  bool    `json:"readonly"`
+		Disabled  bool    `json:"disabled"`
+		Required  bool    `json:"required"`
+		Invalid   bool    `json:"invalid"`
 		Options   []struct {
 			Value    string `json:"value"`
 			Label    string `json:"label"`
 			Selected bool   `json:"selected"`
+			Disabled bool   `json:"disabled"`
 		} `json:"options"`
 	} `json:"elements"`
 	Scroll  struct{ X, Y, Height, Viewport, Width float64 } `json:"scroll"`
 	Loading bool                                            `json:"loading"`
 }
 
-// Choices covers browser entry and current page operations. Observation never
+// Observe covers browser entry and current page operations. Observation never
 // opens a browser or performs input; selected calls use the ordinary Executor.
-func (c *Command) Choices(ctx context.Context, messages []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
+func (c *Command) Observe(ctx context.Context, messages []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
 	owner := operation.InvocationFromContext(ctx).SessionID
 	if owner == "" {
 		return nil, nil, nil
@@ -116,7 +120,8 @@ func (c *Command) Choices(ctx context.Context, messages []*aop.Message) (json.Ra
 	}
 	for _, sess := range sessions {
 		_, err := sess.withPage(ctx, func(page *rod.Page) (string, error) {
-			value, err := page.Eval(choiceSnapshot)
+			sess.pending = nil // Any new observation invalidates the prior candidate set.
+			value, err := page.Eval(pageObservation)
 			if err != nil {
 				return "", err
 			}
@@ -129,15 +134,17 @@ func (c *Command) Choices(ctx context.Context, messages []*aop.Message) (json.Ra
 				return "", err
 			}
 			if len(raw) > 28<<10 || len(state.Elements) > 64 {
-				return "", nil
+				return "", fmt.Errorf("browser observation exceeds state budget")
 			}
 			states[sess.Name] = raw
-			sess.choices = map[string]observedChoice{}
+			sess.pending = map[string]observedAction{}
+			overflow := false
 			add := func(node int, args ...string) {
 				if len(choices) >= 64 {
+					overflow = true
 					return
 				}
-				id := "choice-pw-" + aop.EnvelopeID()
+				id := aop.EnvelopeID()
 				parts := []string{"playwright"}
 				for _, arg := range args {
 					quoted, err := syntax.Quote(arg, syntax.LangBash)
@@ -149,20 +156,23 @@ func (c *Command) Choices(ctx context.Context, messages []*aop.Message) (json.Ra
 				arguments, _ := json.Marshal(map[string]string{"command": strings.Join(parts, " ")})
 				call := &aop.ToolCall{Id: id, Name: "bash", Arguments: &aop.EncodedValue{Data: arguments, MediaType: aop.JSONMediaType}, WorkingDirectory: c.workDir}
 				choices[fmt.Sprintf("c%d", len(choices))] = &aop.Content{Value: &aop.Content_ToolCall{ToolCall: call}}
-				sess.choices[id] = observedChoice{args: args, node: node, state: sha256.Sum256(raw), document: state.Document}
+				sess.pending[id] = observedAction{args: args, node: node, state: sha256.Sum256(raw), document: state.Document}
 			}
 			known := knownFieldValues(messages, sess.Name)
 			for _, el := range state.Elements {
+				if el.Disabled {
+					continue
+				}
 				switch {
 				case el.Tag == "select":
 					for _, option := range el.Options {
-						if !option.Selected {
+						if !option.Selected && !option.Disabled {
 							add(el.Node, "select-option", sess.Name, el.Selector, option.Value)
 						}
 					}
 				case (el.Tag == "input" && !slices.Contains([]string{"checkbox", "radio", "button", "submit", "reset", "file", "hidden"}, el.Type)) || el.Tag == "textarea":
 					if !el.Sensitive && !el.Readonly {
-						for _, value := range known[el.Selector] {
+						for _, value := range append(known[el.Selector], explicitFieldValues(messages)...) {
 							if value != el.Value {
 								add(el.Node, "fill", sess.Name, el.Selector, value)
 							}
@@ -179,8 +189,25 @@ func (c *Command) Choices(ctx context.Context, messages []*aop.Message) (json.Ra
 			if state.Scroll.Y+state.Scroll.Viewport < state.Scroll.Height {
 				add(0, "scroll", sess.Name, "down")
 			}
-			if state.Loading {
-				add(0, "wait-for", sess.Name, "--stable")
+			// Async application state can change after readyState is complete.
+			// Only the consumer decides whether to execute an explicit wait.
+			add(0, "wait-for", sess.Name, "--stable")
+			add(0, "close", sess.Name)
+			if overflow {
+				return "", fmt.Errorf("browser observation exceeds candidate budget")
+			}
+			c.sessionsMu.Lock()
+			defer c.sessionsMu.Unlock()
+			// Never evict issued IDs: an evicted replay would look like a normal
+			// call. At the lifetime bound, observation fails back to the caller.
+			if len(c.observed)+len(sess.pending) > 65536 {
+				return "", fmt.Errorf("browser observation call capacity reached")
+			}
+			if c.observed == nil {
+				c.observed = make(map[string]struct{})
+			}
+			for id := range sess.pending {
+				c.observed[id] = struct{}{}
 			}
 			return "", nil
 		})
@@ -222,7 +249,7 @@ func knownFieldValues(messages []*aop.Message, session string) map[string][]stri
 	return out
 }
 
-func (c *Command) runChoice(ctx context.Context, sub string, args []string) (string, error) {
+func (c *Command) runObserved(ctx context.Context, sub string, args []string) (string, error) {
 	if len(args) < 1 {
 		return "", coretool.ErrStaleChoice
 	}
@@ -234,13 +261,13 @@ func (c *Command) runChoice(ctx context.Context, sub string, args []string) (str
 	if sess.owner == "" || sess.owner != inv.SessionID {
 		return "", coretool.ErrStaleChoice
 	}
-	return sess.withPage(ctx, func(page *rod.Page) (string, error) {
-		choice, ok := sess.choices[inv.CallID]
-		delete(sess.choices, inv.CallID)
+	result, err := sess.withPage(ctx, func(page *rod.Page) (string, error) {
+		choice, ok := sess.pending[inv.CallID]
+		delete(sess.pending, inv.CallID)
 		if !ok || !slices.Equal(choice.args, append([]string{sub}, args...)) {
 			return "", coretool.ErrStaleChoice
 		}
-		value, err := page.Eval(choiceSnapshot)
+		value, err := page.Eval(pageObservation)
 		if err != nil {
 			return "", coretool.ErrStaleChoice
 		}
@@ -249,8 +276,22 @@ func (c *Command) runChoice(ctx context.Context, sub string, args []string) (str
 			return "", coretool.ErrStaleChoice
 		}
 		raw, _ := json.Marshal(current)
-		if current.Document != choice.document || sha256.Sum256(raw) != choice.state {
+		// Waiting reads the same document while it changes. Requiring the old
+		// DOM revision would invalidate precisely the transition being awaited.
+		// Actions and close still require the exact observed state.
+		if current.Document != choice.document || (sub != "wait-for" && sha256.Sum256(raw) != choice.state) {
 			return "", coretool.ErrStaleChoice
+		}
+		if sub == "close" {
+			// Remove this exact session while its observed page is locked. A
+			// concurrent close/reopen must never redirect cleanup to a new page.
+			c.sessionsMu.Lock()
+			defer c.sessionsMu.Unlock()
+			if c.sessions[sess.Name] != sess {
+				return "", coretool.ErrStaleChoice
+			}
+			delete(c.sessions, sess.Name)
+			return fmt.Sprintf("Last observed page before closing:\nURL: %s\nTitle: %s\n%s", current.URL, current.Title, current.Text), nil
 		}
 		if sub == "scroll" {
 			delta := current.Scroll.Viewport * 0.75
@@ -259,13 +300,9 @@ func (c *Command) runChoice(ctx context.Context, sub string, args []string) (str
 			}
 			_, err = page.Eval(`dy=>window.scrollBy(0,dy)`, delta)
 		} else if sub == "wait-for" {
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(100 * time.Millisecond):
-			}
+			err = page.WaitStable(500 * time.Millisecond)
 		} else {
-			el, err := page.ElementByJS(rod.Eval(`id=>window.__cyberChoices?.nodes.get(id)`, choice.node))
+			el, err := page.ElementByJS(rod.Eval(`id=>window.__cyberObservation?.nodes.get(id)`, choice.node))
 			if err != nil {
 				return "", coretool.ErrStaleChoice
 			}
@@ -302,4 +339,33 @@ func (c *Command) runChoice(ctx context.Context, sub string, args []string) (str
 		}
 		return fmt.Sprintf("Executed %s in session %s against observed document %s\nObserved URL: %s\nTarget label: %q", sub, sess.Name, choice.document, current.URL, label), nil
 	})
+	if err == nil && sub == "close" {
+		closed, closeErr := c.closeSession(sess, "", "")
+		return result + "\n" + closed, closeErr
+	}
+	return result, err
+}
+
+// Only literal values explicitly quoted by the current user become additional
+// fill candidates. Binding to a field is a consumer decision; remote text cannot
+// supply values and unknown/unquoted prose remains ordinary model work.
+var quotedFieldValue = regexp.MustCompile("\"([^\"\\r\\n]{1,1000})\"|`([^`\\r\\n]{1,1000})`|“([^”\\r\\n]{1,1000})”")
+
+func explicitFieldValues(messages []*aop.Message) []string {
+	var values []string
+	for i := len(messages) - 1; i >= 0; i-- {
+		m := messages[i]
+		if m == nil || m.Role != "user" || m.Name != "" {
+			continue
+		}
+		for _, match := range quotedFieldValue.FindAllStringSubmatch(provider.MessageText(m), 8) {
+			for _, value := range match[1:] {
+				if value != "" && !slices.Contains(values, value) {
+					values = append(values, value)
+				}
+			}
+		}
+		break
+	}
+	return values
 }

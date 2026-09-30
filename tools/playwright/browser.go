@@ -42,6 +42,9 @@ type Command struct {
 	openMu     sync.Mutex
 	sessions   map[string]*Session
 	sessionsMu sync.Mutex
+	// Observed call IDs survive consumption and session closure so stale calls
+	// cannot fall through to ordinary execution. Protected by sessionsMu.
+	observed map[string]struct{}
 
 	// Proxy URL for Chrome's --proxy-server flag. Updated via SetProxy().
 	proxyMu  sync.RWMutex
@@ -278,8 +281,11 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	if globalSession != "" {
 		subArgs = c.injectGlobalSession(sub, subArgs, globalSession)
 	}
-	if strings.HasPrefix(operation.InvocationFromContext(ctx).CallID, "choice-pw-") {
-		result, err := c.runChoice(ctx, sub, subArgs)
+	c.sessionsMu.Lock()
+	_, observed := c.observed[operation.InvocationFromContext(ctx).CallID]
+	c.sessionsMu.Unlock()
+	if observed {
+		result, err := c.runObserved(ctx, sub, subArgs)
 		if err != nil {
 			return nil, err
 		}

@@ -3,8 +3,10 @@ package curl
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"sort"
+	"strings"
 
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
@@ -13,9 +15,11 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-// Choices exposes read candidates on URLs supplied by the task or already
+// Observe exposes read candidates on URLs supplied by the task or already
 // chosen by the ordinary model. Remote page text cannot add new targets here.
-func (c *Command) Choices(_ context.Context, messages []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
+// Results remain in native history; copying them into physical state duplicates
+// context and makes unchanged endpoints appear to change after every decision.
+func (c *Command) Observe(_ context.Context, messages []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
 	targets := map[string]bool{}
 	for _, raw := range toolargs.TaskURLs(messages) {
 		targets[raw] = true
@@ -32,7 +36,6 @@ func (c *Command) Choices(_ context.Context, messages []*aop.Message) (json.RawM
 			start = i
 		}
 	}
-	var observations []string
 	for _, m := range messages[start:] {
 		for _, call := range provider.MessageToolCalls(m) {
 			if call.Name != "bash" {
@@ -53,20 +56,7 @@ func (c *Command) Choices(_ context.Context, messages []*aop.Message) (json.RawM
 				add(r.URL)
 			}
 		}
-		if result := provider.MessageToolResult(m); result != nil {
-			text := coretool.ResultText(result)
-			if len(text) > 2048 {
-				text = text[:2048] + " [partial; consult original evidence]"
-			}
-			observations = append(observations, text)
-		}
-		if m.Name == "jev" || m.Name == "jev-step" {
-			text := provider.MessageText(m)
-			if len(text) > 4096 {
-				text = text[:4096] + " [partial; consult evidence log]"
-			}
-			observations = append(observations, text)
-		}
+
 	}
 	if len(targets) == 0 {
 		return nil, nil, nil
@@ -77,8 +67,14 @@ func (c *Command) Choices(_ context.Context, messages []*aop.Message) (json.RawM
 	}
 	sort.Strings(urls)
 	choices := map[string]*aop.Content{}
+	addChoice := func(command string) {
+		args, _ := json.Marshal(map[string]string{"command": command})
+		call := &aop.ToolCall{Id: aop.EnvelopeID(), Name: "bash", Arguments: &aop.EncodedValue{Data: args, MediaType: aop.JSONMediaType}}
+		choices[fmt.Sprintf("c%d", len(choices))] = &aop.Content{Value: &aop.Content_ToolCall{ToolCall: call}}
+	}
+	var batches [3][]string
 	for _, target := range urls {
-		for _, flag := range []string{"", "-I", "-i"} {
+		for i, flag := range []string{"", "-I", "-i"} {
 			quoted, err := syntax.Quote(target, syntax.LangBash)
 			if err != nil {
 				continue
@@ -87,14 +83,18 @@ func (c *Command) Choices(_ context.Context, messages []*aop.Message) (json.RawM
 			if flag != "" {
 				command += flag + " "
 			}
-			args, _ := json.Marshal(map[string]string{"command": command + quoted})
-			id := "choice-curl-" + aop.EnvelopeID()
-			choices[id] = &aop.Content{Value: &aop.Content_ToolCall{ToolCall: &aop.ToolCall{Id: id, Name: "bash", Arguments: &aop.EncodedValue{Data: args, MediaType: aop.JSONMediaType}}}}
+			addChoice(command + quoted)
+			batches[i] = append(batches[i], command+quoted)
 		}
 	}
-	if len(observations) > 4 {
-		observations = observations[len(observations)-4:]
+	// A batch is another possible native shell call, not a prescribed plan.
+	// The consumer decides whether these known reads are independent and needed.
+	// Normal command admission and per-command results remain in effect.
+	for _, batch := range batches {
+		if len(batch) > 1 {
+			addChoice(strings.Join(batch, "; "))
+		}
 	}
-	state, err := json.Marshal(map[string]any{"known_urls": urls, "recent_observations": observations, "note": "HTTP success or a scanner match is not proof of a vulnerability. Missing independent evidence requires ordinary model review."})
+	state, err := json.Marshal(map[string]any{"known_urls": urls})
 	return state, choices, err
 }

@@ -30,12 +30,11 @@ type Command struct {
 	QuickReference  string
 	DescriptionPath string
 	Run             func(context.Context, *Execution) (any, error)
-	// Choices observes current tool-owned state. It must not execute actions.
-	// Calls are native Executor calls, bounded, session-scoped and checked again
-	// by the tool at execution. Empty choices require ordinary model reasoning.
-	Choices func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error)
-	// Contract invalidates learned decisions when candidate semantics change.
-	Contract string
+	// Observe reads current tool-owned state and returns native calls that are
+	// valid for that observation. It must not execute actions. Calls are checked
+	// again by the tool at execution. Observations and candidates are facts and
+	// possibilities, not recommendations; the consumer decides what to execute.
+	Observe func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error)
 }
 
 // StripShellSyntax rejects shell constructs a pseudo-command cannot honor.

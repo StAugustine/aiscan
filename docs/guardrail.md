@@ -9,7 +9,7 @@ owns the HTTP protocol, retries, request timeout and usage accounting. `score`
 returns a weighted level index; `noul` returns a probability. Their interpretation
 belongs to consumers. See the [native API](https://docs.typesafe.ai/api).
 
-`pkg/exts/jev` defines Reflex and its learning/execution loop over `choice`.
+`pkg/exts/jev` defines Claim/Compile/Reflex and its execution loop over `choice`.
 `pkg/exts/guardrail` is an independent consumer: it calls native `choice` directly,
 without compiling or invoking a Reflex. Its `record/review/block` options, risk
 presets and fallback semantics are extension policy, never provider abstractions.
