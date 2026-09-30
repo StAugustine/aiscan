@@ -55,7 +55,8 @@ func TestProviderFailuresAllowNextTurnInSameSession(t *testing.T) {
 			}
 			defer p.(interface{ CloseIdleConnections() }).CloseIdleConnections()
 			rt := newBareRuntime(t, nil, p)
-			rt.agentConfig.Model, rt.agentConfig.MaxRetries = "fixture", -1
+			rt.providers.Set(p, provider.ProviderConfig{Model: "fixture"})
+			rt.agentConfig.MaxRetries = -1
 			conversation, err := rt.OpenSession(t.Context(), SessionOptions{ID: failure, Messages: []*aop.Message{provider.TextMessage("user", "remember my HAR")}})
 			if err != nil {
 				t.Fatal(err)
@@ -120,7 +121,7 @@ func TestCancelStalledProviderDrainsBeforeQueuedTurn(t *testing.T) {
 	}
 	defer p.(interface{ CloseIdleConnections() }).CloseIdleConnections()
 	rt := newBareRuntime(t, nil, p)
-	rt.agentConfig.Model = "fixture"
+	rt.providers.Set(p, provider.ProviderConfig{Model: "fixture"})
 	conversation, err := rt.EnsureSession(SessionOptions{ID: "paused"})
 	if err != nil {
 		t.Fatal(err)

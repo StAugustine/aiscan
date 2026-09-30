@@ -316,7 +316,7 @@ func initRuntimeStdioHost(t *testing.T, h *stdioHost, prov agent.Provider) {
 	}
 	h.host = host.New(mux)
 	t.Cleanup(h.host.Close)
-	h.rt.agentConfig.Model = "test"
+	h.rt.providers.Set(prov, agent.ProviderConfig{Model: "test"})
 	h.rt.agentConfig.MaxTurns = 4
 	unsubscribe := h.rt.Observe(coreevents.ObserverFunc(func(event *aop.Event) {
 		_ = h.emit(aop.MustWrap(aop.EnvelopeID(), "", &aop.ProtocolMessage{Message: &aop.ProtocolMessage_Event{Event: event}}))

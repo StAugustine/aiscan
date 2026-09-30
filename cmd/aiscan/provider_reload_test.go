@@ -73,6 +73,13 @@ func TestProfileProviderReloadPreservesActiveRunAndSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	pinned, err := runtime.OpenSession(t.Context(), session.SessionOptions{ID: "pinned"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pinned.SetModel("session-model"); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	first, err := conversation.Run(ctx, session.RunInput{TurnID: "active", Message: agent.TextInput("analyze the upload")})
@@ -91,6 +98,9 @@ func TestProfileProviderReloadPreservesActiveRunAndSession(t *testing.T) {
 	}
 	if after, err := p.Runtime(); err != nil || after != runtime || conversation.Model() != "model-b" {
 		t.Fatalf("provider update replaced runtime or session: %v", err)
+	}
+	if pinned.Model() != "session-model" {
+		t.Fatal("global reload overwrote the session's explicit model")
 	}
 	unblock.Do(func() { close(release) })
 	if result, err := first.Wait(); err != nil || !strings.Contains(result.Output, "model-a") {

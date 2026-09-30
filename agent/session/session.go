@@ -45,6 +45,9 @@ type SessionOptions struct {
 	// Config and Input seed an independent execution before SessionStart hooks.
 	Config *agent.Config
 	Input  string
+	// providers preserves inheritance across an internal session rotation.
+	// Explicit caller configurations keep their own provider snapshot.
+	providers *providerpkg.State
 	// Attached ties lifetime and closure to the active ParentSessionID.
 	Attached bool
 	// SingleTask disables scheduling new turns from late mailbox input.
@@ -225,6 +228,7 @@ func (s *commandSession) statusText() string {
 		return "Agent runtime: unavailable"
 	}
 	rt := s.state.runtime
+	s.state.refreshProvider()
 	rt.mu.RLock()
 	providers := rt.providers
 	tools, commandRegistry, store := rt.tools, rt.commandRegistry, rt.skills
@@ -489,6 +493,7 @@ type sessionState struct {
 	parentSessionID  string
 	parentToolCallID string
 	agent            *agent.Agent
+	providers        *providerpkg.State
 	inbox            *sessionMailbox
 	scheduler        *agent.LoopScheduler
 	commands         *commandSession
@@ -585,6 +590,15 @@ func (rt *Runtime) OpenSession(ctx context.Context, options SessionOptions) (*Se
 	if options.Config != nil {
 		agentCfg = *options.Config
 	}
+	providers := options.providers
+	if options.Config == nil {
+		providers = rt.providers
+	}
+	if providers != nil {
+		p, config := providers.Current()
+		agentCfg.Provider, agentCfg.Model = p, config.Model
+		agentCfg.MaxTokens, agentCfg.ContextWindow = config.MaxTokens, config.ContextWindow
+	}
 	agentCfg = agentCfg.
 		WithInbox(mailbox).
 		WithSessionID(id).
@@ -603,7 +617,7 @@ func (rt *Runtime) OpenSession(ctx context.Context, options SessionOptions) (*Se
 	state := &sessionState{
 		runtime: rt, id: id, logicalID: logicalID, agentName: agentName, starting: true,
 		parentSessionID: options.ParentSessionID, parentToolCallID: options.ParentToolCallID,
-		agent: ag, inbox: mailbox, delegation: agentCfg.Delegation, input: options.Input,
+		agent: ag, providers: providers, inbox: mailbox, delegation: agentCfg.Delegation, input: options.Input,
 		scheduler: scheduler, ctx: sessionCtx, cancel: cancel,
 		ops: make(chan *sessionOperation, rt.pendingLimit()), done: make(chan struct{}),
 	}
@@ -974,12 +988,14 @@ func (s *Session) SetModel(model string) error {
 	if state == nil {
 		return fmt.Errorf("session is not configured")
 	}
+	state.refreshProvider()
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if state.closed || state.ctx.Err() != nil {
 		return fmt.Errorf("session is closing")
 	}
 	if state.agent.Model() == model {
+		state.providers = nil
 		return nil
 	}
 	if state.runtime.providers == nil {
@@ -990,11 +1006,13 @@ func (s *Session) SetModel(model string) error {
 		return err
 	}
 	state.agent.SetProviderConfig(p, config)
+	state.providers = nil
 	return nil
 }
 
 func (s *Session) Model() string {
 	if state := s.currentState(); state != nil {
+		state.refreshProvider()
 		return state.agent.Model()
 	}
 	return ""
@@ -1002,9 +1020,22 @@ func (s *Session) Model() string {
 
 func (s *Session) ContextWindow() int {
 	if state := s.currentState(); state != nil {
+		state.refreshProvider()
 		return state.agent.ContextWindow()
 	}
 	return 0
+}
+
+// Default sessions read the provider owner's current publication at the run
+// boundary. Independent configurations and explicit model selections remain
+// pinned; a running agent keeps the snapshot it already took.
+func (s *sessionState) refreshProvider() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.providers != nil {
+		p, config := s.providers.Current()
+		s.agent.SetProviderConfig(p, config)
+	}
 }
 
 func cloneSessionMessages(messages []*aop.Message) []*aop.Message {
@@ -1135,14 +1166,18 @@ func (s *Session) rotate(ctx context.Context, reason SessionCloseReason, parentS
 	logicalID := oldState.logicalID
 	agentName := oldState.agentName
 	prepared := prepareContinuationMessages(messages)
+	oldState.refreshProvider()
+	oldState.mu.Lock()
 	config := oldState.agent.ConfigSnapshot()
+	providers := oldState.providers
+	oldState.mu.Unlock()
 	if err := rt.CloseSession(ctx, logicalID, reason); err != nil {
 		return nil, err
 	}
 	newID := rt.nextContinuationID(logicalID)
 	continuation, err := rt.OpenSession(ctx, SessionOptions{
 		ID: newID, LogicalID: logicalID, ParentSessionID: parentSessionID,
-		AgentName: agentName, Messages: prepared, HistorySnapshot: reason == SessionCloseCompacted, Config: &config,
+		AgentName: agentName, Messages: prepared, HistorySnapshot: reason == SessionCloseCompacted, Config: &config, providers: providers,
 	})
 	if err != nil {
 		return nil, err
@@ -1313,6 +1348,7 @@ func (s *sessionState) executeRun(ctx context.Context, turnID string, input RunI
 			err = fmt.Errorf("session %q run panicked: %v", s.id, failure)
 		}
 	}()
+	s.refreshProvider()
 	if input.automatic || input.Continue {
 		return s.agent.Continue(ctx, agent.WithTurnID(turnID), agent.WithRunMaxTurns(input.MaxTurns))
 	}
@@ -1450,7 +1486,7 @@ func (rt *Runtime) runSession(session *sessionState) {
 
 func (s *sessionState) emitCommandResult(result *types.CommandResult) {
 	event := &aop.Event{SessionId: s.id, Emitter: s.agentName, Payload: &aop.Event_Message{Message: &aop.Message{
-		Id: s.runtime.nextCommandResultID(), Role: "assistant", Content: result.GetContent(),
+		Id: s.runtime.nextRuntimeID("command"), Role: "assistant", Content: result.GetContent(),
 	}}}
 	_ = types.SetCommandDetail(event, &types.CommandDetail{Line: result.GetCommand(), Presentation: result.GetPresentation()})
 	s.runtime.events.Publish(event)
@@ -1543,25 +1579,11 @@ func (state *sessionState) deliver(ctx context.Context, message inboxpkg.Message
 }
 
 func (rt *Runtime) nextRuntimeID(prefix string) string {
-	rt.mu.Lock()
-	rt.requestSeq++
-	id := fmt.Sprintf("%s-%d", prefix, rt.requestSeq)
-	rt.mu.Unlock()
-	return id
-}
-
-// A command result is a durable transcript entry, but the runtime counter it
-// used to be named after restarts at one with the node process. The hub keeps
-// every earlier result, so after a reconnect two different results share a
-// message id and any reader that identifies messages by id — the web transcript
-// does — overwrites one with the other. Stamp the emission time into the id so
-// it stays unique across restarts, the way rotated session ids already do.
-func (rt *Runtime) nextCommandResultID() string {
-	return rt.nextRuntimeID(fmt.Sprintf("command-%d", time.Now().UnixNano()))
+	return prefix + "-" + aop.EnvelopeID()
 }
 
 func (rt *Runtime) nextContinuationID(logicalID string) string {
-	return logicalID + "-" + rt.nextRuntimeID(fmt.Sprintf("session-%d", time.Now().UnixNano()))
+	return logicalID + "-" + rt.nextRuntimeID("session")
 }
 
 func (rt *Runtime) releaseRun(run *Run) {

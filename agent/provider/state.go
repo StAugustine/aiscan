@@ -47,15 +47,13 @@ type StartupConfig struct {
 
 // State is provider business state owned by the provider extension.
 type State struct {
-	mu           sync.RWMutex
-	provider     Provider
-	config       ProviderConfig
-	revision     uint64
-	health       Health
-	fallbacks    []Entry
-	owned        []Provider
-	listeners    map[uint64]func(Provider, ProviderConfig)
-	nextListener uint64
+	mu        sync.RWMutex
+	provider  Provider
+	config    ProviderConfig
+	revision  uint64
+	health    Health
+	fallbacks []Entry
+	owned     []Provider
 }
 
 // Controller is the provider extension's live configuration boundary. The
@@ -106,7 +104,6 @@ func (s *State) ForModel(model string, logger telemetry.Logger) (Provider, Provi
 }
 func (s *State) Set(p Provider, config ProviderConfig) {
 	s.install(p, config, Health{State: HealthConfigured, CheckedAt: time.Now()})
-	s.notify(p, config)
 }
 func (s *State) install(p Provider, config ProviderConfig, health Health) uint64 {
 	s.mu.Lock()
@@ -116,39 +113,6 @@ func (s *State) install(p Provider, config ProviderConfig, health Health) uint64
 	return s.revision
 }
 
-// Subscribe observes successful provider state publication. Subscribers are
-// called outside the state lock so a runtime can update its sessions without
-// blocking provider health probes or other readers.
-func (s *State) Subscribe(listener func(Provider, ProviderConfig)) func() {
-	if s == nil || listener == nil {
-		return func() {}
-	}
-	s.mu.Lock()
-	if s.listeners == nil {
-		s.listeners = make(map[uint64]func(Provider, ProviderConfig))
-	}
-	s.nextListener++
-	id := s.nextListener
-	s.listeners[id] = listener
-	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		delete(s.listeners, id)
-		s.mu.Unlock()
-	}
-}
-
-func (s *State) notify(p Provider, config ProviderConfig) {
-	s.mu.RLock()
-	listeners := make([]func(Provider, ProviderConfig), 0, len(s.listeners))
-	for _, listener := range s.listeners {
-		listeners = append(listeners, listener)
-	}
-	s.mu.RUnlock()
-	for _, listener := range listeners {
-		listener(p, config)
-	}
-}
 func (s *State) Reload(ctx context.Context, config ProviderConfig, logger telemetry.Logger) (Provider, ProviderConfig, error) {
 	p, resolved, err := initProvider(config, logger)
 	if err != nil {
@@ -209,7 +173,6 @@ func (s *State) Update(ctx context.Context, config ProviderConfig, logger teleme
 	s.owned = append(s.owned, p)
 	s.revision++
 	s.mu.Unlock()
-	s.notify(p, *resolved)
 	return nil
 }
 func (s *State) initialize(ctx context.Context, config StartupConfig, logger telemetry.Logger) error {

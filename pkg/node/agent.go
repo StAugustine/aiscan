@@ -138,7 +138,16 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 						return reloadStatus(current)
 					}
 				}
-				if applied != nil && sameSharedConfig(currentOption, nextOption) {
+				before, err := cfg.SharedFromOption(currentOption)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				after, err := cfg.SharedFromOption(nextOption)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				unchanged := proto.Equal(before, after)
+				if applied != nil && unchanged {
 					currentOption, applied = nextOption, proto.CloneOf(distributed)
 					return reloadStatus(current)
 				}
@@ -146,7 +155,8 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 				// drops their in-memory transcript. Delegate to the provider owner;
 				// active turns keep their provider snapshot and later turns use the
 				// new one.
-				if onlyLLMChanged(currentOption, nextOption) {
+				before.Llm, after.Llm = nil, nil
+				if !unchanged && proto.Equal(before, after) {
 					if reloader, ok := current.(interface {
 						ReloadProvider(context.Context, agent.ProviderConfig) error
 					}); ok {
@@ -161,14 +171,11 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 					}
 					return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
 				}
-				var next profile.Profile
-				if err == nil {
-					mode := profile.ProviderOptional
-					if len(distributed.GetLlm().GetProviders()) == 0 {
-						mode = profile.ProviderDisabled
-					}
-					next, err = build(nextOption, mode)
+				mode := profile.ProviderOptional
+				if len(distributed.GetLlm().GetProviders()) == 0 {
+					mode = profile.ProviderDisabled
 				}
+				next, err := build(nextOption, mode)
 				if err != nil {
 					return &types.ReloadResult{Error: err.Error()}, nil
 				}
@@ -223,32 +230,6 @@ func reloadStatus(p profile.Profile) (*types.ReloadResult, *aop.AgentStatus) {
 		result.Provider = active.Name()
 	}
 	return result, p.AgentStatus()
-}
-
-func onlyLLMChanged(current, next *cfg.Option) bool {
-	before, err := cfg.SharedFromOption(current)
-	if err != nil {
-		return false
-	}
-	after, err := cfg.SharedFromOption(next)
-	if err != nil {
-		return false
-	}
-	if proto.Equal(before, after) {
-		return false
-	}
-	before.Llm = nil
-	after.Llm = nil
-	return proto.Equal(before, after)
-}
-
-func sameSharedConfig(current, next *cfg.Option) bool {
-	before, err := cfg.SharedFromOption(current)
-	if err != nil {
-		return false
-	}
-	after, err := cfg.SharedFromOption(next)
-	return err == nil && proto.Equal(before, after)
 }
 
 func uploadNodeFile(req *filepb.UploadRequest) (*filepb.Result, error) {

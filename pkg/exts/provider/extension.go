@@ -14,12 +14,13 @@ import (
 )
 
 type Extension struct {
-	mu      sync.Mutex
-	release func()
-	state   *provider.State
-	config  provider.StartupConfig
-	logger  telemetry.Logger
-	closed  bool
+	mu       sync.Mutex
+	release  func()
+	state    *provider.State
+	config   provider.StartupConfig
+	logger   telemetry.Logger
+	lifetime context.Context
+	cancel   context.CancelFunc
 }
 
 func New(config provider.StartupConfig) *Extension {
@@ -31,7 +32,7 @@ func New(config provider.StartupConfig) *Extension {
 func (e *Extension) Load(scope *extension.Scope) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.closed = false
+	e.lifetime, e.cancel = context.WithCancel(scope.Lifetime())
 	e.state = &provider.State{}
 	logger, err := extension.Use[telemetry.Logger](scope)
 	if err != nil {
@@ -56,19 +57,29 @@ func (e *Extension) Reload(ctx context.Context, config provider.ProviderConfig) 
 		return fmt.Errorf("provider extension is unavailable")
 	}
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.state == nil || e.closed {
+	state, logger, lifetime := e.state, e.logger, e.lifetime
+	e.mu.Unlock()
+	if state == nil || lifetime == nil || lifetime.Err() != nil {
 		return fmt.Errorf("provider extension is unavailable")
 	}
-	return e.state.Update(ctx, config, e.logger)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	updateCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(lifetime, cancel)
+	defer stop()
+	defer cancel()
+	return state.Update(updateCtx, config, logger)
 }
 func (e *Extension) Close(context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if e.cancel != nil {
+		e.cancel()
+	}
 	if e.release != nil {
 		e.release()
 		e.release = nil
 	}
-	e.closed = true
 	return nil
 }
