@@ -80,18 +80,19 @@ func parseObserve(value string) []observeext.Kind {
 
 // aiscanProfile owns one reference-distribution extension graph.
 type aiscanProfile struct {
-	guardrail  *guardrailext.Runtime
-	extensions *extension.Set
-	providers  *provider.State
-	events     *events.Stream
-	progress   *eventbus.Bus[*toolpb.Progress]
-	processes  *proc.Manager
-	commands   coretool.CommandExecutor
-	bash       *terminaltool.BashTool
-	runtime    *agentsession.Runtime
-	ioa        *ioatools.Service
-	bindings   *consoleapi.Registry
-	namespaces *namespaces.Registry
+	guardrail          *guardrailext.Runtime
+	extensions         *extension.Set
+	providers          *provider.State
+	providerController provider.Controller
+	events             *events.Stream
+	progress           *eventbus.Bus[*toolpb.Progress]
+	processes          *proc.Manager
+	commands           coretool.CommandExecutor
+	bash               *terminaltool.BashTool
+	runtime            *agentsession.Runtime
+	ioa                *ioatools.Service
+	bindings           *consoleapi.Registry
+	namespaces         *namespaces.Registry
 }
 
 var _ profilepkg.Profile = (*aiscanProfile)(nil)
@@ -241,6 +242,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 			p.ioa = ioa.Service()
 		}
 		if p.providers, err = extension.Use[*provider.State](scope); err != nil {
+			return err
+		}
+		if p.providerController, err = extension.Use[provider.Controller](scope); err != nil {
 			return err
 		}
 		if p.guardrail, err = extension.Use[*guardrailext.Runtime](scope); err != nil {
@@ -429,4 +433,14 @@ func (p *aiscanProfile) SetGuardrailMode(mode string) error {
 		return fmt.Errorf("guardrail runtime is unavailable")
 	}
 	return p.guardrail.SetMode(guardrailext.Mode(mode))
+}
+
+// ReloadProvider delegates live provider changes to the provider extension.
+// Profile construction remains a startup concern; this method only exposes
+// the owner's already-loaded update boundary to the node transport.
+func (p *aiscanProfile) ReloadProvider(ctx context.Context, config provider.ProviderConfig) error {
+	if !p.Active() || p.providerController == nil {
+		return fmt.Errorf("provider controller is unavailable")
+	}
+	return p.providerController.Reload(ctx, config)
 }

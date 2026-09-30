@@ -45,15 +45,23 @@ type StartupConfig struct {
 	Fallbacks []ProviderConfig
 }
 
-// State is provider business state. The profile owns its initialization.
+// State is provider business state owned by the provider extension.
 type State struct {
-	mu        sync.RWMutex
-	provider  Provider
-	config    ProviderConfig
-	revision  uint64
-	health    Health
-	fallbacks []Entry
-	owned     []Provider
+	mu           sync.RWMutex
+	provider     Provider
+	config       ProviderConfig
+	revision     uint64
+	health       Health
+	fallbacks    []Entry
+	owned        []Provider
+	listeners    map[uint64]func(Provider, ProviderConfig)
+	nextListener uint64
+}
+
+// Controller is the provider extension's live configuration boundary. The
+// session runtime consumes State; it never constructs or probes providers.
+type Controller interface {
+	Reload(context.Context, ProviderConfig) error
 }
 
 func (s *State) Current() (Provider, ProviderConfig) {
@@ -98,6 +106,7 @@ func (s *State) ForModel(model string, logger telemetry.Logger) (Provider, Provi
 }
 func (s *State) Set(p Provider, config ProviderConfig) {
 	s.install(p, config, Health{State: HealthConfigured, CheckedAt: time.Now()})
+	s.notify(p, config)
 }
 func (s *State) install(p Provider, config ProviderConfig, health Health) uint64 {
 	s.mu.Lock()
@@ -105,6 +114,40 @@ func (s *State) install(p Provider, config ProviderConfig, health Health) uint64
 	s.provider, s.config, s.health = p, config, health
 	s.revision++
 	return s.revision
+}
+
+// Subscribe observes successful provider state publication. Subscribers are
+// called outside the state lock so a runtime can update its sessions without
+// blocking provider health probes or other readers.
+func (s *State) Subscribe(listener func(Provider, ProviderConfig)) func() {
+	if s == nil || listener == nil {
+		return func() {}
+	}
+	s.mu.Lock()
+	if s.listeners == nil {
+		s.listeners = make(map[uint64]func(Provider, ProviderConfig))
+	}
+	s.nextListener++
+	id := s.nextListener
+	s.listeners[id] = listener
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		delete(s.listeners, id)
+		s.mu.Unlock()
+	}
+}
+
+func (s *State) notify(p Provider, config ProviderConfig) {
+	s.mu.RLock()
+	listeners := make([]func(Provider, ProviderConfig), 0, len(s.listeners))
+	for _, listener := range s.listeners {
+		listeners = append(listeners, listener)
+	}
+	s.mu.RUnlock()
+	for _, listener := range listeners {
+		listener(p, config)
+	}
 }
 func (s *State) Reload(ctx context.Context, config ProviderConfig, logger telemetry.Logger) (Provider, ProviderConfig, error) {
 	p, resolved, err := initProvider(config, logger)
@@ -125,6 +168,49 @@ func (s *State) Reload(ctx context.Context, config ProviderConfig, logger teleme
 	}
 	s.mu.Unlock()
 	return p, *resolved, nil
+}
+
+// Update is the live configuration operation owned by the provider
+// extension. It validates and probes the new client before publishing it, so
+// a quota/network failure leaves the previous client and sessions usable.
+func (s *State) Update(ctx context.Context, config ProviderConfig, logger telemetry.Logger) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	revision := s.revision
+	s.mu.RUnlock()
+	p, resolved, err := initProvider(config, logger)
+	if err != nil {
+		return err
+	}
+	health := Probe(ctx, *resolved, logger)
+	if err := ctx.Err(); err != nil {
+		closeIdleConnections(p)
+		return err
+	}
+	if health.State == HealthFailed {
+		closeIdleConnections(p)
+		if health.Error == "" {
+			return fmt.Errorf("provider probe failed")
+		}
+		return fmt.Errorf("provider probe failed: %s", health.Error)
+	}
+	s.mu.Lock()
+	if s.revision != revision {
+		s.mu.Unlock()
+		closeIdleConnections(p)
+		return fmt.Errorf("provider state changed while checking configuration")
+	}
+	s.provider, s.config, s.health = p, *resolved, health
+	s.owned = append(s.owned, p)
+	s.revision++
+	s.mu.Unlock()
+	s.notify(p, *resolved)
+	return nil
 }
 func (s *State) initialize(ctx context.Context, config StartupConfig, logger telemetry.Logger) error {
 	if err := ctx.Err(); err != nil {

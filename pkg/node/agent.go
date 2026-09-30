@@ -93,21 +93,74 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 			if err != nil {
 				return err
 			}
-			// Reload prepares a complete candidate; sessions never migrate.
+			startTask := func() error {
+				if started {
+					return nil
+				}
+				providers, err := current.Providers()
+				if err != nil {
+					return err
+				}
+				if active, _ := providers.Current(); active == nil {
+					return nil
+				}
+				task, err := webAgentTask(option)
+				if err != nil {
+					return err
+				}
+				if task != "" {
+					if _, err := rt.EnsureSession(agentsession.SessionOptions{ID: "startup"}); err != nil {
+						return err
+					}
+					if _, err := rt.RunSession(connectionCtx, "startup", agentsession.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}}); err != nil {
+						return err
+					}
+				}
+				started = true
+				return nil
+			}
+			// Graph changes prepare a complete candidate; provider-only changes
+			// are applied in place so sessions retain their conversation history.
 			reload := func(distributed *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
 				if applied != nil && proto.Equal(applied, distributed) {
 					return reloadStatus(current)
+				}
+				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
 				}
 				if mode, onlyMode := cfg.GuardrailModeChange(applied, distributed); onlyMode {
 					if target, ok := current.(interface{ SetGuardrailMode(string) error }); ok {
 						if err := target.SetGuardrailMode(mode); err != nil {
 							return &types.ReloadResult{Error: err.Error()}, nil
 						}
-						applied = proto.CloneOf(distributed)
+						currentOption, applied = nextOption, proto.CloneOf(distributed)
 						return reloadStatus(current)
 					}
 				}
-				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
+				if applied != nil && sameSharedConfig(currentOption, nextOption) {
+					currentOption, applied = nextOption, proto.CloneOf(distributed)
+					return reloadStatus(current)
+				}
+				// Rebuilding a profile for a model/API update cancels live runs and
+				// drops their in-memory transcript. Delegate to the provider owner;
+				// active turns keep their provider snapshot and later turns use the
+				// new one.
+				if onlyLLMChanged(currentOption, nextOption) {
+					if reloader, ok := current.(interface {
+						ReloadProvider(context.Context, agent.ProviderConfig) error
+					}); ok {
+						if reloadErr := reloader.ReloadProvider(connectionCtx, cfg.ProviderConfig(nextOption)); reloadErr != nil {
+							return &types.ReloadResult{Error: reloadErr.Error()}, nil
+						}
+						currentOption, applied = nextOption, proto.CloneOf(distributed)
+						if err := startTask(); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						return reloadStatus(current)
+					}
+					return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
+				}
 				var next profile.Profile
 				if err == nil {
 					mode := profile.ProviderOptional
@@ -136,26 +189,8 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 					cancel()
 				}
 			}
-			if !started {
-				providers, err := current.Providers()
-				if err != nil {
-					return err
-				}
-				if active, _ := providers.Current(); active != nil {
-					task, err := webAgentTask(option)
-					if err != nil {
-						return err
-					}
-					started = true
-					if task != "" {
-						if _, err := rt.EnsureSession(agentsession.SessionOptions{ID: "startup"}); err != nil {
-							return err
-						}
-						if _, err := rt.RunSession(connectionCtx, "startup", agentsession.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}}); err != nil {
-							return err
-						}
-					}
-				}
+			if err := startTask(); err != nil {
+				return err
 			}
 			return connect(connectionCtx, connectionConfig{
 				ServerURL: option.ServerURL, Name: rt.NodeName(), Executor: rt.Tools(), Events: events,
@@ -188,6 +223,32 @@ func reloadStatus(p profile.Profile) (*types.ReloadResult, *aop.AgentStatus) {
 		result.Provider = active.Name()
 	}
 	return result, p.AgentStatus()
+}
+
+func onlyLLMChanged(current, next *cfg.Option) bool {
+	before, err := cfg.SharedFromOption(current)
+	if err != nil {
+		return false
+	}
+	after, err := cfg.SharedFromOption(next)
+	if err != nil {
+		return false
+	}
+	if proto.Equal(before, after) {
+		return false
+	}
+	before.Llm = nil
+	after.Llm = nil
+	return proto.Equal(before, after)
+}
+
+func sameSharedConfig(current, next *cfg.Option) bool {
+	before, err := cfg.SharedFromOption(current)
+	if err != nil {
+		return false
+	}
+	after, err := cfg.SharedFromOption(next)
+	return err == nil && proto.Equal(before, after)
 }
 
 func uploadNodeFile(req *filepb.UploadRequest) (*filepb.Result, error) {

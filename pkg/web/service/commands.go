@@ -157,18 +157,6 @@ func (s *Service) sessionAgent(sessionID string) *remoteAgent {
 }
 
 func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) {
-	workCtx, admitted := s.beginWork()
-	if !admitted {
-		return
-	}
-	defer s.work.Done()
-	agent := s.sessionAgent(sessionID)
-	if agent == nil {
-		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
-			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
-		return
-	}
-
 	taskID := strings.TrimSpace(request.TurnId)
 	if taskID == "" {
 		taskID = generateID()
@@ -176,6 +164,20 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 	request.TurnId = taskID
 	request.SessionId = sessionID
 	s.resetTurnTerminal(sessionID, taskID)
+	workCtx, admitted := s.beginWork()
+	if !admitted {
+		s.broadcastHubTurnEnded(sessionID, taskID, "service_closing", "web service is closing")
+		return
+	}
+	defer s.work.Done()
+	agent := s.sessionAgent(sessionID)
+	if agent == nil {
+		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
+			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
+		s.broadcastHubTurnEnded(sessionID, taskID, "agent_not_connected", "agent disconnected before turn dispatch")
+		return
+	}
+
 	s.registerSessionTask(taskID, sessionID)
 	resultCh, err := s.agents.DispatchRun(agent.NodeID(), request)
 	if err != nil {

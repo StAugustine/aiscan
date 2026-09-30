@@ -369,8 +369,24 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 		if errors.Is(err, sql.ErrNoRows) {
 			return finish(rejectedCancel("NOT_FOUND", "session not found"))
 		}
-		if errors.Is(err, ErrTurnNotFound) {
-			return finish(rejectedCancel("NOT_FOUND", "turn not found"))
+		if errors.Is(err, ErrTurnNotFound) || ErrorCode(err) == CodeUnavailable {
+			// Cancellation is idempotent from the UI's perspective. A fast
+			// provider failure can publish TurnEnded between the button press and
+			// the control request, so the runtime quite correctly reports that no
+			// run is active anymore. Treat the durable terminal as success and
+			// let the client converge its busy state.
+			ended, lookupErr := s.turnEnded(ctx, request.SessionId, request.TurnId)
+			if lookupErr != nil {
+				return nil, fmt.Errorf("check turn state: %w", lookupErr)
+			}
+			if ended {
+				return finish(&aop.CancelTurnResponse{Outcome: &aop.CancelTurnResponse_Accepted{Accepted: &aop.TurnReceipt{
+					SessionId: request.SessionId, TurnId: request.TurnId, State: "completed",
+				}}})
+			}
+			if errors.Is(err, ErrTurnNotFound) {
+				return finish(rejectedCancel("NOT_FOUND", "turn not found"))
+			}
 		}
 		return nil, fmt.Errorf("cancel turn: %w", err)
 	}
@@ -379,6 +395,19 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 		TurnId:    request.TurnId,
 		State:     "canceled",
 	}}})
+}
+
+func (s *Sessions) turnEnded(ctx context.Context, sessionID, turnID string) (bool, error) {
+	items, err := s.store.ListAOPEventsAfter(ctx, sessionID, 0, 0)
+	if err != nil {
+		return false, err
+	}
+	for _, item := range items {
+		if item != nil && item.Event != nil && item.Event.TurnId == turnID && item.Event.GetTurnEnded() != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Sessions) CloseSession(ctx context.Context, requestID string, request *aop.CloseSessionRequest) (*aop.CloseSessionResponse, error) {

@@ -17,11 +17,13 @@ import (
 	toolpb "github.com/chainreactors/cyber/aop/tool"
 	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/namespaces"
+	"github.com/chainreactors/cyber/core/resource"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
+	guardrailext "github.com/chainreactors/cyber/pkg/exts/guardrail"
 	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
 	"github.com/chainreactors/cyber/pkg/harness"
 	"github.com/chainreactors/cyber/pkg/profile"
@@ -88,6 +90,14 @@ func (w *reloadWaitTool) Execute(ctx context.Context, _ string) (*coretool.Resul
 }
 
 func TestRemoteReloadKeepsFailedProfileAndDrainsSuccessfulSwitch(t *testing.T) {
+	sections := cfg.NewSections()
+	declarations := resource.New()
+	if _, err := resource.Define[cfg.Section](declarations, sections); err != nil {
+		t.Fatal(err)
+	}
+	if err := guardrailext.Declare(declarations); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	work := &reloadWaitTool{started: make(chan struct{})}
@@ -239,7 +249,7 @@ func TestRemoteReloadKeepsFailedProfileAndDrainsSuccessfulSwitch(t *testing.T) {
 	defer server.Close()
 	nodeDone := make(chan error, 1)
 	go func() {
-		nodeDone <- RunWebSocket(ctx, build, &cfg.Option{Explicit: map[string]bool{}, NodeOptions: cfg.NodeOptions{NodeID: "reload-test"}, AgentOptions: cfg.AgentOptions{ServerURL: server.URL}}, telemetry.NopLogger())
+		nodeDone <- RunWebSocket(ctx, build, &cfg.Option{Sections: sections, Explicit: map[string]bool{}, NodeOptions: cfg.NodeOptions{NodeID: "reload-test"}, AgentOptions: cfg.AgentOptions{ServerURL: server.URL}}, telemetry.NopLogger())
 	}()
 	select {
 	case err := <-serverDone:

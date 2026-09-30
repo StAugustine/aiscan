@@ -91,8 +91,8 @@ type Config struct {
 	CommandName string
 	// SkipBaseSkills disables BaseSkills injection for focused worker sessions
 	// that receive their skills explicitly.
-	SkipBaseSkills       bool
-	MaxPending           int
+	SkipBaseSkills bool
+	MaxPending     int
 	// Loop supplies the installed reasoning algorithm.
 	Loop agent.Loop
 }
@@ -373,6 +373,26 @@ func (rt *Runtime) ProviderState() (agent.Provider, agent.ProviderConfig) {
 		return nil, agent.ProviderConfig{}
 	}
 	return rt.providers.Current()
+}
+
+// ApplyProvider receives a provider publication from the provider extension.
+// The runtime only applies the already-created client to future and existing
+// session configurations; it never owns provider construction or probing.
+func (rt *Runtime) ApplyProvider(p provider.Provider, resolved provider.ProviderConfig) {
+	if rt == nil || p == nil {
+		return
+	}
+	rt.mu.Lock()
+	rt.agentConfig.Provider = p
+	rt.agentConfig.Model = resolved.Model
+	rt.agentConfig.MaxTokens = resolved.MaxTokens
+	rt.agentConfig.ContextWindow = resolved.ContextWindow
+	for _, state := range rt.sessions {
+		if state != nil {
+			state.agent.SetProviderConfig(p, resolved)
+		}
+	}
+	rt.mu.Unlock()
 }
 
 // ProviderFallbacks are the configured alternatives to the active model.

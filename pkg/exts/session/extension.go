@@ -19,8 +19,9 @@ import (
 )
 
 type Extension struct {
-	config   session.Config
-	resource *session.Resource
+	config        session.Config
+	resource      *session.Resource
+	unsubProvider func()
 }
 
 // New selects session parameters. Load borrows capabilities from their owners.
@@ -90,7 +91,10 @@ func (e *Extension) Load(scope *extension.Scope) error {
 		return err
 	}
 	e.resource = resource
+	e.unsubProvider = providers.Subscribe(resource.Runtime().ApplyProvider)
 	if err := extension.Provide[*session.Runtime](scope, resource.Runtime()); err != nil {
+		e.unsubProvider()
+		e.unsubProvider = nil
 		return err
 	}
 
@@ -100,6 +104,10 @@ func (e *Extension) Load(scope *extension.Scope) error {
 func (e *Extension) Close(ctx context.Context) error {
 	if e == nil || e.resource == nil {
 		return nil
+	}
+	if e.unsubProvider != nil {
+		e.unsubProvider()
+		e.unsubProvider = nil
 	}
 	return e.resource.Close(ctx)
 }
