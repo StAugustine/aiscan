@@ -107,7 +107,11 @@ func TestMigrationPreservesCanonicalScansLinksAndIndexes(t *testing.T) {
 		}
 	}
 	session, err := svc.API().Sessions.GetSession(t.Context(), &types.GetSessionRequest{SessionId: "session"})
-	if err != nil || len(session.GetSession().GetExtensions()["scan"].GetFields()["ids"].GetListValue().GetValues()) != len(scans) {
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := session.GetSession().GetExtensions()["scan"]
+	if len(binding.GetFields()["ids"].GetListValue().GetValues()) != len(scans) {
 		t.Fatalf("session links: %v, %v", session, err)
 	}
 	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
