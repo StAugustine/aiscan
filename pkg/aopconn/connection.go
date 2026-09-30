@@ -119,7 +119,12 @@ func (c *Connection) Run(handler func(context.Context, *aop.Envelope, aop.SendFu
 	c.ran = true
 	c.runMu.Unlock()
 
-	defer func() { c.stop(runErr) }()
+	defer func() {
+		c.stop(runErr)
+		// Closing after a write failure also unblocks Recv. Preserve the cause
+		// already recorded by stop, whichever ready branch Run selected.
+		runErr = c.terminalError()
+	}()
 	received := make(chan *aop.Envelope)
 	receiveErr := make(chan error, 1)
 	go func() {
