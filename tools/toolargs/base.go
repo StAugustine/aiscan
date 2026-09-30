@@ -36,10 +36,14 @@ func (b *Base) InitLogger(logger telemetry.Logger) {
 func (b *Base) EmitArtifactCtx(ctx context.Context, tool, kind, target string, data any) {
 	raw, err := json.Marshal(data)
 	if err != nil {
-		b.Logger.Warnf("marshal %s artifact: %s", tool, err)
+		if b.Logger != nil {
+			b.Logger.Warnf("marshal %s artifact: %s", tool, err)
+		}
 		return
 	}
-	_ = b.EmitArtifactJSONCtx(ctx, ArtifactResultIDFromJSON(tool, kind, target, raw), tool, kind, target, raw)
+	if err := b.EmitArtifactJSONCtx(ctx, ArtifactResultIDFromJSON(tool, kind, target, raw), tool, kind, target, raw); err != nil && b.Logger != nil {
+		b.Logger.Warnf("emit %s artifact: %s", tool, err)
+	}
 }
 
 // ArtifactResultID returns a stable identity for one scanner-native record.

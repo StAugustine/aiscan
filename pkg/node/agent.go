@@ -230,6 +230,15 @@ func reloadStatus(p profile.Profile) (*types.ReloadResult, *aop.AgentStatus) {
 	return result, p.AgentStatus()
 }
 
+func sameSharedConfig(current, next *cfg.Option) bool {
+	before, err := cfg.SharedFromOption(current)
+	if err != nil {
+		return false
+	}
+	after, err := cfg.SharedFromOption(next)
+	return err == nil && proto.Equal(before, after)
+}
+
 func uploadNodeFile(req *filepb.UploadRequest) (*filepb.Result, error) {
 	if req == nil {
 		return nil, fmt.Errorf("upload request is required")

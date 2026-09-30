@@ -112,7 +112,6 @@ export default function SessionList({
           {open ? (
             <>
               <span className="min-w-0 flex-1 truncate text-xs font-semibold text-foreground">{t('tasks')}</span>
-              {Object.values(pendingReviewCounts).some(count => count > 0) && <span className="inline-flex items-center gap-1 rounded bg-warning/10 px-1.5 py-0.5 text-[10px] text-warning" role="status" aria-label={t('sessionsNeedAttention', { count: Object.values(pendingReviewCounts).filter(count => count > 0).length })}><ShieldAlert className="h-3 w-3" />{Object.values(pendingReviewCounts).filter(count => count > 0).length}</span>}
               <Button ref={closeButtonRef} variant="ghost" size="icon" onClick={onToggle} className="h-7 w-7 text-muted-foreground" aria-label={t('collapseSidebar')}>
                 <PanelLeftClose className="w-4 h-4" />
               </Button>
@@ -150,7 +149,6 @@ export default function SessionList({
                       {expanded ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
                       <Monitor className={cn('h-3.5 w-3.5 shrink-0', group.online ? 'text-primary' : 'text-muted-foreground/50')} />
                       <span className="truncate text-xs font-medium">{group.name}</span>
-                      {group.sessions.some(session => (pendingReviewCounts[recordID(session)] || 0) > 0) && <ShieldAlert className="h-3 w-3 shrink-0 text-warning" aria-label={t('needsAttention')} />}
                       {!group.online && <span className="shrink-0 text-[9px] text-warning">{t('agentOffline')}</span>}
                       <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">{group.sessions.length}</span>
                     </button>
@@ -160,9 +158,9 @@ export default function SessionList({
                     {group.sessions.map((session) => <SessionItem
                       key={recordID(session)}
                       session={session}
-                      pendingReviews={pendingReviewCounts[recordID(session)] || 0}
                       active={recordID(session) === activeSessionID}
                       busy={recordID(session) === activeSessionID && activeSessionBusy}
+                      pendingReviews={pendingReviewCounts[recordID(session)] || 0}
                       onSelect={() => onSelectSession(recordID(session))}
                       onDelete={() => onDeleteSession(recordID(session))}
                       onUpdate={(patch) => onUpdateSession(recordID(session), patch)}
@@ -258,7 +256,6 @@ function SessionItem({
     <div
       ref={itemRef}
       data-session-id={recordID(session)}
-      data-needs-attention={pendingReviews > 0 || undefined}
       className={cn(
         'group flex min-h-10 items-center gap-1 rounded-md px-2 py-1 transition-colors',
         active ? 'bg-primary/10 text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -271,16 +268,13 @@ function SessionItem({
       </form> : <>
       <button type="button" onClick={onSelect} className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-1.5">
-          {pendingReviews > 0 ? <ShieldAlert className="h-3 w-3 shrink-0 text-warning" aria-hidden="true" />
-            : busy ? <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-warning" role="status" aria-label={t('runningTask')} title={t('runningTask')} />
+          {busy ? <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-warning" role="status" aria-label={t('runningTask')} title={t('runningTask')} />
             : closed ? <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50" role="status" aria-label={t('closedTask')} title={t('closedTask')} />
               : <MessageSquare className="h-2.5 w-2.5 shrink-0" />}
           <span className="truncate text-[11px] font-medium">{title}</span>
+          {pendingReviews > 0 && <span className="ml-auto inline-flex items-center gap-0.5 text-warning" title={t('pendingReviews', { count: pendingReviews })}><ShieldAlert className="h-3 w-3" /><span className="text-[9px] tabular-nums">{pendingReviews}</span></span>}
         </div>
-        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9px] text-muted-foreground">
-          {pendingReviews > 0 && <span role="status" aria-label={t('pendingApprovals', { count: pendingReviews })} className="rounded bg-warning/10 px-1.5 py-0.5 font-medium text-warning">{t('needsAttention')}{pendingReviews > 1 ? ' · ' + pendingReviews : ''}</span>}
-          <span>{time}</span>
-        </div>
+        <div className="mt-0.5 text-[9px] text-muted-foreground">{time}</div>
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>

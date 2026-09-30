@@ -536,12 +536,13 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 						ID: "call-5", Type: "function",
 						Function: FunctionCall{
 							Name:      "bash",
-							Arguments: bashArgs(`tmux send -t worker "echo VAR_IS_$MY_VAR" Enter`),
+							Arguments: bashArgs(`tmux send -t worker 'echo VAR_IS_$MY_VAR' Enter`),
 						},
 					}},
 				}), nil
 
 			case 6:
+				assertToolResult(t, req, "call-5", "sent")
 				time.Sleep(500 * time.Millisecond)
 				return chatResponse(ChatMessage{
 					Role: "assistant",
@@ -594,6 +595,8 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 		Provider: llm,
 		Tools:    tools,
 		Model:    "test",
+		// PTY lifecycle notices may arrive after the scripted final response.
+		MaxTurns: 9,
 	}).Run(context.Background(), TextInput("Start an interactive shell session using tmux, test multi-round interaction"))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -907,7 +910,7 @@ Step 5: tmux capture-pane -t test_sess --new
         → You should see HELLO_WORLD in the output
 Step 6: tmux send -t test_sess "MY_VAR=MAGIC_42" Enter
 Step 7: sleep 0.2
-Step 8: tmux send -t test_sess "echo RESULT_IS_$MY_VAR" Enter
+Step 8: tmux send -t test_sess 'echo RESULT_IS_$MY_VAR' Enter
 Step 9: sleep 0.3
 Step 10: tmux capture-pane -t test_sess --new
          → You should see RESULT_IS_MAGIC_42 in the output

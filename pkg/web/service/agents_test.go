@@ -1103,18 +1103,14 @@ func writeMockAgentPTY(t *testing.T, agent *mockBrowserAgent, message *ptypb.Pro
 
 func openFirstAgentTerminal(t *testing.T, page *rod.Page) { //nolint:unused // referenced by agents_e2e_test.go with the e2e build tag
 	t.Helper()
-	terminal, err := page.Timeout(5*time.Second).ElementR("button", "Terminal")
+	button, err := page.Timeout(5 * time.Second).Element(`header button[aria-label$="agent(s) connected"]`)
 	if err != nil {
-		if toggle, toggleErr := page.Timeout(5 * time.Second).Element("button[aria-label='Expand sidebar']"); toggleErr == nil {
-			toggle.MustClick()
-			page.Timeout(5 * time.Second).MustWaitStable()
-		}
-		terminal, err = page.Timeout(5*time.Second).ElementR("button", "Terminal")
+		t.Fatalf("agent console button not available: %v", err)
 	}
-	if err != nil {
-		t.Fatalf("terminal button not available: %v", err)
+	button.MustClick()
+	if _, err := page.Timeout(5 * time.Second).Element(".xterm"); err != nil {
+		t.Fatalf("agent terminal not available: %v", err)
 	}
-	terminal.MustClick()
 	page.Timeout(5 * time.Second).MustWaitStable()
 }
 

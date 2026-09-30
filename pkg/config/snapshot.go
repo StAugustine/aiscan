@@ -147,7 +147,7 @@ func LoadSnapshot(context *Context, explicit string, sections *Sections) (*Snaps
 }
 
 func (s *Snapshot) applyLayer(layer *Layer, doc map[string]any, sections *Sections) error {
-	if err := validateDocument(doc, sections); err != nil {
+	if err := validateMapping(doc, reflect.TypeOf(Option{}), "", sections); err != nil {
 		return fmt.Errorf("config file %s: %w", layer.Path, err)
 	}
 	if sections != nil {
@@ -331,10 +331,6 @@ func mergeDocumentLayer(dst, src map[string]any, prefix, source string, sources 
 			sources[path] = source
 		}
 	}
-}
-
-func validateDocument(doc map[string]any, sections *Sections) error {
-	return validateMapping(doc, reflect.TypeOf(Option{}), "", sections)
 }
 
 func validateMapping(doc map[string]any, t reflect.Type, prefix string, sections *Sections) error {

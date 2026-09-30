@@ -13,9 +13,9 @@ import (
 
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/telemetry"
 	types "github.com/chainreactors/cyber/core/types"
-	"github.com/chainreactors/cyber/internal/testutil/hosttest"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	webext "github.com/chainreactors/cyber/pkg/exts/web"
 	"github.com/chainreactors/cyber/pkg/harness"
@@ -101,12 +101,20 @@ func testRemoteNodeUsesServerLLM(t *testing.T, localOverrides bool) {
 	}
 	providers.Set(nil, provider.ProviderConfig{Provider: "openai", APIKey: "server-only-key", Model: "server-model", BaseURL: llm.URL + "/v1"})
 	web := webext.New(webext.Config{
-		Database: filepath.Join(t.TempDir(), "web.db"), ConfigStore: emptyServerConfigStore{},
+		Database:    filepath.Join(t.TempDir(), "web.db"),
+		ConfigStore: emptyServerConfigStore{},
 		InitialProfile: func(context.Context) (profile.Profile, error) {
 			return &reloadTestProfile{Harness: h}, nil
 		},
 	})
-	hosttest.Load(t, ctx, web)
+	set, err := extension.New(web)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := set.Load(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer set.Close(context.Background())
 	svc := web.Service()
 	if result, err := svc.API().Config.TestLLM(ctx, &types.LLMProbeRequest{}); err != nil || !result.GetOk() || result.GetModel() != "server-model" {
 		t.Fatalf("server runtime health probe = %v, error = %v", result, err)
@@ -177,7 +185,7 @@ func testRemoteNodeUsesServerLLM(t *testing.T, localOverrides bool) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		for _, node := range svc.API().ListAgents(&types.ListAgentsRequest{}).GetAgents() {
+		for _, node := range svc.API().ListAgents(&types.ListAgentsRequest{}).Agents {
 			if node.GetStatus().GetProvider() == "openai" && node.GetStatus().GetModel() == "server-model" && node.GetStatus().GetConfigError() == "" {
 				return
 			}

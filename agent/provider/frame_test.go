@@ -63,11 +63,14 @@ func TestReasoningAndCacheMissAreDistinctFromCacheWrite(t *testing.T) {
 }
 
 func TestStreamPreservesExplicitEmptyReasoning(t *testing.T) {
-	event, err := parseOpenAIStreamChunk([]byte(`{"choices":[{"delta":{"reasoning_content":"","tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash","arguments":"{}"}}]}}]}`))
+	events, err := parseOpenAIStreamChunk([]byte(`{"choices":[{"delta":{"reasoning_content":"","tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"bash","arguments":"{}"}}]}}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := event.MessageDelta.GetValue().(*aop.MessageDelta_Reasoning); !ok || len(event.ToolDeltas) != 1 {
+	if len(events) != 2 {
+		t.Fatalf("got %d events", len(events))
+	}
+	if _, ok := events[0].MessageDelta.GetValue().(*aop.MessageDelta_Reasoning); !ok || len(events[1].ToolDeltas) != 1 {
 		t.Fatal("empty reasoning presence or tool call lost")
 	}
 }
