@@ -110,6 +110,7 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 	mgr := application.Shell.Manager()
 	if mgr == nil {
 		t.Fatal("pty manager unavailable")
+		return
 	}
 
 	var initial proc.Info

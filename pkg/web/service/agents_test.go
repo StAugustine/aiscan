@@ -523,6 +523,7 @@ func TestDispatchRunCarriesGoalOptions(t *testing.T) {
 	inbound := cmdCore.GetRunTurnRequest()
 	if inbound == nil {
 		t.Fatalf("dispatch did not carry a Run: %+v", cmd)
+		return
 	}
 	if inbound.SessionId != "sess-1" || len(inbound.Input.Content) != 1 || inbound.Input.Content[0].GetText().GetText() != "audit target" {
 		t.Errorf("run = %+v", inbound)
