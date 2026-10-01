@@ -3,11 +3,14 @@ package jev
 import (
 	"errors"
 	"strings"
+
+	"github.com/dop251/goja"
 )
 
 const (
-	maxClaims   = 32
-	maxReflexes = 16
+	maxClaims      = 32
+	maxReflexes    = 16
+	libraryVersion = 3
 )
 
 // Claim declares a one-shot finite judgment, never the answer to a past task.
@@ -17,12 +20,13 @@ type Claim struct {
 	Options  map[string]string `json:"options"`
 }
 
-// Reflex defines a reusable scene. Its action space is bound from Sources on
-// every observation, so it contains neither a recorded path nor executable code.
+// Reflex owns a reusable finite scene. Observe is a pure, runtime-generated
+// expression over native interaction data; tools require no observer callbacks.
 type Reflex struct {
-	When    string   `json:"when"`
-	Decide  string   `json:"decide"`
-	Sources []string `json:"sources"`
+	When    string `json:"when"`
+	Decide  string `json:"decide"`
+	Observe string `json:"observe"`
+	program *goja.Program
 }
 
 type claimRecord struct {
@@ -52,16 +56,16 @@ func (c Claim) validate() error {
 	}
 	return nil
 }
-func (r Reflex) validate() error {
-	if strings.TrimSpace(r.When) == "" || strings.TrimSpace(r.Decide) == "" || len(r.When)+len(r.Decide) > 8192 || len(r.Sources) == 0 || len(r.Sources) > 8 {
+func (r *Reflex) validate() error {
+	if strings.TrimSpace(r.When) == "" || strings.TrimSpace(r.Decide) == "" || len(r.When)+len(r.Decide) > 8192 || strings.TrimSpace(r.Observe) == "" || len(r.Observe) > 16<<10 {
 		return errors.New("invalid Reflex scene")
 	}
-	seen := map[string]bool{}
-	for _, source := range r.Sources {
-		if source == "" || strings.ContainsAny(source, " /\\\t\r\n") || seen[source] {
-			return errors.New("invalid Reflex source")
-		}
-		seen[source] = true
+	r.program = nil
+	code := strings.TrimSpace(r.Observe)
+	if !strings.HasPrefix(code, "js:") {
+		return errors.New("Observe must be a js: JavaScript program")
 	}
-	return nil
+	var err error
+	r.program, err = goja.Compile("observe", strings.TrimSpace(strings.TrimPrefix(code, "js:")), true)
+	return err
 }

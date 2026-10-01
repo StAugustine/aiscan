@@ -21,7 +21,8 @@ import (
 )
 
 const fixtureClaim = `[{"when":"A task requires finite step advancement","question":"Can the task advance now?","options":{"advance":"A known step can advance the task","defer":"Missing information or a completed task"}}]`
-const fixtureReflex = `{"when":"A task requires advancing known steps","decide":"Choose the next available advancement. Defer when the result is visible, no progress is possible, or more information is required.","sources":["advance"]}`
+
+var fixtureReflex = stepObserve("advance", true)
 
 func declarationAnswers(req jevapi.Request, compile bool) map[string]jevapi.Answer {
 	out := map[string]jevapi.Answer{}
@@ -38,7 +39,9 @@ func declarationAnswers(req jevapi.Request, compile bool) map[string]jevapi.Answ
 					break
 				}
 			}
-		} else if id == "compile" {
+		} else if id == "ownership" {
+			choice = "whole"
+		} else if strings.HasPrefix(id, "compile") || strings.HasPrefix(id, "coverage") {
 			if compile {
 				choice = "compile"
 			}
@@ -58,32 +61,20 @@ func settle(t *testing.T, e *Extension) {
 	}
 }
 
-func TestEmptyLibraryDeclaresCompilesAndTakesOverNextBoundary(t *testing.T) {
+func TestEmptyLibraryLearnsCompletedRunAndTakesOverNextTask(t *testing.T) {
 	compiling, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	defer once.Do(func() { close(release) })
 	var position, foreground, claims, compiles atomic.Int64
 	var e *Extension
-	command := coretool.Command{Name: "advance", Run: func(ctx context.Context, ex *coretool.Execution) (any, error) {
+	command := coretool.Command{Name: "advance", Run: func(_ context.Context, ex *coretool.Execution) (any, error) {
 		old := position.Load()
 		if len(ex.Args) != 1 || ex.Args[0] != fmt.Sprint(old) {
 			return nil, coretool.ErrStaleChoice
 		}
 		position.Add(1)
-		if old == 0 {
-			once.Do(func() { close(release) })
-			if err := e.WaitIdle(ctx); err != nil {
-				return nil, err
-			}
-		}
 		_, err := fmt.Fprintf(ex.Stdout, "step=%d", position.Load())
 		return nil, err
-	}, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		choices := map[string]*aop.Content{}
-		if position.Load() < 4 {
-			choices["go"] = action(fmt.Sprintf("advance %d", position.Load()))
-		}
-		return json.RawMessage(fmt.Sprintf(`{"step":%d}`, position.Load())), choices, nil
 	}}
 	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer { return declarationAnswers(req, true) })
 	var cfg agent.Config
@@ -95,6 +86,9 @@ func TestEmptyLibraryDeclaresCompilesAndTakesOverNextBoundary(t *testing.T) {
 			return reply(provider.TextMessage("assistant", fixtureClaim)), nil
 		case compilePrompt:
 			compiles.Add(1)
+			if !strings.Contains(provider.MessageText(req.Messages[1]), "step=4") {
+				t.Error("compilation started before the ordinary trajectory completed")
+			}
 			close(compiling)
 			select {
 			case <-release:
@@ -104,21 +98,23 @@ func TestEmptyLibraryDeclaresCompilesAndTakesOverNextBoundary(t *testing.T) {
 			return reply(provider.TextMessage("assistant", fixtureReflex)), nil
 		}
 		foreground.Add(1)
-		if position.Load() == 0 {
-			select {
-			case <-compiling:
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
+		if position.Load() < 4 {
 			if len(e.snapshot().Reflexes) != 0 {
 				t.Error("unfinished compilation was published")
 			}
-			return reply(&aop.Message{Role: "assistant", Content: []*aop.Content{action("advance 0")}}), nil
+			return reply(&aop.Message{Role: "assistant", Content: []*aop.Content{action("advance " + fmt.Sprint(position.Load()))}}), nil
 		}
 		if position.Load() != 4 {
 			t.Errorf("Reflex did not bypass intermediate thinking: step=%d", position.Load())
 		}
-		if !strings.Contains(provider.MessageText(req.Messages[len(req.Messages)-1]), `"step":4`) {
+		var evidence strings.Builder
+		for _, message := range req.Messages {
+			evidence.WriteString(provider.MessageText(message))
+			if result := provider.MessageToolResult(message); result != nil {
+				evidence.WriteString(coretool.ResultText(result))
+			}
+		}
+		if !strings.Contains(evidence.String(), `"step":4`) && !strings.Contains(evidence.String(), "step=4") {
 			t.Error("missing final observed state")
 		}
 		return reply(provider.TextMessage("assistant", "done")), nil
@@ -129,8 +125,24 @@ func TestEmptyLibraryDeclaresCompilesAndTakesOverNextBoundary(t *testing.T) {
 	if err != nil || result.Output != "done" {
 		t.Fatalf("%v %v", result, err)
 	}
+	if foreground.Load() != 5 || len(e.snapshot().Reflexes) != 0 {
+		t.Fatal("initial ordinary task did not complete independently of compilation")
+	}
+	select {
+	case <-compiling:
+	case <-ctx.Done():
+		t.Fatal("completed trajectory did not trigger background compilation")
+	}
+	once.Do(func() { close(release) })
 	settle(t, e)
-	if claims.Load() != 1 || compiles.Load() != 1 || foreground.Load() != 2 {
+	position.Store(0)
+	cfg.SessionID = "next-task"
+	result, err = agent.NewAgent(cfg).Run(ctx, agent.TextInput("Advance four steps and report the result."))
+	if err != nil || result.Output != "done" || result.Turns != 1 || position.Load() != 4 {
+		t.Fatalf("next task was not fully taken over: result=%v error=%v step=%d", result, err, position.Load())
+	}
+	settle(t, e)
+	if claims.Load() != 1 || compiles.Load() != 1 || foreground.Load() != 6 {
 		t.Fatalf("claim=%d compile=%d foreground=%d", claims.Load(), compiles.Load(), foreground.Load())
 	}
 	lib := e.snapshot()
@@ -209,7 +221,13 @@ func TestClaimConsumedOnceAndNeverReusedByAnotherTask(t *testing.T) {
 }
 
 func TestGeneratedDeclarationsRejectUnknownFieldsAndCapabilities(t *testing.T) {
-	for _, output := range []string{`{"when":"x","decide":"y","sources":["invented"]}`, `{"when":"x","decide":"y","sources":["advance"],"script":"execute()"}`} {
+	for _, output := range []string{
+		`{"when":"x","decide":"y","sources":["invented"]}`,
+		`{"when":"x","decide":"y","observe":"{state: {}, candidates: {}}","script":"execute()"}`,
+		`{"when":"x","decide":"y","observe":"{state: {}, candidates: {go: {name: 'invented', arguments: {}}}}"}`,
+		`{"when":"x","decide":"y","observe":"{state: {}, candidates: {go: {name: 'bash', arguments: nil}}}"}`,
+		`{"when":"x","decide":"y","observe":"ExecuteTool('bash', '{}')"}`,
+	} {
 		t.Run(output, func(t *testing.T) {
 			client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer { return declarationAnswers(req, true) })
 			e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client)
@@ -250,9 +268,7 @@ func TestOutputBatchDeclaresRelatedClaimsAndCompilesOnce(t *testing.T) {
 		}
 		return declarationAnswers(req, true)
 	})
-	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "advance", Run: func(context.Context, *coretool.Execution) (any, error) { return "ok", nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		return json.RawMessage(`{}`), nil, nil
-	}})
+	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "advance", Run: func(context.Context, *coretool.Execution) (any, error) { return "ok", nil }})
 	calls := 0
 	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
 		switch provider.MessageText(req.Messages[0]) {
@@ -267,10 +283,10 @@ func TestOutputBatchDeclaresRelatedClaimsAndCompilesOnce(t *testing.T) {
 		case compilePrompt:
 			compiled.Add(1)
 			var input struct {
-				Claims map[string]Claim `json:"claims"`
+				Scope []map[string]string `json:"scope"`
 			}
 			_ = json.Unmarshal([]byte(provider.MessageText(req.Messages[1])), &input)
-			if len(input.Claims) != 2 {
+			if len(input.Scope) != 2 || input.Scope[0]["question"] == "" || input.Scope[1]["question"] == "" {
 				t.Error("compile did not receive related declarations together")
 			}
 			return reply(provider.TextMessage("assistant", fixtureReflex)), nil

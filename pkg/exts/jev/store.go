@@ -15,7 +15,6 @@ import (
 
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
-	coretool "github.com/chainreactors/cyber/core/tool"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -54,21 +53,17 @@ func receipt(facts []string, path, ending string) []*aop.Message {
 	return []*aop.Message{msg}
 }
 
-// canonical removes incidental call IDs and normalizes shell quoting. It never
-// equates arbitrary selectors or infers that different side effects are equal.
+// canonical removes incidental call IDs and sorts JSON keys. Tool arguments
+// remain opaque: a field named command need not contain a shell command.
 func canonical(call *aop.ToolCall) string {
 	if call == nil {
 		return ""
 	}
 	var args map[string]any
-	if json.Unmarshal(call.GetArguments().GetData(), &args) != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(call.GetArguments().GetData())))
+	decoder.UseNumber()
+	if decoder.Decode(&args) != nil {
 		return ""
-	}
-	if command, ok := args["command"].(string); ok {
-		tokens, err := coretool.SplitCommandLine(command)
-		if err == nil {
-			args["command"] = tokens
-		}
 	}
 	data, _ := json.Marshal([]any{call.Name, args})
 	return string(data)
@@ -107,7 +102,6 @@ func (e *Extension) snapshot() library {
 		out.Claims[id] = claim
 	}
 	for id, reflex := range out.Reflexes {
-		reflex.Sources = append([]string(nil), reflex.Sources...)
 		reflex.Claims = append([]string(nil), reflex.Claims...)
 		out.Reflexes[id] = reflex
 	}
@@ -122,7 +116,7 @@ func (e *Extension) loadLibrary() error {
 		return err
 	}
 	var lib library
-	if len(data) > 2<<20 || json.Unmarshal(data, &lib) != nil || lib.Version != 1 || lib.Claims == nil || lib.Reflexes == nil || lib.Compiled == nil || len(lib.Claims) > maxClaims || len(lib.Reflexes) > maxReflexes {
+	if len(data) > 2<<20 || json.Unmarshal(data, &lib) != nil || lib.Version < 1 || lib.Version > libraryVersion || lib.Claims == nil || lib.Reflexes == nil || lib.Compiled == nil || len(lib.Claims) > maxClaims || len(lib.Reflexes) > maxReflexes {
 		return errors.New("invalid JEV library format")
 	}
 	for id, c := range lib.Claims {
@@ -135,9 +129,6 @@ func (e *Extension) loadLibrary() error {
 	// permanently prevent compilation after a restart.
 	lib.Compiled = map[string]bool{}
 	for id, r := range lib.Reflexes {
-		if r.validate() != nil || id != "r"+digest(r.Reflex)[:16] {
-			return fmt.Errorf("invalid Reflex %s", id)
-		}
 		members := map[string]Claim{}
 		for _, claim := range r.Claims {
 			if _, ok := lib.Claims[claim]; !ok {
@@ -145,12 +136,48 @@ func (e *Extension) loadLibrary() error {
 			}
 			members[claim] = lib.Claims[claim].Claim
 		}
+		if lib.Version < libraryVersion && !strings.HasPrefix(strings.TrimSpace(r.Observe), "js:") {
+			// Retire tool-bound and Expr scenes at startup. Their declarations
+			// remain eligible for compilation; consumed Claims are never replayed.
+			delete(lib.Reflexes, id)
+			continue
+		}
+		if r.validate() != nil || id != "r"+digest(r.Reflex)[:16] {
+			return fmt.Errorf("invalid Reflex %s", id)
+		}
 		if len(members) > 0 {
 			lib.Compiled[digest(members)] = true
 		}
+		lib.Reflexes[id] = r
 	}
+	version := lib.Version
+	lib.Version = libraryVersion
+	previous := e.library
 	e.library = lib
+	if version != libraryVersion {
+		// Preserve the exact old library before atomically replacing it. This
+		// also retains scenes without Claims for manual conversion if needed.
+		if err := e.backupLibrary(data, version); err != nil {
+			e.library = previous
+			return fmt.Errorf("back up JEV library: %w", err)
+		}
+		if err := e.saveLibrary(); err != nil {
+			e.library = previous
+			return fmt.Errorf("migrate JEV library: %w", err)
+		}
+	}
 	return nil
+}
+
+func (e *Extension) backupLibrary(data []byte, version int) error {
+	f, err := os.CreateTemp(e.config.Directory, fmt.Sprintf("library-v%d-*.json", version))
+	if err != nil {
+		return err
+	}
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
 }
 
 // saveLibrary must be called with mu held. Callers roll back on failure.
@@ -176,4 +203,40 @@ func (e *Extension) saveLibrary() error {
 		return closeErr
 	}
 	return os.Rename(path, filepath.Join(e.config.Directory, "library.json"))
+}
+
+// A failed generated program must not permanently own its declarations.
+// Preserve Claims and actual execution evidence; later ordinary boundaries can
+// regenerate the scene. Retirement never retries a native action.
+func (e *Extension) retireReflex(id string, reason error) bool {
+	e.mu.Lock()
+	previous, exists := e.library.Reflexes[id]
+	if !exists {
+		e.mu.Unlock()
+		return false
+	}
+	compiled := e.library.Compiled
+	delete(e.library.Reflexes, id)
+	e.library.Compiled = publishedGroups(e.library)
+	err := e.saveLibrary()
+	if err != nil {
+		e.library.Reflexes[id], e.library.Compiled = previous, compiled
+	}
+	e.mu.Unlock()
+	_ = e.audit("reflex_retired", map[string]any{"reflex": previous, "reason": reason.Error(), "save_error": err})
+	return err == nil
+}
+
+func publishedGroups(lib library) map[string]bool {
+	groups := map[string]bool{}
+	for _, r := range lib.Reflexes {
+		members := map[string]Claim{}
+		for _, claim := range r.Claims {
+			members[claim] = lib.Claims[claim].Claim
+		}
+		if len(members) > 0 {
+			groups[digest(members)] = true
+		}
+	}
+	return groups
 }

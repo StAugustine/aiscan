@@ -27,7 +27,7 @@ func TestJEVAccelerationAndRiskComposeIndependently(t *testing.T) {
 		command               bool
 	}{
 		{"off", "off", "none", "", false},
-		{"legacy risk only", "off", "", "fixture-key", false},
+		{"credential without policy", "off", "", "fixture-key", false},
 		{"explicit risk only", "off", "jev", "fixture-key", false},
 		{"auto only", "auto", "none", "fixture-key", true},
 		{"risk and auto", "auto", "jev", "fixture-key", true},

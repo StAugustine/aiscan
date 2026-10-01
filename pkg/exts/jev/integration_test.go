@@ -132,18 +132,17 @@ func TestAutoLoadsWithoutObserverProtocol(t *testing.T) {
 		t.Error("inactive extension called JEV")
 		return nil
 	})
-	// Expose only the existing executor interface, without optional methods.
-	commands := struct{ coretool.CommandExecutor }{coretool.NewCommandRegistry()}
+	// A native executor does not need a command registry or an Observe protocol.
 	set, err := extension.New(extension.Provided[*corehooks.Registry](corehooks.New()),
-		extension.Provided[*jevapi.Client](client), extension.Provided[coretool.CommandExecutor](commands), e)
+		extension.Provided[*jevapi.Client](client), e)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := set.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if e.cancel != nil || len(e.subs) != 0 {
-		t.Fatal("observation-free executor acquired controller hooks")
+	if e.cancel == nil || len(e.subs) == 0 {
+		t.Fatal("generic executor failed to acquire controller hooks")
 	}
 	if err := set.Close(t.Context()); err != nil {
 		t.Fatal(err)
@@ -155,9 +154,7 @@ func TestTakeoverUsesGuardrailAndYieldsAfterDenial(t *testing.T) {
 	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
 		return runtimeAnswers(req, "protected/go")
 	})
-	e, cfg, registry := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "protected", Run: func(context.Context, *coretool.Execution) (any, error) { executions.Add(1); return "executed", nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		return json.RawMessage(`{}`), map[string]*aop.Content{"go": action("protected")}, nil
-	}})
+	e, cfg, registry := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "protected", Run: func(context.Context, *coretool.Execution) (any, error) { executions.Add(1); return "executed", nil }})
 	installReflex(e, "protected")
 	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
 		if len(req.Messages) != 3 || req.Messages[2].Name != "jev" {
@@ -191,6 +188,7 @@ func TestTakeoverUsesGuardrailAndYieldsAfterDenial(t *testing.T) {
 	if executions.Load() != 0 {
 		t.Fatalf("denial bypass: executions=%d requests=%d", executions.Load(), client.Usage().Detail["requests"])
 	}
+	settle(t, e)
 }
 
 func TestLongContextProjectionPreservesConstraintsWithoutChangingHistory(t *testing.T) {
@@ -225,14 +223,6 @@ func TestReflexShortCircuitsAcrossFreshTasks(t *testing.T) {
 				}
 				_, err := fmt.Fprintf(ex.Stdout, "step=%d", position.Add(1))
 				return nil, err
-			}, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-				observations.Add(1)
-				step := position.Load()
-				choices := map[string]*aop.Content{}
-				if step < 4 {
-					choices["go"] = action(fmt.Sprintf("advance %d", step))
-				}
-				return json.RawMessage(fmt.Sprintf(`{"step":%d}`, step)), choices, nil
 			}}
 			client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer { return runtimeAnswers(req, "advance/go") })
 			e, cfg, _ := testInstallation(t, Config{Mode: mode}, client, command)
@@ -265,7 +255,7 @@ func TestReflexShortCircuitsAcrossFreshTasks(t *testing.T) {
 			if mode == "off" && (observations.Load() != 0 || client.Usage().Detail["requests"] != 0) {
 				t.Fatal("off performed work")
 			}
-
+			settle(t, e)
 		})
 	}
 }
@@ -279,12 +269,6 @@ func TestAllCapabilitiesShareOneCurrentDecision(t *testing.T) {
 			}
 			calls.Add(1)
 			return nil, nil
-		}, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-			choices := map[string]*aop.Content{}
-			if calls.Load() == 0 {
-				choices["go"] = action(name)
-			}
-			return json.RawMessage(`{}`), choices, nil
 		}}
 	}
 	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
@@ -292,7 +276,12 @@ func TestAllCapabilitiesShareOneCurrentDecision(t *testing.T) {
 			for id, q := range req.Questions {
 				if strings.HasPrefix(id, "r") {
 					choices := q.Criteria.(map[string]any)
-					if choices[reobserve] == nil || choices[report] == nil || choices[Defer] == nil || (calls.Load() == 0 && (choices["first/go"] == nil || choices["second/go"] == nil)) {
+					hasFirst, hasSecond := false, false
+					for key := range choices {
+						hasFirst = hasFirst || strings.HasSuffix(key, "/first/go")
+						hasSecond = hasSecond || strings.HasSuffix(key, "/second/go")
+					}
+					if choices[report] == nil || choices[Defer] == nil || (calls.Load() == 0 && (!hasFirst || !hasSecond)) {
 						t.Error("missing live capability")
 					}
 				}
@@ -319,9 +308,7 @@ func TestDeferAndInvalidAnswerLeaveHistoryUntouched(t *testing.T) {
 			client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
 				return runtimeAnswers(req, choice)
 			})
-			e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "step", Run: func(context.Context, *coretool.Execution) (any, error) { t.Error("unexpected action"); return nil, nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-				return json.RawMessage(`{}`), map[string]*aop.Content{"go": action("step")}, nil
-			}})
+			e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "step", Run: func(context.Context, *coretool.Execution) (any, error) { t.Error("unexpected action"); return nil, nil }})
 			installReflex(e, "step")
 			cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
 				if len(req.Messages) != 2 || req.Messages[1].Name != "" || provider.MessageText(req.Messages[1]) != "Do the task" {
@@ -339,10 +326,48 @@ func TestDeferAndInvalidAnswerLeaveHistoryUntouched(t *testing.T) {
 // Unit execution tests install a scene to isolate the executor; automatic
 // declaration/compilation is covered separately from an empty library.
 func installReflex(e *Extension, sources ...string) {
-	r := Reflex{When: "The task can progress through the supplied live capabilities.", Decide: "Select the current operation matching the user goal. Defer at the result or when more information is required.", Sources: sources}
+	code := constantObserve(`{}`, map[string]string{})
+	calls := map[string]string{}
+	for _, source := range sources {
+		calls[source+"/go"] = source
+	}
+	code = constantObserve(`{}`, calls)
+	if len(sources) == 1 && (sources[0] == "advance" || sources[0] == "workflow") {
+		code = stepObserve(sources[0], sources[0] == "advance")
+	}
+	installObserve(e, code)
+}
+
+func installObserve(e *Extension, code string) Reflex {
+	r := Reflex{When: "The task can progress through the supplied native tools.", Decide: "Select the bound operation matching the current user goal. Report observed completion; defer for missing input or strategy.", Observe: code}
+	if err := r.validate(); err != nil {
+		panic(err)
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.library.Reflexes["r"+digest(r)[:16]] = reflexRecord{Reflex: r}
+	return r
+}
+
+func constantObserve(state string, calls map[string]string) string {
+	candidates := map[string]any{}
+	for id, command := range calls {
+		candidates[id] = map[string]any{"name": "bash", "arguments": map[string]string{"command": command}, "read": false}
+	}
+	data, _ := json.Marshal(candidates)
+	return "js:({state: JSON.parse(" + strconv.Quote(state) + "), candidates: JSON.parse(" + strconv.Quote(string(data)) + ")})"
+}
+
+func stepObserve(command string, withArgument bool) string {
+	binding := strconv.Quote(command)
+	if withArgument {
+		binding += ` + " " + String(step)`
+	}
+	return `js:(() => {
+const results = messages.filter(m => m.call_id != null && !m.is_error && /step=([0-9]+)/.test(m.text || ""));
+const step = results.length === 0 ? 0 : Number(results[results.length - 1].text.match(/step=([0-9]+)/)[1]);
+return {state: {step: step}, candidates: step < 4 ? {` + strconv.Quote(command+"/go") + `: bind("bash", {command: ` + binding + `}, false)} : {}};
+})()`
 }
 func runtimeRequest(req jevapi.Request) bool {
 	if _, ok := req.Questions["entry"]; ok {
@@ -355,7 +380,26 @@ func runtimeRequest(req jevapi.Request) bool {
 	}
 	return false
 }
+
+func candidateBySuffix(candidates map[string]string, suffix string) string {
+	for key, call := range candidates {
+		if strings.HasSuffix(key, "/"+suffix) {
+			return call
+		}
+	}
+	return ""
+}
 func runtimeAnswers(req jevapi.Request, choice string) map[string]jevapi.Answer {
+	var state struct {
+		Candidates map[string]string `json:"candidates"`
+	}
+	_ = json.Unmarshal(req.State, &state)
+	for key := range state.Candidates {
+		if strings.HasSuffix(key, "/"+choice) {
+			choice = key
+			break
+		}
+	}
 	out := map[string]jevapi.Answer{}
 	for id := range req.Questions {
 		out[id] = answer(Defer)

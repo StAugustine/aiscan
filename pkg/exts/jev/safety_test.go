@@ -2,7 +2,6 @@ package jev
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -73,9 +72,7 @@ func TestInputDuringDecisionStopsDispatch(t *testing.T) {
 		<-release
 		return runtimeAnswers(req, "step/go")
 	})
-	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "step", Run: func(context.Context, *coretool.Execution) (any, error) { executions.Add(1); return nil, nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		return json.RawMessage(`{}`), map[string]*aop.Content{"go": action("step")}, nil
-	}})
+	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "step", Run: func(context.Context, *coretool.Execution) (any, error) { executions.Add(1); return nil, nil }})
 	installReflex(e, "step")
 	ib := inbox.NewBuffered(8)
 	cfg.Inbox = ib
@@ -120,11 +117,7 @@ func TestNoProgressYieldsWithinBound(t *testing.T) {
 		executions.Add(1)
 		_, err := fmt.Fprint(ex.Stdout, "unchanged")
 		return nil, err
-	}, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		return json.RawMessage(`{"status":"unchanged"}`), map[string]*aop.Content{"go": action("stuck")}, nil
-	}}, coretool.Command{Name: "unrelated", Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-		return json.RawMessage(fmt.Sprintf(`{"timestamp":%d}`, time.Now().UnixNano())), nil, nil
-	}})
+	}}, coretool.Command{Name: "unrelated", Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }})
 	installReflex(e, "stuck")
 	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
 		return reply(provider.TextMessage("assistant", "No progress; another strategy is required.")), nil
@@ -148,13 +141,10 @@ func TestObservationFailureDoesNotHideCompetingCapability(t *testing.T) {
 		coretool.Command{Name: "available", Run: func(context.Context, *coretool.Execution) (any, error) {
 			t.Error("partial observation dispatched action")
 			return nil, nil
-		}, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-			return json.RawMessage(`{}`), map[string]*aop.Content{"go": action("available")}, nil
 		}},
-		coretool.Command{Name: "failed", Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }, Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-			return nil, nil, fmt.Errorf("state unavailable")
-		}})
-	installReflex(e, "available", "failed")
+		coretool.Command{Name: "failed", Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }})
+	installReflex(e, "available")
+	installObserve(e, `js:({state: JSON.parse("invalid JSON"), candidates: {}})`)
 	cfg.Provider = testProvider(func(context.Context, *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
 		return reply(provider.TextMessage("assistant", "ordinary fallback")), nil
 	})

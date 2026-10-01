@@ -30,7 +30,6 @@ const (
 // Session holds a persistent page across multiple Execute() calls.
 type Session struct {
 	owner     string
-	pending   map[string]observedAction // protected by opMu; consumed once
 	Name      string
 	Page      *rod.Page
 	Incognito *rod.Browser // incognito context

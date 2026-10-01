@@ -2,10 +2,80 @@ package jev
 
 import (
 	"encoding/json"
+
+	"github.com/chainreactors/cyber/agent/hooks"
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
 	coretool "github.com/chainreactors/cyber/core/tool"
 )
+
+type evidenceSegment struct {
+	At       int
+	Messages []*aop.Message
+}
+type taskRecord struct {
+	Key       string
+	Evidence  []evidenceSegment
+	Bytes     int
+	Overflow  bool
+	Repair    string
+	Handoff   json.RawMessage
+	Reported  string
+	NeedsRead bool
+	Seen      map[string]bool
+}
+
+// Keep the bounded private cache free of successful program echoes. Original
+// messages and the execution ledger retain the full native result. Correlation,
+// arguments, error/termination flags and media are never rewritten.
+func evidenceMessages(messages []*aop.Message) []*aop.Message {
+	messages = cloneMessages(messages)
+	for _, message := range messages {
+		result := provider.MessageToolResult(message)
+		if result == nil || result.IsError {
+			continue
+		}
+		media := false
+		for _, part := range result.Output {
+			media = media || part.GetMedia() != nil
+		}
+		if media {
+			continue
+		}
+		if data := resultJSON(coretool.ResultText(result)); data != nil {
+			if encoded, err := json.Marshal(data); err == nil {
+				result.Output = coretool.TextResult(string(encoded)).Output
+			}
+		}
+	}
+	return messages
+}
+
+// interaction inserts actual controller evidence at its original boundary.
+// Control receipts stay in main history; their text is never reparsed as calls.
+func (e *Extension) interaction(ev hooks.ContextEvent) []*aop.Message {
+	run, task := taskIdentity(ev)
+	e.mu.Lock()
+	record := e.tasks[run]
+	e.mu.Unlock()
+	if record.Key != task {
+		return cloneMessages(ev.Messages)
+	}
+	if record.Overflow {
+		return nil
+	}
+	var out []*aop.Message
+	position := 0
+	for _, segment := range record.Evidence {
+		if segment.At < position || segment.At > len(ev.Messages) {
+			return nil // This history no longer matches the recorded boundaries.
+		}
+		out = append(out, ev.Messages[position:segment.At]...)
+		out = append(out, segment.Messages...)
+		position = segment.At
+	}
+	return cloneMessages(append(out, ev.Messages[position:]...))
+}
 
 func contextState(messages []*aop.Message) (json.RawMessage, bool) {
 	// This is a private, bounded text projection, not a rewrite of the model's
@@ -37,7 +107,17 @@ func contextState(messages []*aop.Message) (json.RawMessage, bool) {
 					return nil, false
 				}
 			}
-			item["text"], item["call_id"], item["is_error"] = coretool.ResultText(result), result.CallId, result.IsError
+			text := coretool.ResultText(result)
+			// Normalize before applying the projection budget. A reader may echo
+			// its entire program around a structured result; counting that echo
+			// can evict earlier actual handle/entry evidence. The original tool
+			// result and model history remain unchanged.
+			if data := resultJSON(text); data != nil {
+				if encoded, err := json.Marshal(data); err == nil {
+					text = string(encoded)
+				}
+			}
+			item["text"], item["call_id"], item["is_error"] = text, result.CallId, result.IsError
 			if result.Terminate {
 				item["terminate"] = true
 			}

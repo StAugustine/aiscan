@@ -33,12 +33,16 @@ func TestLiveBrowserReflexPrerequisite(t *testing.T) {
 	}
 	client := jevapi.New(key, os.Getenv("JEV_BENCH_MODEL"), 10*time.Second)
 	t.Cleanup(client.Close)
-	// Captured from automatic Claim/Compile in the failed full benchmark.
-	// Keep the real policy instead of simplifying the decision context.
+	// Keep the historical decision policy. The observation expression is a new
+	// diagnostic fixture; this test does not validate its automatic generation.
 	data, err := os.ReadFile(filepath.Join("testdata", "browser-reflex.json"))
 	var compiled Reflex
-	if err != nil || json.Unmarshal(data, &compiled) != nil || compiled.validate() != nil {
+	if err != nil || json.Unmarshal(data, &compiled) != nil {
 		t.Fatalf("invalid compiled scene fixture: %v", err)
+	}
+	compiled.Observe = browserObserveExpression()
+	if err := compiled.validate(); err != nil {
+		t.Fatal(err)
 	}
 	for _, index := range []int{3, 8, 13, 18} {
 		t.Run(fmt.Sprint(index), func(t *testing.T) {
@@ -60,15 +64,42 @@ func TestLiveBrowserReflexPrerequisite(t *testing.T) {
 			if err != nil || result == nil || result.IsError {
 				t.Fatalf("open: result=%v err=%v", result, err)
 			}
-			opened := provider.TextMessage("user", "Executed "+canonical(call)+"\n"+coretool.ResultText(result))
-			opened.Name = "jev-step"
-			messages := []*aop.Message{provider.TextMessage("user", prompt), opened}
-			scene := compiled
-			state, choices, observed := e.observe(ctx, cfg, messages)
-			if !strings.Contains(string(observed["playwright"]), `"selector":"#reference"`) {
-				t.Fatalf("missing real browser observation: %s", observed)
+			messages := []*aop.Message{provider.TextMessage("user", prompt)}
+			appendResult := func(call *aop.ToolCall, result *coretool.Result) {
+				result.CallId, result.Name = call.Id, call.Name
+				messages = append(messages,
+					&aop.Message{Role: "assistant", Content: []*aop.Content{{Value: &aop.Content_ToolCall{ToolCall: call}}}},
+					&aop.Message{Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: result}}}})
 			}
-			_, selected, err := e.decide(ctx, state, observed, choices, map[string]bool{}, &scene, "browser-regression", "task")
+			appendResult(call, result)
+			scene := compiled
+			inspect := func() *observation {
+				observed := e.observe(ctx, cfg, messages, &scene)
+				if observed == nil || len(observed.choices) != 1 {
+					t.Fatal("missing native inspection binding")
+				}
+				for key, content := range observed.choices {
+					if !observed.reads[key] {
+						t.Fatal("inspection was not declared as a read")
+					}
+					call := content.GetToolCall()
+					result, err := cfg.Tools.ExecuteTool(ctx, call.Name, string(call.GetArguments().GetData()))
+					if err != nil || result == nil || result.IsError {
+						t.Fatalf("inspect: result=%v err=%v", result, err)
+					}
+					appendResult(call, result)
+				}
+				observed = e.observe(ctx, cfg, messages, &scene)
+				if observed == nil {
+					t.Fatal("invalid inspection result")
+				}
+				return observed
+			}
+			observed := inspect()
+			if !strings.Contains(string(observed.facts["r"+digest(scene)[:16]]), `"selector":"#reference"`) {
+				t.Fatalf("missing real browser observation: %s", observed.facts)
+			}
+			_, selected, err := e.decide(ctx, observed.context, observed.facts, observed.choices, observed.reads, map[string]bool{}, &scene, "browser-regression", "task")
 			if err != nil || selected != Defer {
 				audit, _ := os.ReadFile(filepath.Join(e.config.Directory, "decisions.jsonl"))
 				t.Logf("judgments: %s", audit)
@@ -81,14 +112,12 @@ func TestLiveBrowserReflexPrerequisite(t *testing.T) {
 			if err != nil || result == nil || result.IsError {
 				t.Fatalf("fill: result=%v err=%v", result, err)
 			}
-			filled := provider.TextMessage("user", "Executed "+canonical(call)+"\n"+coretool.ResultText(result))
-			filled.Name = "jev-step"
-			messages = append(messages, filled)
-			state, choices, observed = e.observe(ctx, cfg, messages)
-			if !strings.Contains(string(observed["playwright"]), fmt.Sprintf(`"value":"review-%d"`, index)) {
-				t.Fatalf("field was not filled in real browser: %s", observed)
+			appendResult(call, result)
+			observed = inspect()
+			if !strings.Contains(string(observed.facts["r"+digest(scene)[:16]]), fmt.Sprintf(`"value":"review-%d"`, index)) {
+				t.Fatalf("field was not filled in real browser: %s", observed.facts)
 			}
-			content, selected, err := e.decide(ctx, state, observed, choices, map[string]bool{}, &scene, "browser-regression", "task")
+			content, selected, err := e.decide(ctx, observed.context, observed.facts, observed.choices, observed.reads, map[string]bool{}, &scene, "browser-regression", "task")
 			if err != nil || content == nil || content.GetToolCall() == nil || canonical(content.GetToolCall()) != canonical(action("playwright click current '#next-0'").GetToolCall()) {
 				t.Errorf("filled prerequisite did not resume: selected=%q content=%v err=%v", selected, content, err)
 			}

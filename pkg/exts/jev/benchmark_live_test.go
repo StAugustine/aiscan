@@ -292,6 +292,7 @@ type benchmarkProvider struct {
 	lastMessages                 []json.RawMessage
 	prefixChanges                uint64
 	protocolIssues               []string
+	tracePath                    string
 }
 
 func (p *benchmarkProvider) Identity() string {
@@ -357,9 +358,24 @@ func (p *benchmarkProvider) ChatCompletion(ctx context.Context, req *provider.Ch
 			p.lastSession, p.lastMessages = req.SessionID, wire.Messages
 		})
 	}
+	started := time.Now()
 	resp, err := p.Provider.ChatCompletion(ctx, req)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.tracePath != "" {
+		entry := map[string]any{"request": req, "response": resp, "elapsed_ms": time.Since(started).Milliseconds()}
+		if err != nil {
+			entry["error"] = err.Error()
+		}
+		file, traceErr := os.OpenFile(p.tracePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if traceErr == nil {
+			traceErr = json.NewEncoder(file).Encode(entry)
+			_ = file.Close()
+		}
+		if traceErr != nil {
+			p.protocolIssues = append(p.protocolIssues, "LLM evidence write failed: "+traceErr.Error())
+		}
+	}
 	if p.usage.Detail == nil {
 		p.usage.Detail = map[string]uint64{}
 	}

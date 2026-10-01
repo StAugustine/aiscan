@@ -2,9 +2,9 @@ package jev
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -42,18 +42,22 @@ func TestLiveReflexGenerationBoundary(t *testing.T) {
 					t.Fatal("diagnostic must not execute tools")
 					return nil, nil
 				},
-				Observe: func(context.Context, []*aop.Message) (json.RawMessage, map[string]*aop.Content, error) {
-					candidates := map[string]*aop.Content{"advance": action("page click Continue"), "wait": action("page wait")}
-					if tc.fill {
-						candidates["fill"] = action("page fill Reference violet-42")
-					}
-					return json.RawMessage(tc.observed), candidates, nil
-				},
 			})
-			scene := Reflex{When: "The user needs to operate the current page.", Decide: "Use current state and candidates to fulfill the user's page task. Respect prerequisites and report only observed completion.", Sources: []string{"page"}}
-			state, choices, observed := e.observe(t.Context(), cfg, []*aop.Message{provider.TextMessage("user", tc.prompt)})
-			_, selected, err := e.decide(t.Context(), state, observed, choices, map[string]bool{}, &scene, "regression", "task")
-			if err != nil || selected != tc.want {
+			calls := map[string]string{"page/advance": "page click Continue", "page/wait": "page wait"}
+			if tc.fill {
+				calls["page/fill"] = "page fill Reference violet-42"
+			}
+			scene := Reflex{When: "The user needs to operate the current page.", Decide: "Use current state and candidates to fulfill the user's page task. Respect prerequisites and report only observed completion.", Observe: constantObserve(tc.observed, calls)}
+			if err := scene.validate(); err != nil {
+				t.Fatal(err)
+			}
+			observed := e.observe(t.Context(), cfg, []*aop.Message{provider.TextMessage("user", tc.prompt)}, &scene)
+			if observed == nil {
+				t.Fatal("observation failed")
+			}
+			_, selected, err := e.decide(t.Context(), observed.context, observed.facts, observed.choices, observed.reads, map[string]bool{}, &scene, "regression", "task")
+			matches := selected == tc.want || (tc.want != Defer && strings.HasSuffix(selected, "/"+tc.want))
+			if err != nil || !matches {
 				audit, _ := os.ReadFile(filepath.Join(e.config.Directory, "decisions.jsonl"))
 				t.Logf("judgments: %s", audit)
 				t.Fatalf("selected=%q want=%q err=%v", selected, tc.want, err)
