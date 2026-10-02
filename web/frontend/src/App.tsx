@@ -8,7 +8,6 @@ import AgentPanel from './components/AgentPanel'
 import ToolRegistryPanel from './components/ToolRegistryPanel'
 import AssetPanel, { assetMentionables } from './components/AssetPanel'
 import MentionPicker from './components/MentionPicker'
-import LLMHealth from './components/LLMHealth'
 import QuickConnect from './components/QuickConnect'
 import BrandLogo from './components/brand/BrandLogo'
 const IOAConsole = lazy(() => import('./components/IOAConsole'))
@@ -75,8 +74,6 @@ export default function App() {
   const [ioaConsoleTarget, setIOAConsoleTarget] = useState<IOAConsoleTarget | null>(null)
   const [agentPanelFocusNodeID, setAgentPanelFocusNodeID] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(getInitialSidebarOpen)
-  // Bumped after a settings save so the header LLM health dot re-probes.
-  const [healthNonce, setHealthNonce] = useState(0)
   const [capabilityManifest, setCapabilityManifest] = useState<CapabilityManifest | null>(null)
   const effectiveManifest = useMemo<CapabilityManifest | null>(() => {
     if (!capabilityManifest) return null
@@ -214,7 +211,6 @@ export default function App() {
       setLLMProfiles(next.llm?.providers ?? [])
       setActiveLLMProfile(next.llm?.activeProfile || profileID)
       await refreshStatus()
-      setHealthNonce((nonce) => nonce + 1)
     } catch {
       openSettings()
     } finally {
@@ -222,7 +218,6 @@ export default function App() {
     }
   }, [activeLLMProfile, refreshStatus, openSettings])
   const activeSession = chat.activeSessionRecord?.session?.id === chat.activeSessionID ? chat.activeSessionRecord : chat.sessions.find((s) => s.session?.id === chat.activeSessionID) || null
-  const executionNode = chat.agents.find((a) => a.hello?.nodeId === (activeSession?.session?.nodeId || chat.selectedNodeID))
   // The open session's bound agent has dropped off the live roster (its node
   // exited / the hub restarted). The transcript still shows, but a new turn
   // can't be dispatched until it reconnects — surface that in the chat panel.
@@ -294,7 +289,6 @@ export default function App() {
             </Button>
             <BrandLogo size={22} className="hidden shrink-0 sm:block" />
             <span className="shrink-0 text-sm font-semibold tracking-tight text-foreground">Cyber</span>
-            <span className="max-w-48 truncate text-xs text-muted-foreground" title={activeSession?.session?.nodeId || chat.selectedNodeID || ''}>{executionNode?.hello?.name || activeSession?.agentName || 'Node'} · {executionNode?.status?.model || '—'}</span>
             <span className="text-[10px] text-muted-foreground">Hub</span>
             <LLMProfileSwitcher
               profiles={llmProfiles}
@@ -303,9 +297,6 @@ export default function App() {
               disabled={switchingLLM}
               onChange={handleSwitchLLM}
             />
-            <span className="hidden sm:contents">
-              <LLMHealth onOpenSettings={() => openSettings()} reloadSignal={healthNonce} />
-            </span>
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
             <GuardrailToggle disabled={activeToolPanel === 'settings'} onConfigure={() => openSettings('jev')} />
@@ -386,7 +377,7 @@ export default function App() {
         capabilities={capabilityIDs}
         initialSection={settingsSection}
         onClose={() => setActiveToolPanel(null)}
-        onSaved={() => { refreshStatus(); setHealthNonce((n) => n + 1) }}
+        onSaved={() => { refreshStatus() }}
       />
 
       <AgentPanel
