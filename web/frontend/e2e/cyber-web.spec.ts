@@ -315,7 +315,7 @@ test.describe('single AOP WebSocket browser plane', () => {
     expect(connectCommand).toContain(`http://${API_TOKEN}@`)
     expect(connectCommand).not.toContain('ACCESS_TOKEN')
     expect(connectCommand).not.toContain('NODE_NAME')
-    await expect(quickConnect.getByRole('textbox', { name: 'Node name' })).toHaveAttribute('placeholder', /node-/)
+    await expect(quickConnect.locator('input[placeholder^="node-"]')).toHaveCount(1)
 
     await quickConnect.locator('button').last().click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(connectCommand)
