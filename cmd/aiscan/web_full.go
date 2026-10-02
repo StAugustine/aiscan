@@ -36,7 +36,7 @@ func serveWeb(ctx context.Context, option, explicitOption *cfg.Option, opts webC
 		accessKey = protocols.NewToken()
 	}
 	webConfig := webext.Config{
-		Product:  productName,
+		Product:  "cyber-scan",
 		Profiles: []webpkg.Profile{{ID: "cyber-scan", Title: "Cyber Scan"}, {ID: "cyber-audit", Title: "Cyber Audit"}},
 		Database: opts.DB,
 		InitialProfile: func(ctx context.Context) (profile.Profile, error) {
