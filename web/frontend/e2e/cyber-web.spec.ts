@@ -56,6 +56,19 @@ async function deleteSession(request: APIRequestContext, sessionID: string) {
 }
 
 test.describe('HTTP shell and authentication', () => {
+  test('publishes a capability manifest for the browser runtime', async ({ request }) => {
+    const response = await request.get('/api/manifest', { headers: apiHeaders() })
+    expect(response.ok()).toBeTruthy()
+    const manifest = await response.json()
+    expect(manifest.product).toBeTruthy()
+    expect(manifest.capabilities).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'core' })]))
+    expect(manifest.capabilities.every((capability: { id?: unknown }) => typeof capability.id === 'string')).toBeTruthy()
+    expect(manifest.profiles).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'cyber-scan' }),
+      expect.objectContaining({ id: 'cyber-audit' }),
+    ]))
+  })
+
   test('health and static assets are served', async ({ request }) => {
     const health = await request.get('/health')
     expect(health.ok()).toBeTruthy()
@@ -87,6 +100,13 @@ test.describe('HTTP shell and authentication', () => {
     expect(ioa.status).toBe(200)
     expect(Array.isArray(ioa.nodes)).toBeTruthy()
     expect(ioa.nodes.some((node: { name?: string }) => node.name === 'cyber.web')).toBeTruthy()
+  })
+
+  test('mounts the browser runtime from the server manifest', async ({ page }) => {
+    await openAuthenticatedApp(page)
+    const shell = page.locator('[data-cyber-product]')
+    await expect(shell).toHaveAttribute('data-cyber-product', /.+/)
+    await expect(shell).toHaveAttribute('data-cyber-capabilities', /(^|,)core(,|$)/)
   })
 
   test('mobile header fits and the session drawer can close', async ({ page }) => {
@@ -276,17 +296,17 @@ test.describe('single AOP WebSocket browser plane', () => {
 
     await quickConnect.getByRole('button', { name: 'Windows' }).click()
     const installCommand = quickConnect.locator('pre').first()
-    await expect(installCommand).toContainText('https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/aiscan-full_windows_amd64.zip')
+    await expect(installCommand).toContainText('https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/cyber-scan_windows_amd64.zip')
     await expect(installCommand).not.toContainText('ghfast.top')
 
     await quickConnect.getByRole('button', { name: 'China' }).click()
-    await expect(installCommand).toContainText('https://ghfast.top/https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/aiscan-full_windows_amd64.zip')
+    await expect(installCommand).toContainText('https://ghfast.top/https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/cyber-scan_windows_amd64.zip')
     const chinaCommand = await installCommand.innerText()
     await installCommand.locator('..').getByRole('button').click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(chinaCommand)
 
     await quickConnect.getByRole('button', { name: 'Global' }).click()
-    await expect(installCommand).toContainText('https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/aiscan-full_windows_amd64.zip')
+    await expect(installCommand).toContainText('https://github.com/chainreactors/cyber-harness/releases/download/v1.0.0-rc1/cyber-scan_windows_amd64.zip')
     await expect(installCommand).not.toContainText('ghfast.top')
 
     const commands = quickConnect.locator('pre')
@@ -294,10 +314,23 @@ test.describe('single AOP WebSocket browser plane', () => {
     const connectCommand = await commands.last().innerText()
     expect(connectCommand).toContain(`http://${API_TOKEN}@`)
     expect(connectCommand).not.toContain('ACCESS_TOKEN')
-    expect(connectCommand).toContain('NODE_NAME')
+    expect(connectCommand).not.toContain('NODE_NAME')
+    await expect(quickConnect.getByRole('textbox', { name: 'Node name' })).toHaveAttribute('placeholder', /node-/)
 
     await quickConnect.locator('button').last().click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(connectCommand)
+
+    await quickConnect.getByRole('button', { name: 'cyber-audit', exact: true }).click()
+    await expect(installCommand).toContainText('cyber-audit_windows_amd64.zip')
+    await expect(commands.last()).toContainText('cyber-audit.exe --server-url')
+    await expect(commands.last()).not.toContain(' agent ')
+    await expect(commands.last()).not.toContain('--space')
+
+    await quickConnect.getByRole('button', { name: 'cyber-scan', exact: true }).click()
+    await quickConnect.getByRole('button', { name: 'Linux', exact: true }).click()
+    await expect(installCommand).toContainText('mktemp -d')
+    await expect(installCommand).toContainText('curl -fsSL')
+    await expect(installCommand).toContainText('trap')
 
     await page.keyboard.press('Escape')
     await expect(quickConnect).toBeHidden()

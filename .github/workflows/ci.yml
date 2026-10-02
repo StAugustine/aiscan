@@ -88,6 +88,17 @@ jobs:
             exit 1
           fi
 
+      - name: Build the profile-neutral Web Hub
+        run: |
+          CGO_ENABLED=0 go build -tags "$WEB_TAGS" -o /dev/null ./cmd/cyber-web
+          # The standalone IOA server is a Hub messaging capability. Its
+          # agent client and product execution capabilities remain on nodes.
+          if CGO_ENABLED=0 go list -deps -tags "$WEB_TAGS" ./cmd/cyber-web | grep -Eq '^github\.com/chainreactors/cyber/((pkg/exts|tools)/(scanner|search|proxy|browser|record|scan|audit)(/|$)|pkg/exts/ioa/client(/|$)|tools/ioa$)'; then
+            echo "::error::cyber-web reaches a product execution capability"
+            exit 1
+          fi
+          CGO_ENABLED=0 go test -count=1 -tags "$WEB_TAGS" ./cmd/cyber-web ./pkg/web/host
+
       # The retained native CSTX Extension is not part of any product edition;
       # browser builds use @cyber/cstx WASM.
       - name: Ensure aiscan does not depend on libcstx
