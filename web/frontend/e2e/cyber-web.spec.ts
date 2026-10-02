@@ -323,8 +323,9 @@ test.describe('single AOP WebSocket browser plane', () => {
     await quickConnect.getByRole('button', { name: 'cyber-audit', exact: true }).click()
     await expect(installCommand).toContainText('cyber-audit_windows_amd64.zip')
     await expect(commands.last()).toContainText('cyber-audit.exe --server-url')
-    await expect(commands.last()).not.toContain(' agent ')
-    await expect(commands.last()).not.toContain('--space')
+    const auditCommand = await commands.last().innerText()
+    expect(auditCommand).not.toContain(' agent ')
+    expect(auditCommand).not.toContain('--space')
 
     await quickConnect.getByRole('button', { name: 'cyber-scan', exact: true }).click()
     await quickConnect.getByRole('button', { name: 'Linux', exact: true }).click()
