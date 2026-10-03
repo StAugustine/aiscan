@@ -55,24 +55,19 @@ type testEnumArgs struct {
 func TestSchemaOf(t *testing.T) {
 	m := SchemaOf(testReadArgs{})
 
-	if m["type"] != "object" {
-		t.Fatalf("expected type=object, got %v", m["type"])
+	if m.Type != "object" {
+		t.Fatalf("expected type=object, got %v", m.Type)
 	}
 
-	props, ok := m["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected properties map, got %T", m["properties"])
-	}
-	if _, ok := props["path"]; !ok {
+	if _, ok := m.Properties.Get("path"); !ok {
 		t.Fatal("missing property: path")
 	}
-	if _, ok := props["offset"]; !ok {
+	if _, ok := m.Properties.Get("offset"); !ok {
 		t.Fatal("missing property: offset")
 	}
 
-	required, _ := m["required"].([]any)
 	found := false
-	for _, r := range required {
+	for _, r := range m.Required {
 		if r == "path" {
 			found = true
 		}
@@ -88,23 +83,13 @@ func TestSchemaOf(t *testing.T) {
 func TestSchemaOfEnum(t *testing.T) {
 	m := SchemaOf(testEnumArgs{})
 
-	props, ok := m["properties"].(map[string]any)
+	actionProp, ok := m.Properties.Get("action")
 	if !ok {
-		t.Fatalf("expected properties map, got %T", m["properties"])
-	}
-
-	actionProp, ok := props["action"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected action property map, got %T", props["action"])
-	}
-
-	enumVals, ok := actionProp["enum"].([]any)
-	if !ok {
-		t.Fatalf("expected enum array, got %T", actionProp["enum"])
+		t.Fatal("missing action property")
 	}
 
 	expected := map[string]bool{"list": true, "peek": true, "kill": true}
-	for _, v := range enumVals {
+	for _, v := range actionProp.Enum {
 		s, _ := v.(string)
 		if !expected[s] {
 			t.Errorf("unexpected enum value: %v", v)

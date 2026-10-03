@@ -1,0 +1,33 @@
+RC7 session and transport boundary tests
+
+Run from web/frontend:
+  npx playwright test -c e2e/boundary.config.ts
+
+The managed server starts an isolated temporary config/database, two Go agent
+paths (local and remote), a controllable provider, and Vite for source tests.
+The webui project uses Go's embedded production UI. Its network recovery tests
+must not use Vite's development client, which reloads the page after reconnect.
+Only the local provider fixture is used; no customer API key is required.
+Default ports: frontend 38479, backend 38480, provider 38481.
+CYBER_BOUNDARY_PORT, CYBER_BOUNDARY_BACKEND_PORT and
+CYBER_BOUNDARY_PROVIDER_PORT override these ports.
+BASE_URL skips server management when the fixture is already running.
+CYBER_BOUNDARY_GUI_URL overrides the embedded UI's URL independently.
+
+boundary.spec.ts exercises real UI, Go handlers, WebSocket and fault provider.
+boundary-transport.spec.ts runs the shared browser AOP client against a
+deterministic socket and clock for handshakes, timeouts and ownership races.
+boundary-history.spec.ts checks API pagination with protobuf responses.
+boundary-projection.spec.ts checks the shared event-derived run state, including
+child turns, late frames and replaced histories.
+boundary-guardrail.spec.ts exercises the real React hook and AOP client with
+controlled runtime replies, expiry, visibility, reconnect and stale queries.
+Failure screenshots and traces, plus the HTML report, are written under
+.runlogs/rc7-boundary at the repository root.
+
+Go boundary tests:
+  go test -tags "full sqlite" ./agent/provider ./agent/session ./pkg/config ./pkg/node ./pkg/web/api ./pkg/web/service
+  go test -race -tags "full sqlite" ./agent/provider ./agent/session ./exts/provider ./pkg/config ./pkg/node ./pkg/web/api ./pkg/web/service ./cmd/aiscan
+The race run requires CGO and a C compiler (on Windows, set CC to gcc).
+
+These tests prepare local fixtures only; they do not publish RC7.

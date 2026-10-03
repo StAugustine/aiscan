@@ -21,9 +21,9 @@ import (
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	types "github.com/chainreactors/cyber/core/types"
-	"github.com/chainreactors/cyber/internal/testutil/apptest"
-	"github.com/chainreactors/cyber/internal/testutil/hosttest"
-	terminaltools "github.com/chainreactors/cyber/pkg/exts/terminal"
+	terminaltools "github.com/chainreactors/cyber/exts/terminal"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
 
 	looptool "github.com/chainreactors/cyber/tools/loop"
 	terminaltool "github.com/chainreactors/cyber/tools/terminal"
@@ -464,9 +464,6 @@ func TestStatusReportsLLMAndToolHealth(t *testing.T) {
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
-	rt.agentConfig.Model = "gpt-test"
-	rt.agentConfig.MaxTokens, rt.agentConfig.ContextWindow = 8192, 128000
-
 	session, err := rt.OpenSession(context.Background(), SessionOptions{ID: "session-status", AgentName: "node-test"})
 	if err != nil {
 		t.Fatal(err)
@@ -678,6 +675,7 @@ func newBareRuntime(t *testing.T, values []coretool.Command, provider agent.Prov
 		t.Fatal(err)
 	}
 	application := apptest.NewFixture(t, nil, nil)
+	application.Providers.Set(provider, agent.ProviderConfig{})
 	rt := &Runtime{
 		history: JSONLHistory{}, primarySessionID: "main-repl", providers: application.Providers, events: application.Stream, Logger: application.Logger, ctx: ctx, cancel: cancel,
 		commandRegistry: reg, tools: tools, shell: bash,

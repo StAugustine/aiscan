@@ -42,6 +42,7 @@ export default function ScannerToolCall({
       return
     }
     let disposed = false
+    let initializing = true
     const load = () => {
       setLoading(true)
       return Promise.all([listSCONodes({ scanId: id }), cstxFailures(id)]).then(([{ items }, errors]) => {
@@ -52,10 +53,15 @@ export default function ScannerToolCall({
         if (!disposed) setLoading(false)
       })
     }
-    const unsubscribe = subscribeCSTXChanges(() => void load())
-    void syncCSTXArtifacts().then(load).catch((error) => {
-      if (!disposed) { setFailure(String(error)); setLoading(false) }
-    })
+    const unsubscribe = subscribeCSTXChanges(() => { if (!initializing) void load() })
+    void (async () => {
+      let syncError = ''
+      try { await syncCSTXArtifacts() } catch (error) { syncError = String(error) }
+      initializing = false
+      if (disposed) return
+      await load()
+      if (!disposed && syncError) setFailure(syncError)
+    })()
     return () => {
       disposed = true
       unsubscribe()

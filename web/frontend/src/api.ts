@@ -5,6 +5,7 @@ import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
 import {
   AOPClient,
+  newID as newRPCID,
   AOPProtocolMessageSchema,
   FileProtocolMessageSchema,
   type AOPPayload,
@@ -18,7 +19,11 @@ import {
 import {
   AgentService,
   CommandProtocolMessageSchema,
+  GuardrailProtocolMessageSchema,
+  type GuardrailProtocolMessage,
+  type Review,
   ConfigService,
+  DistributeConfigSchema,
   LLMProbeRequestSchema,
   ReloadProtocolMessageSchema,
   AgentRunOptionsSchema,
@@ -79,10 +84,21 @@ const cyberRPC = {
 }
 const aopClient = new AOPClient()
   .register(CommandProtocolMessageSchema)
-  .register(ScanProtocolMessageSchema)
   .register(ReloadProtocolMessageSchema)
+  .register(GuardrailProtocolMessageSchema)
+
+const registeredCapabilities = new Set<string>()
+// Protocol packages are mounted from the server manifest. A profile-neutral
+// Hub therefore does not register or dispatch scan messages unless the Hub or
+// a connected profile advertises the scan capability.
+export function registerCapabilityProtocols(capability: string): void {
+  if (registeredCapabilities.has(capability)) return
+  if (capability === 'scan') aopClient.register(ScanProtocolMessageSchema)
+  registeredCapabilities.add(capability)
+}
 
 export const AUTH_REQUIRED_EVENT = 'cyber:auth-required'
+export const CONFIG_CHANGED_EVENT = 'cyber:config-changed'
 
 export class APIError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -190,12 +206,16 @@ export async function listAgents(): Promise<AgentView[]> {
   }
 }
 
-// The single "is the LLM usable" predicate: a provider client exists and it
-// targets a model. An API key is deliberately not required — self-hosted
-// endpoints (Ollama, vLLM) are keyless — and the server already merges the
-// runtime provider with the stored settings view before answering.
+// The Hub may intentionally have no local provider client: in the profile-
+// neutral deployment the connected scan/audit node owns the provider. The
+// status endpoint still exposes the saved provider/model, so configuration is
+// present when a model and provider are available even if `llm_available` is
+// false on the Hub itself.
 export function llmConfigured(status: ServerStatus | null | undefined): boolean {
-  return !!(status?.llmAvailable && status.llmModel?.trim())
+  return !!(
+    status?.llmModel?.trim() &&
+    (status.llmAvailable || status.llmApiKeyConfigured || status.llmProvider?.trim())
+  )
 }
 
 export async function getConfigStatus(): Promise<ConfigView> {
@@ -212,6 +232,7 @@ export async function saveConfig(config: DistributeConfig): Promise<ConfigView> 
   try {
     const response = await cyberRPC.config.updateConfig({ config })
     if (!response.config) throw new Error('Config update returned no view')
+    window.dispatchEvent(new Event(CONFIG_CHANGED_EVENT))
     return response.config
   } catch (error) {
     throw connectFailure(error, 'Failed to save config')
@@ -226,6 +247,16 @@ export async function activateLLMProfile(id: string): Promise<ConfigView> {
   } catch (error) {
     throw connectFailure(error, 'Failed to switch LLM profile')
   }
+}
+
+// Keep the installed policy warm: interaction-mode edits do not reload agents.
+export async function setGuardrailMode(mode: 'safe' | 'auto'): Promise<ConfigView> {
+  const current = await getConfigStatus()
+  return saveConfig(create(DistributeConfigSchema, {
+    extensions: {
+      guardrail: { ...current.extensions.guardrail?.values, mode },
+    },
+  }))
 }
 
 // Blank api_key asks the server to reuse the stored secret.
@@ -389,6 +420,27 @@ export async function executeChatCommand(sessionID: string, line: string, reques
   }
 }
 
+async function requestGuardrail(request: GuardrailProtocolMessage): Promise<GuardrailProtocolMessage> {
+  const response = await aopClient.request(GuardrailProtocolMessageSchema, request, { timeoutMs: 12_000, requireConnected: request.message.case === 'resolve' })
+  if (response.$typeName === 'aop.ProtocolMessage') {
+    const core = response as AOPProtocolMessage
+    if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
+  }
+  if (response.$typeName !== 'cyber.guardrail.ProtocolMessage') throw new Error('Unexpected guardrail response')
+  return response as GuardrailProtocolMessage
+}
+
+export async function pendingGuardrailReviews(sessionId: string): Promise<Review[]> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'pending', value: { sessionId } } }))
+  if (response.message.case !== 'pendingResult') throw new Error('Expected pending guardrail reviews')
+  return response.message.value.reviews
+}
+
+export async function resolveGuardrailReview(sessionId: string, operationId: string, approve: boolean): Promise<void> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'resolve', value: { sessionId, operationId, approve } } }))
+  if (response.message.case !== 'resolved') throw new Error('Expected guardrail resolution')
+}
+
 export async function cancelChatSession(sessionID: string, turnID: string): Promise<void> {
   if (!turnID) throw new Error('No active turn')
   try {
@@ -429,11 +481,17 @@ export async function uploadChatFile(sessionID: string, file: File): Promise<Fil
 }
 
 // Chat history is the raw AOP event log; views project EventDelivery records
-// into their own render models (see useChatSession.deliveryToChatMessage).
-export async function listChatMessages(sessionID: string): Promise<EventDelivery[]> {
+// directly into the existing AOP reducer.
+export async function listChatEvents(sessionID: string, afterCursor = ''): Promise<EventDelivery[]> {
   try {
-	const response = await cyberRPC.sessions.listEvents({ sessionId: sessionID, limit: 500 })
-    return response.events
+    const events: EventDelivery[] = []
+    do {
+      const response = await cyberRPC.sessions.listEvents({ sessionId: sessionID, limit: 500, afterCursor })
+      events.push(...response.events)
+      if (response.nextCursor === afterCursor && afterCursor) throw new Error('History cursor did not advance')
+      afterCursor = response.nextCursor
+    } while (afterCursor)
+    return events
   } catch (error) {
     throw connectFailure(error, 'Failed to list messages')
   }
@@ -441,19 +499,19 @@ export async function listChatMessages(sessionID: string): Promise<EventDelivery
 
 export function subscribeAOPEvents(
   sessionID: string,
-  onEvent: (event: AOPEvent) => void,
-  onReconnect?: () => void,
+  onEvent: (event: AOPEvent, cursor: string) => void,
+  afterCursor = '',
 ): () => void {
 	const watch = (cursor: string) => create(AOPProtocolMessageSchema, { message: { case: 'watchEventsRequest', value: { sessionId: sessionID, afterCursor: cursor } } })
-	return aopClient.subscribe(AOPProtocolMessageSchema, watch(''), (payload) => {
+	return aopClient.subscribe(AOPProtocolMessageSchema, watch(afterCursor), (payload, envelope) => {
 		if (payload.$typeName !== 'aop.ProtocolMessage') return
 		const core = payload as AOPProtocolMessage
-		if (core.message.case === 'event') onEvent(core.message.value)
-	}, { durable: true, resume: (cursor) => { onReconnect?.(); return watch(cursor) } })
+		if (core.message.case === 'event') onEvent(core.message.value, envelope.deliveryCursor)
+	}, { durable: true, resume: (cursor) => watch(cursor || afterCursor) })
 }
 
 function rejectionError(value: { code?: string; message?: string } | undefined, fallback: string): Error {
-  return Object.assign(new Error(value?.message || value?.code || fallback), { rejected: true })
+  return Object.assign(new Error(value?.message || value?.code || fallback), { rejected: true, code: value?.code })
 }
 
 function connectFailure(error: unknown, fallback: string): Error {
@@ -474,22 +532,6 @@ async function requestCore<C extends CoreCase>(request: AOPProtocolMessage, expe
 	if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
 	if (core.message.case !== expected) throw new Error(`Expected ${expected}, received ${core.message.case || 'empty'}`)
 	return core.message.value as CoreValue<C>
-}
-
-function newRPCID(): string {
-  const value = globalThis.crypto
-  if (value && typeof value.randomUUID === 'function') {
-    try { return value.randomUUID() } catch {}
-  }
-  if (value && typeof value.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    value.getRandomValues(bytes)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    const hex = Array.from(bytes, (item) => item.toString(16).padStart(2, '0')).join('')
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
 export { aopClient }

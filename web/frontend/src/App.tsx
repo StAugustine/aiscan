@@ -8,27 +8,30 @@ import AgentPanel from './components/AgentPanel'
 import ToolRegistryPanel from './components/ToolRegistryPanel'
 import AssetPanel, { assetMentionables } from './components/AssetPanel'
 import MentionPicker from './components/MentionPicker'
-import LLMHealth from './components/LLMHealth'
 import QuickConnect from './components/QuickConnect'
 import BrandLogo from './components/brand/BrandLogo'
 const IOAConsole = lazy(() => import('./components/IOAConsole'))
 import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, useConfirm } from '@cyber/ui'
 import { ThemeProvider } from '@cyber/theme'
-import { activateLLMProfile, getConfigStatus, getIOAOverview, getStatus, logout } from './api'
+import { activateLLMProfile, getConfigStatus, getIOAOverview, getStatus, logout, registerCapabilityProtocols } from './api'
 import type { IOAMessage, IOANode, LLMProviderView, ServerStatus } from './api'
 import type { SCONode } from '@cyber/cstx-easm'
 import type { MentionPopupApi } from './viewer'
 import { useChatSession } from './hooks/useChatSession'
+import { useGuardrailReviews } from './hooks/useGuardrailReviews'
+import { GuardrailToggle } from './components/GuardrailToggle'
 import { usePolling } from './hooks/usePolling'
 import { isSessionAgentOnline } from './lib/session-agent'
 import type { IOAConsoleTarget } from './lib/ioa-navigation'
 import { cn } from '@cyber/theme'
 import { listSCONodes, subscribeCSTXChanges, syncCSTXArtifacts } from './lib/cstx-runtime'
+import { capabilityPlugin, loadCapabilityManifest, WebPluginRuntime, type CapabilityManifest } from './lib/plugin-runtime'
 
 const sidebarStorageKey = 'cyber-sidebar-open'
 
 const EMPTY_SEED = { text: '', nonce: 0 }
 type ToolPanel = 'assets' | 'ioa' | 'agents' | 'tools' | 'settings'
+const NODE_TRANSPORT_CAPABILITIES = new Set(['repl', 'pty', 'tmux', 'file', 'sco'])
 
 // Respect a previously-chosen theme on boot. ThemeProvider's own initializer is
 // short-circuited by the `initial` prop (it returns `initial` before ever reading
@@ -53,19 +56,66 @@ export default function App() {
   const { t: tc } = useTranslation('chat')
   const confirm = useConfirm()
   const chat = useChatSession()
+  const guardrailSessions = useMemo(() => {
+    const online = new Set(chat.agents.map(agent => agent.hello?.nodeId))
+    const ids = chat.sessions.filter(record => online.has(record.session?.nodeId) && record.session?.state !== 'closed')
+      .map(record => record.session?.id || '').filter(Boolean)
+    if (chat.activeSessionID && !ids.includes(chat.activeSessionID)) ids.push(chat.activeSessionID)
+    return ids
+  }, [chat.agents, chat.sessions, chat.activeSessionID])
+  const guardrails = useGuardrailReviews(guardrailSessions, chat.activeSessionID, chat.aopEvents)
+  const pendingReviewCounts = useMemo(() => Object.fromEntries(Object.entries(guardrails.bySession).map(([id, reviews]) => [id, reviews.length])), [guardrails.bySession])
   const [serverStatus, setServerStatus] = useState<ServerStatus | null>(null)
   const [llmProfiles, setLLMProfiles] = useState<LLMProviderView[]>([])
   const [activeLLMProfile, setActiveLLMProfile] = useState('')
   const [switchingLLM, setSwitchingLLM] = useState(false)
   const [activeToolPanel, setActiveToolPanel] = useState<ToolPanel | null>(null)
+  const [settingsSection, setSettingsSection] = useState<'llm' | 'jev'>('llm')
   const [ioaConsoleTarget, setIOAConsoleTarget] = useState<IOAConsoleTarget | null>(null)
   const [agentPanelFocusNodeID, setAgentPanelFocusNodeID] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(getInitialSidebarOpen)
-  // Bumped after a settings save so the header LLM health dot re-probes.
-  const [healthNonce, setHealthNonce] = useState(0)
+  const [capabilityManifest, setCapabilityManifest] = useState<CapabilityManifest | null>(null)
+  const effectiveManifest = useMemo<CapabilityManifest | null>(() => {
+    if (!capabilityManifest) return null
+    const ids = new Set(capabilityManifest.capabilities.map(item => item.id))
+    for (const agent of chat.agents) {
+      for (const id of agent.hello?.capabilities || []) {
+        if (!NODE_TRANSPORT_CAPABILITIES.has(id)) ids.add(id)
+      }
+    }
+    return {
+      ...capabilityManifest,
+      capabilities: [...ids].map(id => capabilityManifest.capabilities.find(item => item.id === id) || { id }),
+    }
+  }, [capabilityManifest, chat.agents])
+  const pluginRuntime = useMemo(() => effectiveManifest ? new WebPluginRuntime(effectiveManifest) : null, [effectiveManifest])
+  const capabilityIDs = useMemo(() => effectiveManifest?.capabilities.map(item => item.id) || [], [effectiveManifest])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void loadCapabilityManifest(controller.signal).then(setCapabilityManifest).catch(() => {
+      setCapabilityManifest({ product: 'cyber-harness', capabilities: [{ id: 'core' }] })
+    })
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    if (!pluginRuntime) return
+    pluginRuntime.mount([
+      capabilityPlugin('scan-protocol', ['scan'], () => {
+        registerCapabilityProtocols('scan')
+      }),
+    ])
+    return () => pluginRuntime.dispose()
+  }, [pluginRuntime])
 
   const toggleToolPanel = useCallback((panel: ToolPanel) => {
     setActiveToolPanel((current) => current === panel ? null : panel)
+  }, [])
+
+  const openSettings = useCallback((section: 'llm' | 'jev' = 'llm') => {
+    setSettingsSection(section)
+    setActiveToolPanel('settings')
   }, [])
 
   const openIOAConsole = useCallback((target?: IOAConsoleTarget) => {
@@ -118,16 +168,15 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    void refreshSCONodes()
     const unsubscribe = subscribeCSTXChanges(() => { void refreshSCONodes() })
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
-    void refreshIOA()
     return unsubscribe
-  }, [refreshSCONodes, refreshIOA])
+  }, [refreshSCONodes])
   // Refresh mentionables when scans finish (timeline changes often signal new results)
   useEffect(() => {
-    void syncCSTXArtifacts().then(() => refreshSCONodes()).catch(() => {})
+    void syncCSTXArtifacts().catch(() => {})
     void refreshIOA()
-  }, [chat.timeline.length, refreshSCONodes, refreshIOA])
+  }, [chat.timeline.length, refreshIOA])
 
   const mentionables = useMemo(() => assetMentionables(scoNodes), [scoNodes])
 
@@ -162,15 +211,13 @@ export default function App() {
       setLLMProfiles(next.llm?.providers ?? [])
       setActiveLLMProfile(next.llm?.activeProfile || profileID)
       await refreshStatus()
-      setHealthNonce((nonce) => nonce + 1)
     } catch {
-      setActiveToolPanel('settings')
+      openSettings()
     } finally {
       setSwitchingLLM(false)
     }
-  }, [activeLLMProfile, refreshStatus])
+  }, [activeLLMProfile, refreshStatus, openSettings])
   const activeSession = chat.activeSessionRecord?.session?.id === chat.activeSessionID ? chat.activeSessionRecord : chat.sessions.find((s) => s.session?.id === chat.activeSessionID) || null
-  const executionNode = chat.agents.find((a) => a.hello?.nodeId === (activeSession?.session?.nodeId || chat.selectedNodeID))
   // The open session's bound agent has dropped off the live roster (its node
   // exited / the hub restarted). The transcript still shows, but a new turn
   // can't be dispatched until it reconnects — surface that in the chat panel.
@@ -226,7 +273,7 @@ export default function App() {
   return (
     <ThemeProvider initial={getInitialTheme()} storageKey="cyber-theme" className="aspect-theme-root h-full text-foreground font-sans antialiased">
     <TooltipProvider delayDuration={300}>
-      <div className="flex h-[100dvh] flex-col overflow-hidden">
+      <div className="flex h-[100dvh] flex-col overflow-hidden" data-cyber-product={effectiveManifest?.product || 'cyber-harness'} data-cyber-capabilities={effectiveManifest?.capabilities.map(item => item.id).join(',') || 'core'}>
         <header className="relative z-[60] flex min-h-12 shrink-0 items-center justify-between gap-1 border-b border-border/60 bg-background px-2 pt-safe sm:gap-2 sm:px-4">
           <div className="flex min-w-0 items-center gap-1 sm:gap-2">
             {/* Phone-only drawer opener — the collapsed sidebar is hidden below md,
@@ -242,7 +289,6 @@ export default function App() {
             </Button>
             <BrandLogo size={22} className="hidden shrink-0 sm:block" />
             <span className="shrink-0 text-sm font-semibold tracking-tight text-foreground">Cyber</span>
-            <span className="max-w-48 truncate text-xs text-muted-foreground" title={activeSession?.session?.nodeId || chat.selectedNodeID || ''}>{executionNode?.hello?.name || activeSession?.agentName || 'Node'} · {executionNode?.status?.model || '—'}</span>
             <span className="text-[10px] text-muted-foreground">Hub</span>
             <LLMProfileSwitcher
               profiles={llmProfiles}
@@ -251,11 +297,9 @@ export default function App() {
               disabled={switchingLLM}
               onChange={handleSwitchLLM}
             />
-            <span className="hidden sm:contents">
-              <LLMHealth onOpenSettings={() => setActiveToolPanel('settings')} reloadSignal={healthNonce} />
-            </span>
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
+            <GuardrailToggle disabled={activeToolPanel === 'settings'} onConfigure={() => openSettings('jev')} />
             <AssetPoolButton count={scoNodes.length} open={activeToolPanel === 'assets'} onClick={() => toggleToolPanel('assets')} />
             <IOAConsoleButton open={activeToolPanel === 'ioa'} onClick={() => {
               setIOAConsoleTarget(null)
@@ -263,11 +307,14 @@ export default function App() {
             }} />
             <AgentsButton count={chat.agents.length} open={activeToolPanel === 'agents'} onClick={handleOpenAgentPanel} />
             <ToolsButton count={bashToolCount} open={activeToolPanel === 'tools'} onClick={() => toggleToolPanel('tools')} />
-            <QuickConnect serverURL={serverStatus?.serverUrl} version={serverStatus?.version} space={agentSpace} />
+            <QuickConnect serverURL={serverStatus?.serverUrl} version={serverStatus?.version} profiles={effectiveManifest?.profiles} />
             {/* Separate workspace nav (assets / IOA / agents / connect) from the
                 account utilities (settings / logout) so the row reads as two groups. */}
             <span className="mx-0.5 hidden h-5 w-px shrink-0 bg-border/70 sm:block" aria-hidden="true" />
-            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => toggleToolPanel('settings')}>
+            <HeaderIconButton label={t('openSettings')} active={activeToolPanel === 'settings'} toolDrawerTrigger onClick={() => {
+              if (activeToolPanel === 'settings') setActiveToolPanel(null)
+              else openSettings()
+            }}>
               <Settings className="h-3.5 w-3.5" />
             </HeaderIconButton>
             <HeaderIconButton label={t('logout')} onClick={() => { void logout() }}>
@@ -282,6 +329,7 @@ export default function App() {
             onToggle={() => setSidebarOpen(!sidebarOpen)}
             agents={chat.agents}
             sessions={chat.sessions}
+            pendingReviewCounts={pendingReviewCounts}
             filters={chat.sessionFilters}
             onFilter={chat.filterSessions}
             onUpdateSession={chat.updateSession}
@@ -296,8 +344,10 @@ export default function App() {
 
           <ChatPanel
             timeline={chat.timeline}
+            guardrailUnavailable={guardrails.unavailable[chat.activeSessionID || ''] === true}
+            guardrailReviews={guardrails.bySession[chat.activeSessionID || ''] || []}
+            onResolveGuardrail={(review, approve) => guardrails.resolve(chat.activeSessionID!, review, approve)}
             aopEvents={chat.aopEvents}
-            scanResults={chat.scanResults}
             isThinking={chat.isThinking}
             isBusy={chat.busy}
             canPause={chat.canPause}
@@ -324,8 +374,10 @@ export default function App() {
       <ConfigPanel
         open={activeToolPanel === 'settings'}
         status={serverStatus}
+        capabilities={capabilityIDs}
+        initialSection={settingsSection}
         onClose={() => setActiveToolPanel(null)}
-        onSaved={() => { refreshStatus(); setHealthNonce((n) => n + 1) }}
+        onSaved={() => { refreshStatus() }}
       />
 
       <AgentPanel

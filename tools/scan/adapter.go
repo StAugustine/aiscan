@@ -8,7 +8,6 @@ import (
 
 	toolpb "github.com/chainreactors/cyber/aop/tool"
 	"github.com/chainreactors/cyber/tools/scan/engine"
-	"github.com/chainreactors/cyber/tools/toolargs"
 	sdktypes "github.com/chainreactors/sdk/pkg/types"
 	sdkzombie "github.com/chainreactors/sdk/zombie"
 	"github.com/chainreactors/utils"
@@ -53,8 +52,9 @@ func (c *Command) runPortDiscoveryCapability(ctx context.Context, flags flags, i
 		if result == nil {
 			continue
 		}
-		emit(targetEvent(capGogoPortscan, serviceTarget{Result: result}))
-		deriveServiceResult(flags.BroadPOC, capGogoPortscan, result, emit)
+		accepted := targetEvent(capGogoPortscan, serviceTarget{Result: result})
+		emit(accepted)
+		deriveServiceResult(flags.BroadPOC, capGogoPortscan, accepted, emit)
 	}
 }
 
@@ -170,19 +170,22 @@ func (c *Command) runPOCCapability(ctx context.Context, flags flags, input targe
 			continue
 		}
 		record := result.TemplateResult(target.Target)
-		resultID := toolargs.ArtifactResultID("neutron", toolpb.ArtifactKindVuln, target.Target, record)
-		loot := bindLoot(vulnLoot(record), resultID, "neutron")
-		emit(artifactLootEvent(capNeutronPOC, loot, artifactResult{
-			ResultID: resultID,
-			Tool:     "neutron",
-			Kind:     toolpb.ArtifactKindVuln,
-			Target:   target.Target,
-			Data:     record,
-		}))
+		artifact, err := newArtifactResult("neutron", toolpb.ArtifactKindVuln, target.Target, record)
+		if err != nil {
+			emitError(emit, capNeutronPOC, "encode artifact: %v", err)
+			continue
+		}
+		loot := bindLoot(vulnLoot(record), artifact.ResultID, "neutron")
+		emit(artifactLootEvent(capNeutronPOC, loot, *artifact))
 	}
 }
 
-func deriveServiceResult(broadPOC bool, source string, result *parsers.GOGOResult, emit func(event)) {
+func deriveServiceResult(broadPOC bool, source string, input event, emit func(event)) {
+	targetResult, ok := input.Target.(serviceTarget)
+	if !ok || input.Artifact == nil {
+		return
+	}
+	result := targetResult.Result
 	if result == nil {
 		return
 	}
@@ -193,7 +196,7 @@ func deriveServiceResult(broadPOC bool, source string, result *parsers.GOGOResul
 		emit(targetEvent(source, newWebTarget(target, "")))
 	}
 	if len(fingers) > 0 {
-		resultID := toolargs.ArtifactResultID("gogo", toolpb.ArtifactKindService, result.GetTarget(), result)
+		resultID := input.Artifact.ResultID
 		emit(lootEvent(source, bindLoot(
 			fingerprintLoot(target, parsers.NormalizeNames(fingers), result.Frameworks.IsFocus()),
 			resultID,
@@ -220,13 +223,18 @@ func (c *Command) runHTTPBasicAuthCapability(ctx context.Context, flags flags, i
 	emit(targetEvent(capHTTPBasicAuth, newWeakpassTarget(zTarget)))
 }
 
-func deriveWebProbeResult(broadPOC bool, source string, result *parsers.SprayResult, emit func(event)) {
+func deriveWebProbeResult(broadPOC bool, source string, input event, emit func(event)) {
+	targetResult, ok := input.Target.(webProbeTarget)
+	if !ok || input.Artifact == nil {
+		return
+	}
+	result := targetResult.Result
 	if !reportableSprayResult(result) || result.UrlString == "" {
 		return
 	}
 	fingers := parsers.FrameworkNames(result.Frameworks)
 	if len(fingers) > 0 {
-		resultID := toolargs.ArtifactResultID("spray", toolpb.ArtifactKindWeb, result.UrlString, result)
+		resultID := input.Artifact.ResultID
 		emit(lootEvent(source, bindLoot(
 			fingerprintLoot(result.UrlString, parsers.NormalizeNames(fingers), result.Frameworks.IsFocus()),
 			resultID,
@@ -320,15 +328,13 @@ func deriveWeakpassResult(source string, result *parsers.ZombieResult, emit func
 		return
 	}
 	target := result.Address()
-	resultID := toolargs.ArtifactResultID("zombie", toolpb.ArtifactKindWeakpass, target, result)
-	loot := bindLoot(weakpassLoot(result), resultID, "zombie")
-	emit(artifactLootEvent(source, loot, artifactResult{
-		ResultID: resultID,
-		Tool:     "zombie",
-		Kind:     toolpb.ArtifactKindWeakpass,
-		Target:   target,
-		Data:     result,
-	}))
+	artifact, err := newArtifactResult("zombie", toolpb.ArtifactKindWeakpass, target, result)
+	if err != nil {
+		emitError(emit, source, "encode artifact: %v", err)
+		return
+	}
+	loot := bindLoot(weakpassLoot(result), artifact.ResultID, "zombie")
+	emit(artifactLootEvent(source, loot, *artifact))
 }
 
 func zombieTargetFromGogo(result *parsers.GOGOResult) (sdkzombie.Target, bool) {

@@ -19,19 +19,19 @@ import (
 	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/namespaces"
 	"github.com/chainreactors/cyber/core/proc"
+	loopext "github.com/chainreactors/cyber/exts/agent"
+	arsenalext "github.com/chainreactors/cyber/exts/arsenal"
+	nodeext "github.com/chainreactors/cyber/exts/node"
+	okfext "github.com/chainreactors/cyber/exts/okf"
+	protonext "github.com/chainreactors/cyber/exts/proton"
+	ptyext "github.com/chainreactors/cyber/exts/pty"
+	sessionext "github.com/chainreactors/cyber/exts/session"
+	subagentext "github.com/chainreactors/cyber/exts/subagent"
+	telemetryext "github.com/chainreactors/cyber/exts/telemetry"
+	terminalext "github.com/chainreactors/cyber/exts/terminal"
+	tuiext "github.com/chainreactors/cyber/exts/tui"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
-	loopext "github.com/chainreactors/cyber/pkg/exts/agent"
-	arsenalext "github.com/chainreactors/cyber/pkg/exts/arsenal"
-	nodeext "github.com/chainreactors/cyber/pkg/exts/node"
-	okfext "github.com/chainreactors/cyber/pkg/exts/okf"
-	protonext "github.com/chainreactors/cyber/pkg/exts/proton"
-	ptyext "github.com/chainreactors/cyber/pkg/exts/pty"
-	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
-	subagentext "github.com/chainreactors/cyber/pkg/exts/subagent"
-	telemetryext "github.com/chainreactors/cyber/pkg/exts/telemetry"
-	terminalext "github.com/chainreactors/cyber/pkg/exts/terminal"
-	tuiext "github.com/chainreactors/cyber/pkg/exts/tui"
 	harness "github.com/chainreactors/cyber/pkg/harness"
 	nodepkg "github.com/chainreactors/cyber/pkg/node"
 	"github.com/chainreactors/cyber/pkg/profile"
@@ -107,7 +107,7 @@ func newAuditProfile(request profile.Request, workDir string, bashTimeout int, r
 		values = append(values, recorder)
 	}
 	values = append(values,
-		arsenalext.New(manager), okfext.New(),
+		&arsenalext.Extension{Manager: manager}, okfext.New(),
 		extension.Func{LoadFunc: func(scope *extension.Scope) error { return extension.Add(scope, reportCommand(reportDir)) }},
 		protonext.New(protonext.Config{Directory: workDir, ExcludePaths: []string{filepath.Join(workDir, ".cyber"), filepath.Join(workDir, ".git")}}),
 		auditext.New(auditext.Config{Workspace: workDir, ReportDir: reportDir, ToolSummary: summary.String(), SearchExclusions: exclusions}),

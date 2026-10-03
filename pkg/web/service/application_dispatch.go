@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/chainreactors/cyber/exts/guardrail"
 	"github.com/chainreactors/cyber/pkg/aopconn"
 	"strconv"
 	"sync"
@@ -330,6 +331,25 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 	}
 
 	mux := aop.NewNamespaceMux(ctx)
+	// This namespace routes connection-owned control requests to the session's
+	// assigned agent; the policy runtime is installed on that agent by Extension.
+	handleGuardrail := func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
+		value, ok := message.(*guardrail.ProtocolMessage)
+		if !ok {
+			return fmt.Errorf("unexpected guardrail message")
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			result, err := s.forwardGuardrail(ctx, value)
+			if err != nil {
+				fail(envelope.Id, "GUARDRAIL_FAILED", err)
+				return
+			}
+			_ = send(envelope.Id, "", result)
+		}()
+		return nil
+	}
 	defer mux.Close(context.Background())
 	registrations := []struct {
 		enabled   bool
@@ -338,6 +358,7 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 	}{
 		{enabled: true, prototype: &aop.ProtocolMessage{}, handler: handleCore},
 		{enabled: true, prototype: &types.CommandProtocolMessage{}, handler: handleCommand},
+		{enabled: s.agents != nil, prototype: &guardrail.ProtocolMessage{}, handler: handleGuardrail},
 		{enabled: true, prototype: &filepb.ProtocolMessage{}, handler: handleFile},
 		{enabled: s.api.Scans != nil, prototype: &scanpb.ScanProtocolMessage{}, handler: handleScan},
 		{enabled: s.agents != nil, prototype: &ptypb.ProtocolMessage{}, handler: handlePTY},
@@ -353,6 +374,11 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 	if registerNamespaces != nil {
 		if err := registerNamespaces(mux); err != nil {
 			return fmt.Errorf("register application extension namespace: %w", err)
+		}
+	}
+	for _, capability := range s.capabilities {
+		if err := capability.RegisterNamespaces(mux); err != nil {
+			return fmt.Errorf("register %s capability namespace: %w", capability.ID(), err)
 		}
 	}
 	dispatch := func(_ context.Context, envelope *aop.Envelope, sendEnvelope aop.SendFunc) error {

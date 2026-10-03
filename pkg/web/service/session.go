@@ -52,10 +52,10 @@ func (s *Service) OpenAgentSession(ctx context.Context, requestID string, reques
 	defer timer.Stop()
 	select {
 	case result, ok := <-resultCh:
-		if ok && result.Err == "" {
+		if ok && taskError(result) == nil {
 			return nil
 		}
-		message := result.Err
+		message := taskError(result).GetMessage()
 		if message == "" {
 			message = "node disconnected while opening session"
 		}
@@ -82,10 +82,10 @@ func (s *Service) CloseAgentSession(ctx context.Context, requestID, nodeID strin
 	defer timer.Stop()
 	select {
 	case result, ok := <-resultCh:
-		if ok && result.Err == "" {
+		if ok && taskError(result) == nil {
 			return true, nil
 		}
-		message := result.Err
+		message := taskError(result).GetMessage()
 		if message == "" {
 			message = "node disconnected while closing session"
 		}
@@ -156,11 +156,11 @@ func (s *Service) CancelTurn(ctx context.Context, sessionID, turnID string) erro
 		if !ok {
 			return managementapi.Errorf(managementapi.CodeUnavailable, "node disconnected while canceling turn")
 		}
-		if result.Err != "" {
-			if result.Code == string(managementapi.CodeNotFound) {
+		if failure := taskError(result); failure != nil {
+			if failure.Code == string(managementapi.CodeNotFound) {
 				return ErrTurnNotFound
 			}
-			return managementapi.Errorf(managementapi.CodeFailedPrecondition, "%s", result.Err)
+			return managementapi.Errorf(managementapi.CodeFailedPrecondition, "%s", failure.Message)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
@@ -201,7 +201,7 @@ func (s *Service) Upload(ctx context.Context, sessionID, filename string, data [
 		if !ok {
 			return nil, fmt.Errorf("agent disconnected during upload")
 		}
-		result := res.File
+		result, _ := res.(*filepb.Result)
 		if result == nil {
 			return nil, fmt.Errorf("agent upload returned no result envelope")
 		}
@@ -217,7 +217,13 @@ func (s *Service) Upload(ctx context.Context, sessionID, filename string, data [
 
 func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	s.closeRemoteSession(id)
-	return s.store.DeleteSession(ctx, id)
+	if err := s.store.DeleteSession(ctx, id); err != nil {
+		return err
+	}
+	s.eventMu.Lock()
+	delete(s.eventState, id)
+	s.eventMu.Unlock()
+	return nil
 }
 
 func (s *Service) closeRemoteSession(sessionID string) {

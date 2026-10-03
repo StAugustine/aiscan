@@ -16,8 +16,8 @@ import (
 	"github.com/chainreactors/cyber/core/extension"
 	"github.com/chainreactors/cyber/core/telemetry"
 	types "github.com/chainreactors/cyber/core/types"
+	webext "github.com/chainreactors/cyber/exts/web"
 	cfg "github.com/chainreactors/cyber/pkg/config"
-	webext "github.com/chainreactors/cyber/pkg/exts/web"
 	"github.com/chainreactors/cyber/pkg/harness"
 	"github.com/chainreactors/cyber/pkg/profile"
 	webservice "github.com/chainreactors/cyber/pkg/web/service"
@@ -91,7 +91,7 @@ func testRemoteNodeUsesServerLLM(t *testing.T, localOverrides bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer h.Close(context.Background())
+	t.Cleanup(func() { _ = h.Close(context.Background()) })
 	if err := h.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func testRemoteNodeUsesServerLLM(t *testing.T, localOverrides bool) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		for _, node := range svc.API().ListAgents(&types.ListAgentsRequest{}).Agents {
+		for _, node := range svc.API().ListAgents(&types.ListAgentsRequest{}).GetAgents() {
 			if node.GetStatus().GetProvider() == "openai" && node.GetStatus().GetModel() == "server-model" && node.GetStatus().GetConfigError() == "" {
 				return
 			}

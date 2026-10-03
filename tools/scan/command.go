@@ -9,13 +9,11 @@ import (
 	"strings"
 	"time"
 
-	toolpb "github.com/chainreactors/cyber/aop/tool"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/tools/scan/engine"
 	"github.com/chainreactors/cyber/tools/scan/pipeline"
 	"github.com/chainreactors/cyber/tools/toolargs"
-	"github.com/chainreactors/utils/parsers"
 	goflags "github.com/jessevdk/go-flags"
 )
 
@@ -167,7 +165,16 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 
 	trace := flags.Trace || flags.Debug
 	coll := newCollector(rawInputs, stream, stream != nil && !flags.NoColor, trace)
+	coll.json = flags.JSON
+	acceptedCtx := context.WithoutCancel(ctx)
 	observe := func(observation pipeline.Observation[event]) {
+		if observation.Action == pipeline.ActionAccept && observation.Event.Artifact != nil {
+			if err := c.emitAcceptedArtifact(acceptedCtx, observation.Event.Artifact); err != nil {
+				coll.mu.Lock()
+				coll.errors = append(coll.errors, err.Error())
+				coll.mu.Unlock()
+			}
+		}
 		coll.Observe(observation)
 		if trace && stream != nil {
 			if traceLine := formatTraceEvent(observation); traceLine != "" {
@@ -235,7 +242,7 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 	coll.Finish()
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	if emitErr := c.emitStructuredData(finishCtx, coll); emitErr != nil {
+	if emitErr := c.emitLoots(finishCtx, coll); emitErr != nil {
 		coll.errors = append(coll.errors, emitErr.Error())
 	}
 	if runErr == nil && len(coll.errors) > 0 {
@@ -243,40 +250,24 @@ func (c *Command) execute(ctx context.Context, args []string, stream io.Writer) 
 	}
 	var out string
 	if flags.JSON {
-		out, err = formatJSONLines(coll)
+		out = formatJSONLines(coll)
 	} else {
 		out = formatSummary(coll, stream != nil && !flags.NoColor)
 	}
-	return out, errors.Join(runErr, err)
+	return out, runErr
 }
 
-func (c *Command) emitStructuredData(ctx context.Context, coll *collector) (err error) {
+func (c *Command) emitAcceptedArtifact(ctx context.Context, artifact *artifactResult) error {
+	return c.EmitArtifactJSONCtx(ctx, artifact.ResultID, artifact.Tool, artifact.Kind, artifact.Target, artifact.Data)
+}
+
+func (c *Command) emitLoots(ctx context.Context, coll *collector) (err error) {
 	if coll == nil || c.Events == nil {
 		return nil
 	}
-	coll.mu.Lock()
-	services := append([]*parsers.GOGOResult(nil), coll.gogoResults...)
-	probes := append([]*parsers.SprayResult(nil), coll.sprayResults...)
-	artifacts := append([]artifactResult(nil), coll.artifacts...)
-	loots := append([]parsers.Loot(nil), coll.loots...)
-	coll.mu.Unlock()
-	for _, service := range services {
-		if service == nil {
-			continue
-		}
-		resultID := toolargs.ArtifactResultID("gogo", toolpb.ArtifactKindService, service.GetTarget(), service)
-		err = errors.Join(err, c.EmitArtifactResultCtx(ctx, resultID, "gogo", toolpb.ArtifactKindService, service.GetTarget(), service))
-	}
-	for _, probe := range probes {
-		if probe == nil {
-			continue
-		}
-		resultID := toolargs.ArtifactResultID("spray", toolpb.ArtifactKindWeb, probe.UrlString, probe)
-		err = errors.Join(err, c.EmitArtifactResultCtx(ctx, resultID, "spray", toolpb.ArtifactKindWeb, probe.UrlString, probe))
-	}
-	for _, artifact := range artifacts {
-		err = errors.Join(err, c.EmitArtifactResultCtx(ctx, artifact.ResultID, artifact.Tool, artifact.Kind, artifact.Target, artifact.Data))
-	}
+	// The pipeline and verification workers have joined. Only their final loot
+	// markers remain to publish; native artifacts were published on acceptance.
+	loots := coll.loots
 	for _, loot := range loots {
 		resultID, _ := loot.Data["result_id"].(string)
 		tool, _ := loot.Data["artifact_tool"].(string)

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import {
   PanelLeftClose, PanelLeft, ChevronDown, ChevronRight, Monitor,
   List, MessageSquare, MoreHorizontal, Plus, Trash2,
-  Archive, ArchiveRestore, Pencil, Check, X,
+  Archive, ArchiveRestore, Pencil, Check, X, ShieldAlert,
 } from 'lucide-react'
 import {
   Button, Tooltip, TooltipTrigger, TooltipContent,
@@ -24,6 +24,7 @@ interface Props {
   onToggle: () => void
   agents?: AgentView[]
   sessions?: SessionRecord[]
+  pendingReviewCounts?: Record<string, number>
   filters: SessionFilters
   onFilter: (patch: Partial<SessionFilters>) => void
   onUpdateSession: (id: string, patch: { title?: string; archived?: boolean }) => Promise<void>
@@ -37,7 +38,7 @@ interface Props {
 }
 
 export default function SessionList({
-  open, onToggle, agents = [], sessions = [], filters, onFilter,
+  open, onToggle, agents = [], sessions = [], pendingReviewCounts = {}, filters, onFilter,
   activeSessionID, activeSessionNodeID, activeSessionBusy, selectedNodeID,
   onSelectSession, onCreateSession, onDeleteSession, onUpdateSession,
 }: Props) {
@@ -159,6 +160,7 @@ export default function SessionList({
                       session={session}
                       active={recordID(session) === activeSessionID}
                       busy={recordID(session) === activeSessionID && activeSessionBusy}
+                      pendingReviews={pendingReviewCounts[recordID(session)] || 0}
                       onSelect={() => onSelectSession(recordID(session))}
                       onDelete={() => onDeleteSession(recordID(session))}
                       onUpdate={(patch) => onUpdateSession(recordID(session), patch)}
@@ -220,11 +222,12 @@ function SidebarPreferences({ expanded }: { expanded: boolean }) {
 }
 
 function SessionItem({
-  session, active, busy, onSelect, onDelete, onUpdate,
+  session, active, busy, pendingReviews, onSelect, onDelete, onUpdate,
 }: {
   session: SessionRecord
   active: boolean
   busy: boolean
+  pendingReviews: number
   onSelect: () => void
   onDelete: () => void
   onUpdate: (patch: { title?: string; archived?: boolean }) => Promise<void>
@@ -269,6 +272,7 @@ function SessionItem({
             : closed ? <span className="h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50" role="status" aria-label={t('closedTask')} title={t('closedTask')} />
               : <MessageSquare className="h-2.5 w-2.5 shrink-0" />}
           <span className="truncate text-[11px] font-medium">{title}</span>
+          {pendingReviews > 0 && <span className="ml-auto inline-flex items-center gap-0.5 text-warning" title={t('pendingReviews', { count: pendingReviews })}><ShieldAlert className="h-3 w-3" /><span className="text-[9px] tabular-nums">{pendingReviews}</span></span>}
         </div>
         <div className="mt-0.5 text-[9px] text-muted-foreground">{time}</div>
       </button>

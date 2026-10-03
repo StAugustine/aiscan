@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/agent/provider"
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	"github.com/chainreactors/cyber/agent/skills"
 	"github.com/chainreactors/cyber/aop"
@@ -19,18 +22,21 @@ import (
 	"github.com/chainreactors/cyber/core/proc"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
+	guardrailext "github.com/chainreactors/cyber/exts/guardrail"
+	ioaclient "github.com/chainreactors/cyber/exts/ioa/client"
+	jevext "github.com/chainreactors/cyber/exts/jev"
+	nativeext "github.com/chainreactors/cyber/exts/native"
+	nodeext "github.com/chainreactors/cyber/exts/node"
+	observeext "github.com/chainreactors/cyber/exts/observe"
+	proxyext "github.com/chainreactors/cyber/exts/proxy"
+	ptyext "github.com/chainreactors/cyber/exts/pty"
+	recapext "github.com/chainreactors/cyber/exts/recap"
+	sessionext "github.com/chainreactors/cyber/exts/session"
+	subagentext "github.com/chainreactors/cyber/exts/subagent"
+	telemetryext "github.com/chainreactors/cyber/exts/telemetry"
+	tuiext "github.com/chainreactors/cyber/exts/tui"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
-	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
-	nativeext "github.com/chainreactors/cyber/pkg/exts/native"
-	nodeext "github.com/chainreactors/cyber/pkg/exts/node"
-	observeext "github.com/chainreactors/cyber/pkg/exts/observe"
-	proxyext "github.com/chainreactors/cyber/pkg/exts/proxy"
-	ptyext "github.com/chainreactors/cyber/pkg/exts/pty"
-	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
-	subagentext "github.com/chainreactors/cyber/pkg/exts/subagent"
-	telemetryext "github.com/chainreactors/cyber/pkg/exts/telemetry"
-	tuiext "github.com/chainreactors/cyber/pkg/exts/tui"
 	nodepkg "github.com/chainreactors/cyber/pkg/node"
 	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	ioatools "github.com/chainreactors/cyber/tools/ioa"
@@ -75,17 +81,19 @@ func parseObserve(value string) []observeext.Kind {
 
 // aiscanProfile owns one reference-distribution extension graph.
 type aiscanProfile struct {
-	extensions *extension.Set
-	providers  *provider.State
-	events     *events.Stream
-	progress   *eventbus.Bus[*toolpb.Progress]
-	processes  *proc.Manager
-	commands   coretool.CommandExecutor
-	bash       *terminaltool.BashTool
-	runtime    *agentsession.Runtime
-	ioa        *ioatools.Service
-	bindings   *consoleapi.Registry
-	namespaces *namespaces.Registry
+	guardrail          *guardrailext.Runtime
+	extensions         *extension.Set
+	providers          *provider.State
+	providerController provider.Controller
+	events             *events.Stream
+	progress           *eventbus.Bus[*toolpb.Progress]
+	processes          *proc.Manager
+	commands           coretool.CommandExecutor
+	bash               *terminaltool.BashTool
+	runtime            *agentsession.Runtime
+	ioa                *ioatools.Service
+	bindings           *consoleapi.Registry
+	namespaces         *namespaces.Registry
 }
 
 var _ profilepkg.Profile = (*aiscanProfile)(nil)
@@ -130,7 +138,25 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	case config.Session == nil && config.Base.Provider.Mode != provider.StartupDisabled:
 		loop = agent.StandardLoop{}
 	}
-	graph, err := extensions(config.Base, loop, workDir, proxyExtension)
+	resolved := config.Option.Resolved
+	if resolved == nil {
+		resolved, err = defaultSections().ResolveValues(config.Option.Extensions, nil, os.LookupEnv)
+		if err != nil {
+			return nil, err
+		}
+	}
+	guardrailConfig, err := cfg.Get[*guardrailext.Config](resolved, guardrailext.ConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	jevConfig, err := cfg.Get[*jevext.Config](resolved, jevext.ConfigKey)
+	if err != nil {
+		return nil, err
+	}
+	// Screening is selected explicitly and independently of acceleration.
+	guardrailValue := *guardrailConfig
+
+	graph, err := extensions(config.Base, loop, workDir, proxyExtension, guardrailValue)
 	if err != nil {
 		return nil, fmt.Errorf("construct Cyber application: %w", err)
 	}
@@ -138,7 +164,23 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	// The graph publishes the capabilities everything else borrows, so it comes
 	// first. The observers follow it: they subscribe to hooks and to the event
 	// stream, both of which fire at run time rather than during load.
-	values := append([]extension.Extension{nodeext.New()}, graph...)
+	values := []extension.Extension{nodeext.New()}
+	if guardrailValue.Provider == "jev" || (jevConfig.Mode != "" && jevConfig.Mode != "off") {
+		if strings.TrimSpace(jevConfig.APIKey) == "" {
+			return nil, fmt.Errorf("JEV requires jev.api_key or TYPESAFE_API_KEY")
+		}
+		duration, _ := time.ParseDuration(jevConfig.Timeout)
+		client := jevapi.New(jevConfig.APIKey, jevConfig.Model, duration)
+		values = append(values, extension.Func{LoadFunc: func(scope *extension.Scope) error { return extension.Provide[*jevapi.Client](scope, client) }, CloseFunc: func(context.Context) error { client.Close(); return nil }})
+	}
+	values = append(values, graph...)
+	if jevConfig.Mode != "" && jevConfig.Mode != "off" {
+		value := *jevConfig
+		if value.Directory == "" {
+			value.Directory = filepath.Join(workDir, ".cyber", "jev")
+		}
+		values = append(values, jevext.New(value))
+	}
 	if strings.TrimSpace(config.Output) != "" {
 		output, err := telemetryext.New(telemetryext.Options{Path: config.Output})
 		if err != nil {
@@ -171,13 +213,15 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 		values = append(values, ioaclient.NewConsole(ioaclient.ConsoleConfig{Space: config.IOA.Space, Endpoint: config.IOA.URL}))
 	}
 	if config.Session != nil {
-		values = append(values, ptyext.New())
+		values = append(values, ptyext.New(), recapext.New())
 		agentConfig := *config.Session
 		agentConfig.NodeName = nodeName
 		agentConfig = sessionext.ConfigFromOption(config.Option, agentConfig)
 		values = append(values, sessionext.New(agentConfig), subagentext.NewTools())
 		values = append(values, sessionext.NewProtocol())
+		values = append(values, guardrailext.NewProtocol())
 		values = append(values, sessionext.NewConsole())
+		values = append(values, guardrailext.NewConsole())
 	}
 	// Last in the slice, so it borrows after everything is published and
 	// releases before anything is torn down. This is how a composition root
@@ -188,6 +232,12 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 			p.ioa = ioa.Service()
 		}
 		if p.providers, err = extension.Use[*provider.State](scope); err != nil {
+			return err
+		}
+		if p.providerController, err = extension.Use[provider.Controller](scope); err != nil {
+			return err
+		}
+		if p.guardrail, err = extension.Use[*guardrailext.Runtime](scope); err != nil {
 			return err
 		}
 		if p.events, err = extension.Use[*events.Stream](scope); err != nil {
@@ -315,7 +365,7 @@ func newAIScanProfile(request profilepkg.Request) (profilepkg.Profile, error) {
 		return nil, fmt.Errorf("cyber profile option is required")
 	}
 	if request.Option.Resolved == nil {
-		resolved, err := defaultSections().ResolveValues(request.Option.Extensions, nil, nil)
+		resolved, err := defaultSections().ResolveValues(request.Option.Extensions, nil, os.LookupEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -365,4 +415,28 @@ func (p *aiscanProfile) Processes() (*proc.Manager, error) {
 
 func (p *aiscanProfile) Active() bool {
 	return p != nil && p.extensions != nil && p.extensions.Active()
+}
+
+// SetGuardrailMode preserves all running sessions and pending invocations.
+func (p *aiscanProfile) SetGuardrailMode(mode string) error {
+	if !p.Active() || p.guardrail == nil {
+		return fmt.Errorf("guardrail runtime is unavailable")
+	}
+	return p.guardrail.SetMode(guardrailext.Mode(mode))
+}
+
+// ReloadProvider delegates live provider changes to the provider extension.
+// Profile construction remains a startup concern; this method only exposes
+// the owner's already-loaded update boundary to the node transport.
+func (p *aiscanProfile) ReloadProvider(ctx context.Context, config provider.ProviderConfig) error {
+	return p.CommitProvider(ctx, config, nil)
+}
+
+// CommitProvider keeps validation, durable config commit and publication in
+// the provider owner's transaction; the installation graph stays active.
+func (p *aiscanProfile) CommitProvider(ctx context.Context, config provider.ProviderConfig, commit func() error) error {
+	if !p.Active() || p.providerController == nil {
+		return fmt.Errorf("provider controller is unavailable")
+	}
+	return p.providerController.Reload(ctx, config, commit)
 }

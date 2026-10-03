@@ -21,7 +21,7 @@ import (
 	coreevents "github.com/chainreactors/cyber/core/events"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
-	"github.com/chainreactors/cyber/internal/testutil/hosttest"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
 
 	terminaltool "github.com/chainreactors/cyber/tools/terminal"
 )
@@ -225,10 +225,7 @@ func TestProviderErrorEmitsAgentEndAndUpdatesState(t *testing.T) {
 		t.Fatalf("last event = %#v, want error", last)
 	}
 	endData := last.GetError()
-	if endData == nil {
-		t.Fatal("error event missing payload")
-	}
-	if endData.Message == "" {
+	if endData == nil || endData.Message == "" {
 		t.Fatalf("error event missing message: %+v", endData)
 	}
 	if a.running {
@@ -464,15 +461,12 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 	tmuxCmd := terminaltool.NewTmuxCommand(bash)
 	commandRegistry := hosttest.Commands(t, tmuxCmd)
 	bash.SetCommandRegistry(commandRegistry)
-	tools := newTestTools(t, bash)
+	tools := newTestTools(t, bash, NewFinishTool())
 	t.Cleanup(bash.Close)
-
-	var capturedRequests []*ChatCompletionRequest
 
 	turnIndex := 0
 	llm := &callbackProvider{
 		fn: func(_ context.Context, req *ChatCompletionRequest) (*ChatCompletionResponse, error) {
-			capturedRequests = append(capturedRequests, cloneRequest(req))
 			turnIndex++
 
 			switch turnIndex {
@@ -581,8 +575,9 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 				}), nil
 
 			case 9:
-				return chatResponse(NewTextMessage("assistant",
-					"Interactive session completed. Verified: echo output, shell variable persistence, and clean exit.")), nil
+				message := NewTextMessage("assistant", "Interactive session completed. Verified: echo output, shell variable persistence, and clean exit.")
+				message.ToolCalls = []ToolCall{{ID: "call-9", Type: "function", Function: FunctionCall{Name: "finish", Arguments: "{}"}}}
+				return chatResponse(message), nil
 
 			default:
 				t.Fatalf("unexpected turn %d", turnIndex)
@@ -595,8 +590,6 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 		Provider: llm,
 		Tools:    tools,
 		Model:    "test",
-		// PTY lifecycle notices may arrive after the scripted final response.
-		MaxTurns: 9,
 	}).Run(context.Background(), TextInput("Start an interactive shell session using tmux, test multi-round interaction"))
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -605,8 +598,8 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 	if !strings.Contains(result.Output, "Interactive session completed") {
 		t.Fatalf("unexpected final output: %q", result.Output)
 	}
-	if turnIndex != 9 {
-		t.Fatalf("expected 9 turns, got %d", turnIndex)
+	if result.Stop != StopReasonTerminated || turnIndex != 9 {
+		t.Fatalf("scripted task stop = %q after %d provider calls", result.Stop, turnIndex)
 	}
 	t.Logf("Agent completed %d turns of tmux interaction successfully", turnIndex)
 }

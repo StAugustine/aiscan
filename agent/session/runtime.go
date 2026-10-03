@@ -52,7 +52,6 @@ type Runtime struct {
 	mu               sync.RWMutex
 	sessions         map[string]*sessionState
 	runs             map[string]*Run
-	requestSeq       uint64
 	closeOnce        sync.Once
 	closeDone        chan struct{}
 	closeErr         error

@@ -25,7 +25,6 @@ const (
 type DistributeConfig struct {
 	state         protoimpl.MessageState      `protogen:"open.v1"`
 	Llm           *LLMConfig                  `protobuf:"bytes,1,opt,name=llm,proto3" json:"llm,omitempty"`
-	Search        *SearchConfig               `protobuf:"bytes,5,opt,name=search,proto3" json:"search,omitempty"`
 	Agent         *AgentConfig                `protobuf:"bytes,7,opt,name=agent,proto3" json:"agent,omitempty"`
 	Extensions    map[string]*structpb.Struct `protobuf:"bytes,8,rep,name=extensions,proto3" json:"extensions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Node          *NodeConfig                 `protobuf:"bytes,9,opt,name=node,proto3" json:"node,omitempty"`
@@ -67,13 +66,6 @@ func (*DistributeConfig) Descriptor() ([]byte, []int) {
 func (x *DistributeConfig) GetLlm() *LLMConfig {
 	if x != nil {
 		return x.Llm
-	}
-	return nil
-}
-
-func (x *DistributeConfig) GetSearch() *SearchConfig {
-	if x != nil {
-		return x.Search
 	}
 	return nil
 }
@@ -334,50 +326,6 @@ func (x *LLMProviderConfig) GetImages() bool {
 	return false
 }
 
-type SearchConfig struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TavilyKeys    string                 `protobuf:"bytes,1,opt,name=tavily_keys,json=tavilyKeys,proto3" json:"tavily_keys,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *SearchConfig) Reset() {
-	*x = SearchConfig{}
-	mi := &file_types_config_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SearchConfig) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SearchConfig) ProtoMessage() {}
-
-func (x *SearchConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SearchConfig.ProtoReflect.Descriptor instead.
-func (*SearchConfig) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *SearchConfig) GetTavilyKeys() string {
-	if x != nil {
-		return x.TavilyKeys
-	}
-	return ""
-}
-
 type AgentConfig struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	Tools                 []string               `protobuf:"bytes,1,rep,name=tools,proto3" json:"tools,omitempty"`
@@ -393,7 +341,7 @@ type AgentConfig struct {
 
 func (x *AgentConfig) Reset() {
 	*x = AgentConfig{}
-	mi := &file_types_config_proto_msgTypes[5]
+	mi := &file_types_config_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -405,7 +353,7 @@ func (x *AgentConfig) String() string {
 func (*AgentConfig) ProtoMessage() {}
 
 func (x *AgentConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[5]
+	mi := &file_types_config_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -418,7 +366,7 @@ func (x *AgentConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentConfig.ProtoReflect.Descriptor instead.
 func (*AgentConfig) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{5}
+	return file_types_config_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AgentConfig) GetTools() []string {
@@ -481,7 +429,7 @@ type TrafficConfig struct {
 
 func (x *TrafficConfig) Reset() {
 	*x = TrafficConfig{}
-	mi := &file_types_config_proto_msgTypes[6]
+	mi := &file_types_config_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -493,7 +441,7 @@ func (x *TrafficConfig) String() string {
 func (*TrafficConfig) ProtoMessage() {}
 
 func (x *TrafficConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[6]
+	mi := &file_types_config_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -506,7 +454,7 @@ func (x *TrafficConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TrafficConfig.ProtoReflect.Descriptor instead.
 func (*TrafficConfig) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{6}
+	return file_types_config_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *TrafficConfig) GetBodyStorage() string {
@@ -549,7 +497,7 @@ type LLMProviderView struct {
 
 func (x *LLMProviderView) Reset() {
 	*x = LLMProviderView{}
-	mi := &file_types_config_proto_msgTypes[7]
+	mi := &file_types_config_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -561,7 +509,7 @@ func (x *LLMProviderView) String() string {
 func (*LLMProviderView) ProtoMessage() {}
 
 func (x *LLMProviderView) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[7]
+	mi := &file_types_config_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -574,7 +522,7 @@ func (x *LLMProviderView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LLMProviderView.ProtoReflect.Descriptor instead.
 func (*LLMProviderView) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{7}
+	return file_types_config_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *LLMProviderView) GetId() string {
@@ -665,7 +613,7 @@ type LLMView struct {
 
 func (x *LLMView) Reset() {
 	*x = LLMView{}
-	mi := &file_types_config_proto_msgTypes[8]
+	mi := &file_types_config_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +625,7 @@ func (x *LLMView) String() string {
 func (*LLMView) ProtoMessage() {}
 
 func (x *LLMView) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[8]
+	mi := &file_types_config_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +638,7 @@ func (x *LLMView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LLMView.ProtoReflect.Descriptor instead.
 func (*LLMView) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{8}
+	return file_types_config_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *LLMView) GetActiveProfile() string {
@@ -714,56 +662,11 @@ func (x *LLMView) GetProviders() []*LLMProviderView {
 	return nil
 }
 
-type SearchView struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	TavilyKeysConfigured bool                   `protobuf:"varint,1,opt,name=tavily_keys_configured,json=tavilyKeysConfigured,proto3" json:"tavily_keys_configured,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
-}
-
-func (x *SearchView) Reset() {
-	*x = SearchView{}
-	mi := &file_types_config_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *SearchView) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*SearchView) ProtoMessage() {}
-
-func (x *SearchView) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use SearchView.ProtoReflect.Descriptor instead.
-func (*SearchView) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *SearchView) GetTavilyKeysConfigured() bool {
-	if x != nil {
-		return x.TavilyKeysConfigured
-	}
-	return false
-}
-
 type ConfigView struct {
 	state         protoimpl.MessageState    `protogen:"open.v1"`
 	Path          string                    `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
 	Loaded        bool                      `protobuf:"varint,2,opt,name=loaded,proto3" json:"loaded,omitempty"`
 	Llm           *LLMView                  `protobuf:"bytes,3,opt,name=llm,proto3" json:"llm,omitempty"`
-	Search        *SearchView               `protobuf:"bytes,7,opt,name=search,proto3" json:"search,omitempty"`
 	Agent         *AgentConfig              `protobuf:"bytes,9,opt,name=agent,proto3" json:"agent,omitempty"`
 	Extensions    map[string]*ExtensionView `protobuf:"bytes,10,rep,name=extensions,proto3" json:"extensions,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Traffic       *TrafficConfig            `protobuf:"bytes,11,opt,name=traffic,proto3" json:"traffic,omitempty"`
@@ -773,7 +676,7 @@ type ConfigView struct {
 
 func (x *ConfigView) Reset() {
 	*x = ConfigView{}
-	mi := &file_types_config_proto_msgTypes[10]
+	mi := &file_types_config_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +688,7 @@ func (x *ConfigView) String() string {
 func (*ConfigView) ProtoMessage() {}
 
 func (x *ConfigView) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[10]
+	mi := &file_types_config_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +701,7 @@ func (x *ConfigView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigView.ProtoReflect.Descriptor instead.
 func (*ConfigView) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{10}
+	return file_types_config_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ConfigView) GetPath() string {
@@ -818,13 +721,6 @@ func (x *ConfigView) GetLoaded() bool {
 func (x *ConfigView) GetLlm() *LLMView {
 	if x != nil {
 		return x.Llm
-	}
-	return nil
-}
-
-func (x *ConfigView) GetSearch() *SearchView {
-	if x != nil {
-		return x.Search
 	}
 	return nil
 }
@@ -858,7 +754,7 @@ type GetConfigRequest struct {
 
 func (x *GetConfigRequest) Reset() {
 	*x = GetConfigRequest{}
-	mi := &file_types_config_proto_msgTypes[11]
+	mi := &file_types_config_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -870,7 +766,7 @@ func (x *GetConfigRequest) String() string {
 func (*GetConfigRequest) ProtoMessage() {}
 
 func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[11]
+	mi := &file_types_config_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -883,7 +779,7 @@ func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{11}
+	return file_types_config_proto_rawDescGZIP(), []int{9}
 }
 
 type GetConfigResponse struct {
@@ -895,7 +791,7 @@ type GetConfigResponse struct {
 
 func (x *GetConfigResponse) Reset() {
 	*x = GetConfigResponse{}
-	mi := &file_types_config_proto_msgTypes[12]
+	mi := &file_types_config_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -907,7 +803,7 @@ func (x *GetConfigResponse) String() string {
 func (*GetConfigResponse) ProtoMessage() {}
 
 func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[12]
+	mi := &file_types_config_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -920,7 +816,7 @@ func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{12}
+	return file_types_config_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetConfigResponse) GetConfig() *ConfigView {
@@ -939,7 +835,7 @@ type UpdateConfigRequest struct {
 
 func (x *UpdateConfigRequest) Reset() {
 	*x = UpdateConfigRequest{}
-	mi := &file_types_config_proto_msgTypes[13]
+	mi := &file_types_config_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -951,7 +847,7 @@ func (x *UpdateConfigRequest) String() string {
 func (*UpdateConfigRequest) ProtoMessage() {}
 
 func (x *UpdateConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[13]
+	mi := &file_types_config_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -964,7 +860,7 @@ func (x *UpdateConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateConfigRequest.ProtoReflect.Descriptor instead.
 func (*UpdateConfigRequest) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{13}
+	return file_types_config_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *UpdateConfigRequest) GetConfig() *DistributeConfig {
@@ -983,7 +879,7 @@ type UpdateConfigResponse struct {
 
 func (x *UpdateConfigResponse) Reset() {
 	*x = UpdateConfigResponse{}
-	mi := &file_types_config_proto_msgTypes[14]
+	mi := &file_types_config_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -995,7 +891,7 @@ func (x *UpdateConfigResponse) String() string {
 func (*UpdateConfigResponse) ProtoMessage() {}
 
 func (x *UpdateConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[14]
+	mi := &file_types_config_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1008,7 +904,7 @@ func (x *UpdateConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateConfigResponse.ProtoReflect.Descriptor instead.
 func (*UpdateConfigResponse) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{14}
+	return file_types_config_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *UpdateConfigResponse) GetConfig() *ConfigView {
@@ -1027,7 +923,7 @@ type ActivateProfileRequest struct {
 
 func (x *ActivateProfileRequest) Reset() {
 	*x = ActivateProfileRequest{}
-	mi := &file_types_config_proto_msgTypes[15]
+	mi := &file_types_config_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1039,7 +935,7 @@ func (x *ActivateProfileRequest) String() string {
 func (*ActivateProfileRequest) ProtoMessage() {}
 
 func (x *ActivateProfileRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[15]
+	mi := &file_types_config_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1052,7 +948,7 @@ func (x *ActivateProfileRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateProfileRequest.ProtoReflect.Descriptor instead.
 func (*ActivateProfileRequest) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{15}
+	return file_types_config_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ActivateProfileRequest) GetProfileId() string {
@@ -1071,7 +967,7 @@ type ActivateProfileResponse struct {
 
 func (x *ActivateProfileResponse) Reset() {
 	*x = ActivateProfileResponse{}
-	mi := &file_types_config_proto_msgTypes[16]
+	mi := &file_types_config_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1083,7 +979,7 @@ func (x *ActivateProfileResponse) String() string {
 func (*ActivateProfileResponse) ProtoMessage() {}
 
 func (x *ActivateProfileResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[16]
+	mi := &file_types_config_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1096,7 +992,7 @@ func (x *ActivateProfileResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateProfileResponse.ProtoReflect.Descriptor instead.
 func (*ActivateProfileResponse) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{16}
+	return file_types_config_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ActivateProfileResponse) GetConfig() *ConfigView {
@@ -1120,7 +1016,7 @@ type LLMProbeRequest struct {
 
 func (x *LLMProbeRequest) Reset() {
 	*x = LLMProbeRequest{}
-	mi := &file_types_config_proto_msgTypes[17]
+	mi := &file_types_config_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1132,7 +1028,7 @@ func (x *LLMProbeRequest) String() string {
 func (*LLMProbeRequest) ProtoMessage() {}
 
 func (x *LLMProbeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[17]
+	mi := &file_types_config_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1145,7 +1041,7 @@ func (x *LLMProbeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LLMProbeRequest.ProtoReflect.Descriptor instead.
 func (*LLMProbeRequest) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{17}
+	return file_types_config_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *LLMProbeRequest) GetProfileId() string {
@@ -1204,7 +1100,7 @@ type LLMProbeResult struct {
 
 func (x *LLMProbeResult) Reset() {
 	*x = LLMProbeResult{}
-	mi := &file_types_config_proto_msgTypes[18]
+	mi := &file_types_config_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1216,7 +1112,7 @@ func (x *LLMProbeResult) String() string {
 func (*LLMProbeResult) ProtoMessage() {}
 
 func (x *LLMProbeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[18]
+	mi := &file_types_config_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1229,7 +1125,7 @@ func (x *LLMProbeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LLMProbeResult.ProtoReflect.Descriptor instead.
 func (*LLMProbeResult) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{18}
+	return file_types_config_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *LLMProbeResult) GetOk() bool {
@@ -1286,7 +1182,7 @@ type ListModelsResult struct {
 
 func (x *ListModelsResult) Reset() {
 	*x = ListModelsResult{}
-	mi := &file_types_config_proto_msgTypes[19]
+	mi := &file_types_config_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1298,7 +1194,7 @@ func (x *ListModelsResult) String() string {
 func (*ListModelsResult) ProtoMessage() {}
 
 func (x *ListModelsResult) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[19]
+	mi := &file_types_config_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1311,7 +1207,7 @@ func (x *ListModelsResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListModelsResult.ProtoReflect.Descriptor instead.
 func (*ListModelsResult) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{19}
+	return file_types_config_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ListModelsResult) GetOk() bool {
@@ -1352,7 +1248,7 @@ type TestConnectionRequest struct {
 
 func (x *TestConnectionRequest) Reset() {
 	*x = TestConnectionRequest{}
-	mi := &file_types_config_proto_msgTypes[20]
+	mi := &file_types_config_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1364,7 +1260,7 @@ func (x *TestConnectionRequest) String() string {
 func (*TestConnectionRequest) ProtoMessage() {}
 
 func (x *TestConnectionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[20]
+	mi := &file_types_config_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1377,7 +1273,7 @@ func (x *TestConnectionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestConnectionRequest.ProtoReflect.Descriptor instead.
 func (*TestConnectionRequest) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{20}
+	return file_types_config_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *TestConnectionRequest) GetSection() string {
@@ -1407,7 +1303,7 @@ type ConnectionCheck struct {
 
 func (x *ConnectionCheck) Reset() {
 	*x = ConnectionCheck{}
-	mi := &file_types_config_proto_msgTypes[21]
+	mi := &file_types_config_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1419,7 +1315,7 @@ func (x *ConnectionCheck) String() string {
 func (*ConnectionCheck) ProtoMessage() {}
 
 func (x *ConnectionCheck) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[21]
+	mi := &file_types_config_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1432,7 +1328,7 @@ func (x *ConnectionCheck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionCheck.ProtoReflect.Descriptor instead.
 func (*ConnectionCheck) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{21}
+	return file_types_config_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ConnectionCheck) GetName() string {
@@ -1479,7 +1375,7 @@ type TestConnectionResponse struct {
 
 func (x *TestConnectionResponse) Reset() {
 	*x = TestConnectionResponse{}
-	mi := &file_types_config_proto_msgTypes[22]
+	mi := &file_types_config_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1491,7 +1387,7 @@ func (x *TestConnectionResponse) String() string {
 func (*TestConnectionResponse) ProtoMessage() {}
 
 func (x *TestConnectionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[22]
+	mi := &file_types_config_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1504,7 +1400,7 @@ func (x *TestConnectionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TestConnectionResponse.ProtoReflect.Descriptor instead.
 func (*TestConnectionResponse) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{22}
+	return file_types_config_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *TestConnectionResponse) GetChecks() []*ConnectionCheck {
@@ -1524,7 +1420,7 @@ type ExtensionView struct {
 
 func (x *ExtensionView) Reset() {
 	*x = ExtensionView{}
-	mi := &file_types_config_proto_msgTypes[23]
+	mi := &file_types_config_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +1432,7 @@ func (x *ExtensionView) String() string {
 func (*ExtensionView) ProtoMessage() {}
 
 func (x *ExtensionView) ProtoReflect() protoreflect.Message {
-	mi := &file_types_config_proto_msgTypes[23]
+	mi := &file_types_config_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +1445,7 @@ func (x *ExtensionView) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExtensionView.ProtoReflect.Descriptor instead.
 func (*ExtensionView) Descriptor() ([]byte, []int) {
-	return file_types_config_proto_rawDescGZIP(), []int{23}
+	return file_types_config_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ExtensionView) GetValues() *structpb.Struct {
@@ -1570,10 +1466,9 @@ var File_types_config_proto protoreflect.FileDescriptor
 
 const file_types_config_proto_rawDesc = "" +
 	"\n" +
-	"\x12types/config.proto\x12\fcyber.config\x1a\x1cgoogle/protobuf/struct.proto\"\xcc\x03\n" +
+	"\x12types/config.proto\x12\fcyber.config\x1a\x1cgoogle/protobuf/struct.proto\"\xa6\x03\n" +
 	"\x10DistributeConfig\x12)\n" +
-	"\x03llm\x18\x01 \x01(\v2\x17.cyber.config.LLMConfigR\x03llm\x122\n" +
-	"\x06search\x18\x05 \x01(\v2\x1a.cyber.config.SearchConfigR\x06search\x12/\n" +
+	"\x03llm\x18\x01 \x01(\v2\x17.cyber.config.LLMConfigR\x03llm\x12/\n" +
 	"\x05agent\x18\a \x01(\v2\x19.cyber.config.AgentConfigR\x05agent\x12N\n" +
 	"\n" +
 	"extensions\x18\b \x03(\v2..cyber.config.DistributeConfig.ExtensionsEntryR\n" +
@@ -1583,7 +1478,7 @@ const file_types_config_proto_rawDesc = "" +
 	" \x01(\v2\x1b.cyber.config.TrafficConfigR\atraffic\x1aV\n" +
 	"\x0fExtensionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12-\n" +
-	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x06\x10\aR\x03ioa\"0\n" +
+	"\x05value\x18\x02 \x01(\v2\x17.google.protobuf.StructR\x05value:\x028\x01J\x04\b\x02\x10\x03J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aR\x03ioaR\x06search\"0\n" +
 	"\n" +
 	"NodeConfig\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -1605,10 +1500,7 @@ const file_types_config_proto_rawDesc = "" +
 	"\atimeout\x18\n" +
 	" \x01(\x05R\atimeout\x12\x1b\n" +
 	"\x06images\x18\v \x01(\bH\x00R\x06images\x88\x01\x01B\t\n" +
-	"\a_images\"/\n" +
-	"\fSearchConfig\x12\x1f\n" +
-	"\vtavily_keys\x18\x01 \x01(\tR\n" +
-	"tavilyKeys\"\x8f\x02\n" +
+	"\a_images\"\x8f\x02\n" +
 	"\vAgentConfig\x12\x14\n" +
 	"\x05tools\x18\x01 \x03(\tR\x05tools\x12\x1d\n" +
 	"\atimeout\x18\x02 \x01(\x05H\x00R\atimeout\x88\x01\x01\x12\x1c\n" +
@@ -1643,16 +1535,12 @@ const file_types_config_proto_rawDesc = "" +
 	"\aLLMView\x12%\n" +
 	"\x0eactive_profile\x18\x01 \x01(\tR\ractiveProfile\x125\n" +
 	"\x06active\x18\x02 \x01(\v2\x1d.cyber.config.LLMProviderViewR\x06active\x12;\n" +
-	"\tproviders\x18\x03 \x03(\v2\x1d.cyber.config.LLMProviderViewR\tproviders\"B\n" +
-	"\n" +
-	"SearchView\x124\n" +
-	"\x16tavily_keys_configured\x18\x01 \x01(\bR\x14tavilyKeysConfigured\"\xbe\x03\n" +
+	"\tproviders\x18\x03 \x03(\v2\x1d.cyber.config.LLMProviderViewR\tproviders\"\x9a\x03\n" +
 	"\n" +
 	"ConfigView\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
 	"\x06loaded\x18\x02 \x01(\bR\x06loaded\x12'\n" +
-	"\x03llm\x18\x03 \x01(\v2\x15.cyber.config.LLMViewR\x03llm\x120\n" +
-	"\x06search\x18\a \x01(\v2\x18.cyber.config.SearchViewR\x06search\x12/\n" +
+	"\x03llm\x18\x03 \x01(\v2\x15.cyber.config.LLMViewR\x03llm\x12/\n" +
 	"\x05agent\x18\t \x01(\v2\x19.cyber.config.AgentConfigR\x05agent\x12H\n" +
 	"\n" +
 	"extensions\x18\n" +
@@ -1661,7 +1549,7 @@ const file_types_config_proto_rawDesc = "" +
 	"\atraffic\x18\v \x01(\v2\x1b.cyber.config.TrafficConfigR\atraffic\x1aZ\n" +
 	"\x0fExtensionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x121\n" +
-	"\x05value\x18\x02 \x01(\v2\x1b.cyber.config.ExtensionViewR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aJ\x04\b\b\x10\tR\x03ioa\"\x12\n" +
+	"\x05value\x18\x02 \x01(\v2\x1b.cyber.config.ExtensionViewR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\x05\x10\x06J\x04\b\x06\x10\aJ\x04\b\a\x10\bJ\x04\b\b\x10\tR\x03ioaR\x06search\"\x12\n" +
 	"\x10GetConfigRequest\"E\n" +
 	"\x11GetConfigResponse\x120\n" +
 	"\x06config\x18\x01 \x01(\v2\x18.cyber.config.ConfigViewR\x06config\"M\n" +
@@ -1723,65 +1611,61 @@ func file_types_config_proto_rawDescGZIP() []byte {
 	return file_types_config_proto_rawDescData
 }
 
-var file_types_config_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_types_config_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_types_config_proto_goTypes = []any{
 	(*DistributeConfig)(nil),        // 0: cyber.config.DistributeConfig
 	(*NodeConfig)(nil),              // 1: cyber.config.NodeConfig
 	(*LLMConfig)(nil),               // 2: cyber.config.LLMConfig
 	(*LLMProviderConfig)(nil),       // 3: cyber.config.LLMProviderConfig
-	(*SearchConfig)(nil),            // 4: cyber.config.SearchConfig
-	(*AgentConfig)(nil),             // 5: cyber.config.AgentConfig
-	(*TrafficConfig)(nil),           // 6: cyber.config.TrafficConfig
-	(*LLMProviderView)(nil),         // 7: cyber.config.LLMProviderView
-	(*LLMView)(nil),                 // 8: cyber.config.LLMView
-	(*SearchView)(nil),              // 9: cyber.config.SearchView
-	(*ConfigView)(nil),              // 10: cyber.config.ConfigView
-	(*GetConfigRequest)(nil),        // 11: cyber.config.GetConfigRequest
-	(*GetConfigResponse)(nil),       // 12: cyber.config.GetConfigResponse
-	(*UpdateConfigRequest)(nil),     // 13: cyber.config.UpdateConfigRequest
-	(*UpdateConfigResponse)(nil),    // 14: cyber.config.UpdateConfigResponse
-	(*ActivateProfileRequest)(nil),  // 15: cyber.config.ActivateProfileRequest
-	(*ActivateProfileResponse)(nil), // 16: cyber.config.ActivateProfileResponse
-	(*LLMProbeRequest)(nil),         // 17: cyber.config.LLMProbeRequest
-	(*LLMProbeResult)(nil),          // 18: cyber.config.LLMProbeResult
-	(*ListModelsResult)(nil),        // 19: cyber.config.ListModelsResult
-	(*TestConnectionRequest)(nil),   // 20: cyber.config.TestConnectionRequest
-	(*ConnectionCheck)(nil),         // 21: cyber.config.ConnectionCheck
-	(*TestConnectionResponse)(nil),  // 22: cyber.config.TestConnectionResponse
-	(*ExtensionView)(nil),           // 23: cyber.config.ExtensionView
-	nil,                             // 24: cyber.config.DistributeConfig.ExtensionsEntry
-	nil,                             // 25: cyber.config.ConfigView.ExtensionsEntry
-	(*structpb.Struct)(nil),         // 26: google.protobuf.Struct
+	(*AgentConfig)(nil),             // 4: cyber.config.AgentConfig
+	(*TrafficConfig)(nil),           // 5: cyber.config.TrafficConfig
+	(*LLMProviderView)(nil),         // 6: cyber.config.LLMProviderView
+	(*LLMView)(nil),                 // 7: cyber.config.LLMView
+	(*ConfigView)(nil),              // 8: cyber.config.ConfigView
+	(*GetConfigRequest)(nil),        // 9: cyber.config.GetConfigRequest
+	(*GetConfigResponse)(nil),       // 10: cyber.config.GetConfigResponse
+	(*UpdateConfigRequest)(nil),     // 11: cyber.config.UpdateConfigRequest
+	(*UpdateConfigResponse)(nil),    // 12: cyber.config.UpdateConfigResponse
+	(*ActivateProfileRequest)(nil),  // 13: cyber.config.ActivateProfileRequest
+	(*ActivateProfileResponse)(nil), // 14: cyber.config.ActivateProfileResponse
+	(*LLMProbeRequest)(nil),         // 15: cyber.config.LLMProbeRequest
+	(*LLMProbeResult)(nil),          // 16: cyber.config.LLMProbeResult
+	(*ListModelsResult)(nil),        // 17: cyber.config.ListModelsResult
+	(*TestConnectionRequest)(nil),   // 18: cyber.config.TestConnectionRequest
+	(*ConnectionCheck)(nil),         // 19: cyber.config.ConnectionCheck
+	(*TestConnectionResponse)(nil),  // 20: cyber.config.TestConnectionResponse
+	(*ExtensionView)(nil),           // 21: cyber.config.ExtensionView
+	nil,                             // 22: cyber.config.DistributeConfig.ExtensionsEntry
+	nil,                             // 23: cyber.config.ConfigView.ExtensionsEntry
+	(*structpb.Struct)(nil),         // 24: google.protobuf.Struct
 }
 var file_types_config_proto_depIdxs = []int32{
 	2,  // 0: cyber.config.DistributeConfig.llm:type_name -> cyber.config.LLMConfig
-	4,  // 1: cyber.config.DistributeConfig.search:type_name -> cyber.config.SearchConfig
-	5,  // 2: cyber.config.DistributeConfig.agent:type_name -> cyber.config.AgentConfig
-	24, // 3: cyber.config.DistributeConfig.extensions:type_name -> cyber.config.DistributeConfig.ExtensionsEntry
-	1,  // 4: cyber.config.DistributeConfig.node:type_name -> cyber.config.NodeConfig
-	6,  // 5: cyber.config.DistributeConfig.traffic:type_name -> cyber.config.TrafficConfig
-	3,  // 6: cyber.config.LLMConfig.providers:type_name -> cyber.config.LLMProviderConfig
-	7,  // 7: cyber.config.LLMView.active:type_name -> cyber.config.LLMProviderView
-	7,  // 8: cyber.config.LLMView.providers:type_name -> cyber.config.LLMProviderView
-	8,  // 9: cyber.config.ConfigView.llm:type_name -> cyber.config.LLMView
-	9,  // 10: cyber.config.ConfigView.search:type_name -> cyber.config.SearchView
-	5,  // 11: cyber.config.ConfigView.agent:type_name -> cyber.config.AgentConfig
-	25, // 12: cyber.config.ConfigView.extensions:type_name -> cyber.config.ConfigView.ExtensionsEntry
-	6,  // 13: cyber.config.ConfigView.traffic:type_name -> cyber.config.TrafficConfig
-	10, // 14: cyber.config.GetConfigResponse.config:type_name -> cyber.config.ConfigView
-	0,  // 15: cyber.config.UpdateConfigRequest.config:type_name -> cyber.config.DistributeConfig
-	10, // 16: cyber.config.UpdateConfigResponse.config:type_name -> cyber.config.ConfigView
-	10, // 17: cyber.config.ActivateProfileResponse.config:type_name -> cyber.config.ConfigView
-	0,  // 18: cyber.config.TestConnectionRequest.config:type_name -> cyber.config.DistributeConfig
-	21, // 19: cyber.config.TestConnectionResponse.checks:type_name -> cyber.config.ConnectionCheck
-	26, // 20: cyber.config.ExtensionView.values:type_name -> google.protobuf.Struct
-	26, // 21: cyber.config.DistributeConfig.ExtensionsEntry.value:type_name -> google.protobuf.Struct
-	23, // 22: cyber.config.ConfigView.ExtensionsEntry.value:type_name -> cyber.config.ExtensionView
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	4,  // 1: cyber.config.DistributeConfig.agent:type_name -> cyber.config.AgentConfig
+	22, // 2: cyber.config.DistributeConfig.extensions:type_name -> cyber.config.DistributeConfig.ExtensionsEntry
+	1,  // 3: cyber.config.DistributeConfig.node:type_name -> cyber.config.NodeConfig
+	5,  // 4: cyber.config.DistributeConfig.traffic:type_name -> cyber.config.TrafficConfig
+	3,  // 5: cyber.config.LLMConfig.providers:type_name -> cyber.config.LLMProviderConfig
+	6,  // 6: cyber.config.LLMView.active:type_name -> cyber.config.LLMProviderView
+	6,  // 7: cyber.config.LLMView.providers:type_name -> cyber.config.LLMProviderView
+	7,  // 8: cyber.config.ConfigView.llm:type_name -> cyber.config.LLMView
+	4,  // 9: cyber.config.ConfigView.agent:type_name -> cyber.config.AgentConfig
+	23, // 10: cyber.config.ConfigView.extensions:type_name -> cyber.config.ConfigView.ExtensionsEntry
+	5,  // 11: cyber.config.ConfigView.traffic:type_name -> cyber.config.TrafficConfig
+	8,  // 12: cyber.config.GetConfigResponse.config:type_name -> cyber.config.ConfigView
+	0,  // 13: cyber.config.UpdateConfigRequest.config:type_name -> cyber.config.DistributeConfig
+	8,  // 14: cyber.config.UpdateConfigResponse.config:type_name -> cyber.config.ConfigView
+	8,  // 15: cyber.config.ActivateProfileResponse.config:type_name -> cyber.config.ConfigView
+	0,  // 16: cyber.config.TestConnectionRequest.config:type_name -> cyber.config.DistributeConfig
+	19, // 17: cyber.config.TestConnectionResponse.checks:type_name -> cyber.config.ConnectionCheck
+	24, // 18: cyber.config.ExtensionView.values:type_name -> google.protobuf.Struct
+	24, // 19: cyber.config.DistributeConfig.ExtensionsEntry.value:type_name -> google.protobuf.Struct
+	21, // 20: cyber.config.ConfigView.ExtensionsEntry.value:type_name -> cyber.config.ExtensionView
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_types_config_proto_init() }
@@ -1790,15 +1674,15 @@ func file_types_config_proto_init() {
 		return
 	}
 	file_types_config_proto_msgTypes[3].OneofWrappers = []any{}
-	file_types_config_proto_msgTypes[5].OneofWrappers = []any{}
-	file_types_config_proto_msgTypes[7].OneofWrappers = []any{}
+	file_types_config_proto_msgTypes[4].OneofWrappers = []any{}
+	file_types_config_proto_msgTypes[6].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_types_config_proto_rawDesc), len(file_types_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   26,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

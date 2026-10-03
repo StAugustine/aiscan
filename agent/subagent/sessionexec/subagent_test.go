@@ -137,6 +137,7 @@ func TestSubAgentUsesExecutingAgentContext(t *testing.T) {
 		data := event.GetSessionStarted()
 		if data == nil {
 			t.Fatal("session.started payload missing")
+			return
 		}
 		if data.ParentSessionId != "active-session" {
 			t.Fatalf("parent session = %q, want active-session", data.ParentSessionId)

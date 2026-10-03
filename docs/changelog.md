@@ -1,8 +1,43 @@
 # Changelog
 
-## Unreleased
+## v1.0.0-rc7 — 任务摘要、工具审批与运行稳定性
 
-- Host 的阻塞输入取消测试现在先等待读操作开始，再关闭管道，修复偶发的 CI 失败（#156；此提交不在 rc6 标签中）。
+rc7 新增任务摘要和工具审批，完善 Web 与交互式 CLI 的消息展示、会话恢复和附件提交，并在保留整体架构的基础上清理冗余中转与序列化机制。此版本整合 #159、#163，以及 rc6 标签之后的 #156。
+
+### New Features
+
+- 根任务结束后，Web 和交互式 CLI 异步生成一句话摘要，优先使用当前 Provider 可用的小模型，不可用时回退到当前模型。摘要关联原任务，支持迟到与历史回放，不进入后续模型上下文；CLI 生成摘要时保留输入草稿与光标。
+- 新增 Guardrail 的工具执行检查与人工审批。Web 和 CLI 展示运行时确认的审批状态，可处理等待中的审批并继续原任务。
+
+### Bug Fixes
+
+- Goal 时间线保留各轮正文、评估和上下文压缩的顺序，获批任务中的后续轮次不再被归并后丢失；摘要回放和重复事件不会生成重复卡片。
+- 修复仅图片消息无法提交的问题，图片和附件沿用现有消息输入契约。
+- 重连从已确认的事件游标继续订阅，增量恢复运行状态，避免重复加载完整历史与重复渲染。扫描归档变化后按需刷新结果。
+- 修复 Provider 重试与流式响应边界，累计失败尝试的实际用量，保留空思考字段的存在语义，并清除失败尝试的临时流式输出。
+- AOP 连接保留首次失败的真实原因，避免写入失败触发关闭后，被随后的读取错误覆盖；补齐连接替换和关闭的重复竞态验收。
+- 审计预检与 Arsenal 命令共享同一管理器，避免工具目录状态不同步；凭据脱敏保留命令参数名。
+- 修复阻塞输入取消、后台输出等待和 tmux 多轮交互测试中的时序问题，验收仍检查完整输出、终止原因和 UTF-8 边界。
+
+### Architecture And Compatibility
+
+- 保留当前整体架构，移除结果、配置、事件和工具参数中的重复 DTO、JSON 往返与纯转发层，直接传递已有原生类型。
+- Web 基于原始 AOP 事件增量维护视图，移除重复运行状态、扫描结果缓存和重连后的全量刷新机制。
+- 事件和扫描记录改用当前结构化存储。旧 `event_json`、`scan_json` 布局需要离线迁移，服务不会自动重建或丢弃已有数据。
+
+**升级前先停止 Web 服务并备份数据库。** 对使用旧布局的数据库分别执行适用的迁移命令，再启动新版；迁移失败时恢复备份：
+
+```bash
+go run ./cmd/migrate-events -db <database-path>
+go run ./cmd/migrate-scans -db <database-path>
+```
+
+迁移保留记录标识、事件游标顺序、可选字段和时间戳；遇到无效数据会回滚。新建数据库无需执行这些命令。
+
+### Distribution
+
+- 发布 `aiscan`、`aiscan-full` 和 `cyber-audit`，覆盖 Linux、macOS、Windows 的 amd64/arm64，共 18 个 ZIP 与 `aiscan_checksums.txt`。
+- 发布门禁覆盖 Go 竞态与覆盖率、静态检查、扫描器与真实浏览器 E2E、前端构建和消息回放验收。Linux amd64/arm64 与 Windows amd64 会运行实际发布包，验证启动、版本、Web 入口和审计单文件工具执行；Windows amd64 产物在 UPX 压缩后再次验收。
 
 ## v1.0.0-rc6 — 独立审计、扫描证据与中立宿主
 
@@ -56,7 +91,7 @@ rc5 修复内置 Skill 文件读取、Shell 组合命令和 Goal 模式的流式
 - 合并 `pkg/base` 到 `pkg/harness`，以 `BaseConfig` 和 `BaseExtensions` 提供默认能力。
 - 将 `pkg/commands` 与 `pkg/toolset` 归入 `core/tool`，保留独立的命令和工具注册表；进程会话桥接从 `agent/proc` 移至 `core/proc`。
 - 应用配置与输出分别从 `core/config`、`core/output` 移至 `pkg/config`、`pkg/output`；发布版本注入路径同步更新。
-- aiscan 运行模式从 `pkg/runner` 收回 `cmd/aiscan`；测试辅助归入 `internal/testutil`，保留 host/app 两层。
+- aiscan 运行模式从 `pkg/runner` 收回 `cmd/aiscan`；测试辅助归入 `pkg/internal/testutil`，保留 host/app 两层。
 - IOA client/server 的 CLI、IOA client 和 Session 的 Console 适配并入所属扩展包，保留独立安装入口。
 
 - 将参考发行版组装从 `pkg/aiscan` 内联至 `cmd/aiscan`，移除公开的 `pkg/aiscan.New` 入口。嵌入方可使用 `pkg/harness` 构造通用宿主，或显式组合扩展；它们不自动提供完整 aiscan 发行版。CLI、配置字段和协议保持不变。

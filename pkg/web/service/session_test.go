@@ -78,7 +78,7 @@ func TestAOPRequestIDReplayDoesNotDispatchTwice(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	sent := bindAgentQueue(fake, 8)
@@ -133,7 +133,7 @@ func TestOpenSessionLinksTypedScanExtension(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	bindAgentQueue(fake, 1)
@@ -234,7 +234,7 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	sent := bindAgentQueue(fake, 8)
@@ -334,7 +334,7 @@ func TestAOPRequestLedgerSurvivesServerRestart(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	bindAgentQueue(fake, 1)
@@ -386,7 +386,7 @@ func TestListEventsReplayHasNoSideEffects(t *testing.T) {
 		nodeID:    "agent-1", name: "worker",
 	}
 	sent := bindAgentQueue(remote, 8)
-	taskCh := make(chan taskResult, 1)
+	taskCh := make(chan proto.Message, 1)
 	remote.tasks["task-1"] = taskCh
 	pool.register(remote)
 
@@ -490,7 +490,7 @@ func TestCloseSessionMarksStoreClosedAndRecordsEvent(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
 		nodeID:    "agent-1", name: "agent-1",
 	}
 	bindAgentQueue(fake, 1)

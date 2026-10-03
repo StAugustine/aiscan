@@ -12,12 +12,13 @@ import (
 	"github.com/chainreactors/cyber/core/hooks"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
-	fileext "github.com/chainreactors/cyber/pkg/exts/files"
-	promptext "github.com/chainreactors/cyber/pkg/exts/prompt"
-	providerext "github.com/chainreactors/cyber/pkg/exts/provider"
-	skillsext "github.com/chainreactors/cyber/pkg/exts/skills"
-	terminalext "github.com/chainreactors/cyber/pkg/exts/terminal"
-	tmuxext "github.com/chainreactors/cyber/pkg/exts/tmux"
+	fileext "github.com/chainreactors/cyber/exts/files"
+	guardrailext "github.com/chainreactors/cyber/exts/guardrail"
+	promptext "github.com/chainreactors/cyber/exts/prompt"
+	providerext "github.com/chainreactors/cyber/exts/provider"
+	skillsext "github.com/chainreactors/cyber/exts/skills"
+	terminalext "github.com/chainreactors/cyber/exts/terminal"
+	tmuxext "github.com/chainreactors/cyber/exts/tmux"
 
 	"github.com/chainreactors/cyber/tools/files"
 )
@@ -31,6 +32,7 @@ type BaseConfig struct {
 	Terminal     terminalext.Config
 	Provider     provider.StartupConfig
 	Logger       telemetry.Logger
+	Guardrail    guardrailext.Config
 	// Egress publishes the routing endpoint the terminal borrows. A host that
 	// installs a proxy passes that extension; one that routes nothing passes
 	// NoEgress.
@@ -67,6 +69,7 @@ func BaseExtensions(c BaseConfig) ([]extension.Extension, error) {
 		extension.Provided[telemetry.Logger](c.Logger),
 		coretool.NewCommandRegistry(),
 		coretool.NewToolRegistry(),
+		guardrailext.New(c.Guardrail),
 		library,
 		promptext.New(),
 		egressProvider,

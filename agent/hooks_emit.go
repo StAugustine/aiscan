@@ -4,8 +4,63 @@ import (
 	"context"
 
 	"github.com/chainreactors/cyber/agent/hooks"
+	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/operation"
+	"google.golang.org/protobuf/proto"
 )
+
+func afterModelHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) {
+	if !hooks.AfterModel.Has(cfg.Hooks) {
+		return
+	}
+	snapshot := make([]*aop.Message, len(messages))
+	for i, message := range messages {
+		snapshot[i] = proto.CloneOf(message)
+	}
+	cfg.Messages = snapshot
+	ctx = ContextWithToolAgentConfig(ctx, cfg)
+	_, err := hooks.AfterModel.Emit(ctx, cfg.Hooks, hooks.ContextEvent{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: snapshot,
+	})
+	if err != nil {
+		cfg.Logger.Warnf("after model: %v", err)
+	}
+}
+
+func appendModelHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) []*aop.Message {
+	if !hooks.BeforeModel.Has(cfg.Hooks) {
+		return nil
+	}
+	snapshot := make([]*aop.Message, len(messages))
+	for i, message := range messages {
+		snapshot[i] = proto.CloneOf(message)
+	}
+	cfg.Messages = snapshot
+	ctx = ContextWithToolAgentConfig(ctx, cfg)
+	ctx = operation.ContextWithInvocation(ctx, operation.Invocation{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Emitter: cfg.AgentName,
+	})
+	result, err := hooks.BeforeModel.Emit(ctx, cfg.Hooks, hooks.ContextEvent{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: snapshot,
+	})
+	if err != nil {
+		cfg.Logger.Warnf("before model: %v", err)
+	}
+	var appended []*aop.Message
+	for _, message := range result {
+		// A controller contributes observations, never fabricated assistant calls
+		// or tool results without a corresponding model-issued call.
+		if message == nil || message.Role != "user" || len(provider.MessageToolCalls(message)) != 0 || provider.MessageToolResult(message) != nil {
+			continue
+		}
+		message = proto.CloneOf(message)
+		message.Id = cfg.emitter.allocMessageID()
+		cfg.emitter.messageProto(message)
+		appended = append(appended, message)
+	}
+	return appended
+}
 
 // The kernel reaches the typed hook registry only through these helpers. Each
 // helper preserves the zero-handler fast path exposed by hooks.Registry.

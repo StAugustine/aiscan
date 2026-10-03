@@ -205,7 +205,7 @@ func (t *tmuxCommand) createSession(ctx context.Context, cmdLine, name string, t
 			parent.OnBackground(execution)
 		}
 		info, _ := execution.Session()
-		t.bash.startMonitor(info, inbox.FromContext(ctx))
+		t.bash.startMonitor(info, execution.Dir, inbox.FromContext(ctx))
 	}
 	return execution, nil
 }
@@ -400,7 +400,7 @@ func (t *tmuxCommand) cmdWaitFor(ctx context.Context, args []string) (string, er
 				return "", fmt.Errorf("tmux session %s not found", id)
 			}
 			if info.State == proc.StateRunning {
-				t.bash.startMonitor(info, ib)
+				t.bash.startMonitor(info, "", ib)
 				return fmt.Sprintf("%s: still running in tmux; foreground wait interrupted. Completion will arrive through Inbox.", id), nil
 			}
 		case <-ctx.Done():

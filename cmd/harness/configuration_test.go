@@ -35,6 +35,17 @@ func assertProfile(t *testing.T, response map[string]any, id string) {
 	assertField(t, response, "model-"+id, "config", "llm", "active", "model")
 }
 
+func assertSearchConfigured(t *testing.T, response map[string]any) {
+	t.Helper()
+	flags, _ := field(response, "config", "extensions", "search", "configuredSecrets").([]any)
+	for _, flag := range flags {
+		if flag == "tavily_keys" {
+			return
+		}
+	}
+	t.Fatalf("search secret flag is missing: %v", response)
+}
+
 func TestUserConfigurationAcrossCrashAndRestart(t *testing.T) {
 	w := newWorkspace(t)
 	p := w.start(t)
@@ -53,7 +64,7 @@ func TestUserConfigurationAcrossCrashAndRestart(t *testing.T) {
 
 	t.Log("save profiles in one client and observe them from another")
 	incoming := profileConfig("daily")
-	incoming["search"] = map[string]any{"tavilyKeys": "harness-only-placeholder"}
+	incoming["extensions"] = map[string]any{"search": map[string]any{"tavily_keys": "harness-only-placeholder"}}
 	response := editor.call(t, http.MethodPost, configRPC+"UpdateConfig", map[string]any{"config": incoming}, http.StatusOK)
 	assertProfile(t, response, "daily")
 	assertProfile(t, observer.config(t), "daily")
@@ -77,10 +88,10 @@ func TestUserConfigurationAcrossCrashAndRestart(t *testing.T) {
 
 	t.Log("recover with a valid edit; blank secret fields retain the existing setting")
 	next := profileConfig("review")
-	next["search"] = map[string]any{"tavilyKeys": ""}
+	next["extensions"] = map[string]any{"search": map[string]any{"tavily_keys": ""}}
 	editor.call(t, http.MethodPost, configRPC+"UpdateConfig", map[string]any{"config": next}, http.StatusOK)
 	assertProfile(t, observer.config(t), "review")
-	assertField(t, observer.config(t), true, "config", "search", "tavilyKeysConfigured")
+	assertSearchConfigured(t, observer.config(t))
 	if !bytes.Contains(readFile(t, w.config), []byte("harness-only-placeholder")) {
 		t.Fatal("blank secret edit lost the stored setting")
 	}
@@ -94,7 +105,7 @@ func TestUserConfigurationAcrossCrashAndRestart(t *testing.T) {
 	p = w.start(t)
 	reopened := p.user(t, "reopened")
 	assertProfile(t, reopened.config(t), "review")
-	assertField(t, reopened.config(t), true, "config", "search", "tavilyKeysConfigured")
+	assertSearchConfigured(t, reopened.config(t))
 	reopened.call(t, http.MethodPost, configRPC+"ActivateProfile", map[string]any{"profileId": "offline"}, http.StatusOK)
 	assertProfile(t, reopened.config(t), "offline")
 

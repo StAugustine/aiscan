@@ -3,15 +3,17 @@ package main
 import (
 	"context"
 	"github.com/chainreactors/cyber/core/resource"
+	guardrailext "github.com/chainreactors/cyber/exts/guardrail"
+	ioaclient "github.com/chainreactors/cyber/exts/ioa/client"
+	ioaserver "github.com/chainreactors/cyber/exts/ioa/server"
+	jevext "github.com/chainreactors/cyber/exts/jev"
 	hostcli "github.com/chainreactors/cyber/pkg/cli"
 	cfg "github.com/chainreactors/cyber/pkg/config"
-	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
-	ioaserver "github.com/chainreactors/cyber/pkg/exts/ioa/server"
 
-	recordext "github.com/chainreactors/cyber/pkg/exts/record"
-	scannerext "github.com/chainreactors/cyber/pkg/exts/scanner"
-	searchext "github.com/chainreactors/cyber/pkg/exts/search"
-	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
+	recordext "github.com/chainreactors/cyber/exts/record"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	searchext "github.com/chainreactors/cyber/exts/search"
+	sessionext "github.com/chainreactors/cyber/exts/session"
 	flags "github.com/jessevdk/go-flags"
 	"sync"
 )
@@ -52,6 +54,8 @@ func declareResources(cli *hostcli.Registry, agentOptions *cfg.AgentOptions) *cf
 		})
 	}))
 	mustDeclare(recordext.Declare(resources))
+	mustDeclare(guardrailext.Declare(resources))
+	mustDeclare(jevext.Declare(resources))
 	mustDeclare(scannerext.Declare(resources))
 	mustDeclare(searchext.Declare(resources))
 	if agentOptions != nil {

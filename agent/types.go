@@ -90,13 +90,6 @@ func (noLoop) Run(context.Context, Config) (*Result, error) {
 	return nil, fmt.Errorf("agent loop is not configured")
 }
 
-type ToolFlowDecision int
-
-const (
-	ToolFlowContinue ToolFlowDecision = iota
-	ToolFlowTerminate
-)
-
 // SystemPromptFunc resolves the system prompt once at the start of a run.
 type SystemPromptFunc func(context.Context, *Config) (string, error)
 
@@ -119,7 +112,7 @@ type Config struct {
 	Compaction       CompactionSettings
 	Temperature      *float64
 	Stream           bool
-	MaxRetries       int
+	MaxRetries       int // Zero selects the default; a negative value disables retries.
 	TokenBudget      int
 	Logger           telemetry.Logger
 	TransformContext TransformContextFunc
@@ -196,7 +189,7 @@ func (c Config) init() Config {
 	if c.Logger == nil {
 		c.Logger = telemetry.NopLogger()
 	}
-	if c.MaxRetries <= 0 {
+	if c.MaxRetries == 0 {
 		c.MaxRetries = DefaultMaxRetries
 	}
 	if c.MaxTokens <= 0 {

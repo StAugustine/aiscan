@@ -202,6 +202,22 @@ func requestWithInboxInterrupt(ctx context.Context, cfg Config, em *aopEmitter, 
 
 func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int) (*assistantTurn, *aop.TokenUsage, error) {
 	var lastErr error
+	total := &aop.TokenUsage{Detail: map[string]uint64{}}
+	record := func(usage *aop.TokenUsage) {
+		total.Detail["requests"]++
+		if usage == nil {
+			total.Detail["usage_missing"]++
+			return
+		}
+		total.InputTokens += usage.InputTokens
+		total.OutputTokens += usage.OutputTokens
+		total.TotalTokens += usage.TotalTokens
+		for key, value := range usage.Detail {
+			total.Detail[key] += value
+		}
+		// Billing includes failed attempts; context size describes only the last.
+		total.Detail["context_tokens"] = uint64(provider.UsageTotalTokens(usage))
+	}
 	maxAttempts := cfg.MaxRetries + 1
 	if cfg.MaxRetries < 0 {
 		maxAttempts = 1
@@ -218,7 +234,7 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return nil, nil, ctx.Err()
+				return nil, total, ctx.Err()
 			}
 			if discard {
 				em.messageWithID(messageID, "assistant", nil)
@@ -226,14 +242,15 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 		}
 
 		assistant, usage, streamed, err := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
+		record(usage)
 		if err == nil {
-			return assistant, usage, nil
+			return assistant, total, nil
 		}
 		lastErr = err
 		discard = streamed
 
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, usage, ctxErr
+			return nil, total, ctxErr
 		}
 
 		if provider.IsImageUnsupportedError(err) {
@@ -245,17 +262,18 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 				em.messageWithID(messageID, "assistant", nil)
 			}
 			assistant, usage, _, retryErr := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
+			record(usage)
 			if retryErr == nil {
-				return assistant, usage, nil
+				return assistant, total, nil
 			}
-			return nil, nil, retryErr
+			return nil, total, retryErr
 		}
 
 		if !isRetryableError(err) {
-			return nil, nil, err
+			return nil, total, err
 		}
 	}
-	return nil, nil, lastErr
+	return nil, total, lastErr
 }
 
 func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, bool, error) {
@@ -284,11 +302,15 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 	}
 
 	resp, err := cfg.Provider.ChatCompletion(ctx, req)
-	if err != nil {
-		return nil, nil, false, fmt.Errorf("LLM call failed at turn %d: %w", turn, err)
+	var usage *aop.TokenUsage
+	if resp != nil {
+		usage = resp.Usage
 	}
-	if len(resp.Choices) == 0 {
-		return nil, nil, false, fmt.Errorf("%w at turn %d", errEmptyResponse, turn)
+	if err != nil {
+		return nil, usage, false, fmt.Errorf("LLM call failed at turn %d: %w", turn, err)
+	}
+	if resp == nil || len(resp.Choices) == 0 {
+		return nil, usage, false, fmt.Errorf("%w at turn %d", errEmptyResponse, turn)
 	}
 	choice := resp.Choices[0]
 	msg := choice.Message
@@ -367,8 +389,10 @@ func streamAssistantMessageWithUsage(ctx context.Context, p StreamingProvider, r
 			}
 			builder.Apply(event)
 			if delta := event.MessageDelta; delta != nil {
-				if reasoning := delta.GetReasoning(); reasoning != "" {
+				if _, ok := delta.Value.(*aop.MessageDelta_Reasoning); ok {
 					seenReasoning = true
+				}
+				if reasoning := delta.GetReasoning(); reasoning != "" {
 					streamed = true
 					em.messageDelta(messageID, 0, partReasoning, reasoning)
 				}

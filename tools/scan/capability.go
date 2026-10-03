@@ -96,7 +96,7 @@ func (c *Command) buildCapabilities(flags flags, profile profile) []pipeline.Cap
 			func(_ context.Context, e event, emit func(event)) {
 				target, ok := e.Target.(webProbeTarget)
 				if ok && reportableSprayResultForCapability(target.Result, e.Source) {
-					deriveWebProbeResult(flags.BroadPOC, e.Source, target.Result, emit)
+					deriveWebProbeResult(flags.BroadPOC, e.Source, e, emit)
 				}
 			},
 		))

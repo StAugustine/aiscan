@@ -18,6 +18,8 @@ type View struct {
 	// from one particular session when a feature registers its commands.
 	Command       func(string) error
 	RefreshStatus func()
+	// SessionID supplies the current attachment without queueing a session command.
+	SessionID func() string
 }
 type Bindings struct {
 	Commands func(View) []*cobra.Command

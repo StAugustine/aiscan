@@ -97,6 +97,16 @@ Global Options:
   -s <name> / -s=<name>                            Target a named session (all subcommands)
   Environment: PLAYWRIGHT_CLI_SESSION=<name>       Default session when -s is not provided
 
+Selector Syntax:
+  Standard CSS, xpath:<expression>, text=<text>, label=<text>,
+  testid=<value>, role=button[name="Name"] are supported.
+  Extended CSS pseudo-classes such as :has-text() and :text-is() are not supported.
+  A selector must resolve to the intended current element; use a unique existing address.
+
+JavaScript Evaluation:
+  Pass an evaluated expression, for example (() => { return document.body.innerText; })().
+  Object results are returned as JSON. A function without invocation is not a page read.
+
 Unified Subcommands (URL or session):
   goto <url|session> [selector]                  Navigate to URL and return text, or extract text from session
   content <url|session> [selector]               Open URL and return HTML, or extract HTML from session
@@ -123,6 +133,7 @@ Session Subcommands (multi-step interactive workflows):
   detach <session>                                Disconnect from attached session without closing browser
 
   Navigation:
+    scroll <session> <up|down>                  Scroll the viewport
     reload <session>                            Reload the current page
     go-back <session>                           Navigate back in history
     go-forward <session>                        Navigate forward in history
@@ -350,6 +361,8 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	// --- Navigation ---
 	case "reload":
 		result, err = c.execReload(ctx, subArgs)
+	case "scroll":
+		result, err = c.execScroll(ctx, subArgs)
 	case "go-back", "back":
 		result, err = c.execGoBack(ctx, subArgs)
 	case "go-forward", "forward":

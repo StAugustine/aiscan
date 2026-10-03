@@ -1,7 +1,10 @@
 package scan
 
 import (
+	"encoding/json"
 	"fmt"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -39,11 +42,42 @@ type artifactResult struct {
 	Tool     string
 	Kind     string
 	Target   string
-	Data     any
+	Data     json.RawMessage
 }
 
 func targetEvent(source string, target target) event {
-	return event{Kind: eventTarget, Source: source, Target: target}
+	e := event{Kind: eventTarget, Source: source, Target: target}
+	var tool, kind, address string
+	var data any
+	switch target := target.(type) {
+	case serviceTarget:
+		if target.Result != nil {
+			tool, kind, address, data = "gogo", toolpb.ArtifactKindService, target.Result.GetTarget(), target.Result
+		}
+	case webProbeTarget:
+		if reportableSprayResultForCapability(target.Result, source) {
+			tool, kind, address, data = "spray", toolpb.ArtifactKindWeb, target.Result.UrlString, target.Result
+		}
+	}
+	if data != nil {
+		var err error
+		e.Artifact, err = newArtifactResult(tool, kind, address, data)
+		if err != nil {
+			return errorEventOf(source, fmt.Sprintf("encode %s artifact: %v", tool, err))
+		}
+	}
+	return e
+}
+
+func newArtifactResult(tool, kind, target string, data any) (*artifactResult, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return &artifactResult{
+		ResultID: toolargs.ArtifactResultIDFromJSON(tool, kind, target, raw),
+		Tool:     tool, Kind: kind, Target: target, Data: raw,
+	}, nil
 }
 
 func lootEvent(source string, loot parsers.Loot) event {

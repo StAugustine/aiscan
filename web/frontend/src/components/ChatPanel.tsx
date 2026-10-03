@@ -17,6 +17,7 @@ import {
   Loader2,
   MessageSquare,
   Network,
+  Shield,
   Sparkles,
   Target,
   User,
@@ -34,7 +35,7 @@ import {
   ChatPanel as ViewerChatPanel,
   ChatThinking,
   MessageBubble as ChatMessageBubble,
-  reduceAOPToTimeline,
+  createAOPTimelineReducer,
   resolveTimelineRenderer,
   summarizeArgs,
   type ChatAttachment,
@@ -48,12 +49,16 @@ import {
   type AOPEvent,
 } from '@/viewer'
 import { fetchSessionCommands, uploadChatFile, type ChatSendOptions } from '../api'
-import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
+import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, DelegationDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
 import { anyUnpack } from '@bufbuild/protobuf/wkt'
-import type { AgentListMetadata, CommandSpec, SCONode } from '../api'
+import type { AgentListMetadata, CommandSpec } from '../api'
 import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
 import ScannerToolCall from './chat/ScannerToolCall'
 import SubagentRunCard from './chat/SubagentRunCard'
+import { GuardrailReviewCard } from './GuardrailReviews'
+import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, withGuardrailReviews } from '../lib/guardrail-view'
+import { withRecaps } from '../lib/recap-view'
+import { ReviewState, type Review } from '../cyber-proto'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
 const webUserAgent = 'cyber.web'
@@ -66,7 +71,7 @@ function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
         kind: 'extension',
         timestamp: item.timestamp,
         extensionType: 'scan_complete',
-        data: { scanID: item.scanID || '', nodes: item.scanNodes },
+        data: { scanID: item.scanID || '' },
       }
     default:
       return null
@@ -88,19 +93,6 @@ function eventText(event: AOPEvent): string {
     .filter((part) => part.value.case === 'text')
     .map((part) => part.value.case === 'text' ? part.value.value.text : '')
     .join('\n')
-}
-
-function presentAOPEvent(event: AOPEvent): AOPEvent {
-  return event
-}
-
-function responseBoundary(event: AOPEvent): boolean {
-  return event.payload.case === 'status'
-    && ['eval_start', 'compact_start'].includes(event.payload.value.state)
-}
-
-function extensionBlock(event: AOPEvent): Record<string, unknown> {
-  return Object.fromEntries(event.extensions.map((extension) => [extension.typeUrl, extension.typeUrl]))
 }
 
 function eventTimestamp(event: AOPEvent): number {
@@ -278,18 +270,40 @@ function reduceConversationAOP(
   events: AOPEvent[],
   sourceEvents: AOPEvent[],
   streaming: boolean,
+  reducers: Map<string, ReturnType<typeof createAOPTimelineReducer>>,
 ): ViewerTimelineItem[] {
+  const reduce = (key: string, batch: AOPEvent[], live: boolean) => {
+    let reducer = reducers.get(key)
+    if (!reducer) {
+      reducer = createAOPTimelineReducer({
+        lifecycle: 'errors',
+        responseBoundary: event => isGuardrailBoundary(event) || (event.payload.case === 'status'
+          && ['eval_start', 'compact_start'].includes(event.payload.value.state)),
+      })
+      reducers.set(key, reducer)
+    }
+    return reducer(guardrailTimelineEvents(batch), live) as ViewerTimelineItem[]
+  }
   const childStarts = new Map<string, AOPEvent>()
-  const visibleSessionIDs = new Set(events.map((event) => event.sessionId))
+  const bySession = new Map<string, AOPEvent[]>()
+  const endBySession = new Map<string, AOPEvent>()
+  const promptBySession = new Map<string, AOPEvent>()
+  for (const event of events) {
+    let group = bySession.get(event.sessionId)
+    if (!group) bySession.set(event.sessionId, group = [])
+    group.push(event)
+    if (event.payload.case === 'sessionEnded') endBySession.set(event.sessionId, event)
+  }
+  for (const event of sourceEvents) {
+    if (isInternalUserEvent(event) && !promptBySession.has(event.sessionId)) promptBySession.set(event.sessionId, event)
+  }
   for (const event of events) {
     if (event.payload.case !== 'sessionStarted') continue
     const data = event.payload.value
-    const ext = extensionBlock(event)
-    const delegated = !!data.parentToolCallId
-      || (ext.delegation !== null && typeof ext.delegation === 'object')
+    const delegated = !!data.parentToolCallId || event.extensions.some(extension => anyUnpack(extension, DelegationDetailSchema))
     // The root agent also points at the platform chat session, which is not an
     // AOP stream. Only fold a run when its parent is another visible AOP session.
-    if (delegated && data.parentSessionId && visibleSessionIDs.has(data.parentSessionId)) {
+    if (delegated && data.parentSessionId && bySession.has(data.parentSessionId)) {
       childStarts.set(event.sessionId, event)
     }
   }
@@ -298,25 +312,17 @@ function reduceConversationAOP(
   const topLevelEvents = events.filter((event) => !childIDs.has(event.sessionId))
   const topLevelSplit = splitCommandResults(topLevelEvents)
   const topLevel = collapseRepeatedDividers(mergeTimelineItems(
-    reduceAOPToTimeline(
-      topLevelSplit.messages.map(presentAOPEvent),
-      { streaming, lifecycle: 'errors', responseBoundary },
-    ) as ViewerTimelineItem[],
+    reduce('', topLevelSplit.messages, streaming),
     orderedTimelineItems(statusTimelineItems(topLevelSplit.messages), topLevelSplit.commands),
   ))
 
   const childRuns: ViewerTimelineItem[] = []
   for (const [sessionID, start] of childStarts) {
-    const childEvents = events.filter((event) => event.sessionId === sessionID)
-    const end = [...childEvents].reverse().find((event) => event.payload.case === 'sessionEnded')
+    const childEvents = bySession.get(sessionID) || []
+    const end = endBySession.get(sessionID)
     const endReason = end?.payload.case === 'sessionEnded' ? end.payload.value.reason : undefined
-    const ext = extensionBlock(start)
-    const delegation = ext.delegation && typeof ext.delegation === 'object'
-      ? ext.delegation as Record<string, unknown>
-      : ext
-    const promptEvent = sourceEvents.find(
-      (event) => event.sessionId === sessionID && isInternalUserEvent(event),
-    )
+    const delegation = start.extensions.map(extension => anyUnpack(extension, DelegationDetailSchema)).find(Boolean)
+    const promptEvent = promptBySession.get(sessionID)
     const stop = endReason
     const status = !end
       ? 'running'
@@ -328,11 +334,8 @@ function reduceConversationAOP(
     const timestamp = eventTimestamp(start)
     const childSplit = splitCommandResults(childEvents)
     const items = collapseRepeatedDividers(mergeTimelineItems(
-      reduceAOPToTimeline(childSplit.messages.map(presentAOPEvent), {
-        streaming: streaming && !end,
-        lifecycle: 'errors',
-        responseBoundary,
-      }).filter((item) => item.kind !== 'divider' || item.variant === 'warning') as ViewerTimelineItem[],
+      reduce(sessionID, childSplit.messages, streaming && !end)
+        .filter((item) => item.kind !== 'divider' || item.variant === 'warning'),
       orderedTimelineItems(statusTimelineItems(childSplit.messages), childSplit.commands),
     ))
 
@@ -341,9 +344,9 @@ function reduceConversationAOP(
       kind: 'subagent_run',
       timestamp: Number.isFinite(timestamp) ? timestamp : 0,
       actorName: start.emitter,
-      name: typeof delegation.agent_name === 'string' ? delegation.agent_name : start.emitter || 'Sub-agent',
-      prompt: typeof delegation.task === 'string' ? delegation.task : (promptEvent ? eventText(promptEvent) : ''),
-      mode: typeof delegation.run_mode === 'string' ? delegation.run_mode : undefined,
+      name: delegation?.agentName || start.emitter || 'Sub-agent',
+      prompt: delegation?.task || (promptEvent ? eventText(promptEvent) : ''),
+      mode: delegation?.runMode || undefined,
       sessionID,
       status,
       items,
@@ -363,7 +366,6 @@ function isUserMessageItem(
 
 function toViewerTimelineItem(
   item: TimelineItem,
-  scanResults: Map<string, SCONode[]>,
 ): ViewerTimelineItem | null {
   switch (item.kind) {
     case 'message': {
@@ -407,7 +409,9 @@ const threadOffsetClass = 'lg:mr-[10.75rem] xl:mr-[11.75rem] 2xl:mr-[14.75rem]'
 interface Props {
   timeline: TimelineItem[]
   aopEvents?: AOPEvent[]
-  scanResults: Map<string, SCONode[]>
+  guardrailUnavailable?: boolean
+  guardrailReviews: Review[]
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
   isThinking: boolean
   isBusy: boolean
   canPause: boolean
@@ -432,7 +436,9 @@ interface Props {
 export default function ChatPanel({
   timeline,
   aopEvents = [],
-  scanResults,
+  guardrailReviews,
+  guardrailUnavailable = false,
+  onResolveGuardrail,
   isThinking,
   isBusy,
   canPause,
@@ -452,6 +458,7 @@ export default function ChatPanel({
   onClearError,
 }: Props) {
   const { t, i18n } = useTranslation('chat')
+  const aopReducers = useMemo(() => new Map<string, ReturnType<typeof createAOPTimelineReducer>>(), [activeSessionID])
   const [attachmentError, setAttachmentError] = useState('')
   const agentEvents = useMemo(
     () => aopEvents.filter((event) => !isInternalUserEvent(event)),
@@ -464,12 +471,12 @@ export default function ChatPanel({
   const viewerTimeline = useMemo<ViewerTimelineItem[]>(() => {
     const source = liveThinkingItem && agentEvents.length === 0 ? [...timeline, liveThinkingItem] : timeline
     const platformItems = source
-      .map((item) => toViewerTimelineItem(item, scanResults))
+      .map((item) => toViewerTimelineItem(item))
       .filter((item): item is ViewerTimelineItem => item !== null)
       .filter((item) => agentEvents.length === 0
         || item.kind === 'extension'
         || (item.kind === 'message' && item.role === 'user'))
-    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy)
+    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy, aopReducers)
     const systemMetadata = systemMetadataByMessageID(agentEvents)
     for (const item of aopItems) {
       if (item.kind !== 'message' || item.role !== 'system') continue
@@ -477,21 +484,12 @@ export default function ChatPanel({
       if (metadata) item.metadata = metadata
     }
 
-    // The optimistic user bubble is stamped with the browser clock (Date.now at
-    // send time); every agent event is stamped by the agent host. This merged
-    // transcript is ordered purely by timestamp, so a browser running even a few
-    // seconds ahead of the agent host would sort the user's own message *after*
-    // the reply it triggered. The hub re-emits each user message into the AOP
-    // stream stamped with the server clock — the same clock domain as the agent's
-    // turn — so pair each optimistic bubble with that echo, adopt its timestamp,
-    // and drop the echo as a duplicate. User and assistant then share one clock
-    // and stay in causal order regardless of browser/host skew.
+    // Match the pending bubble to its canonical message ID and server clock.
     const matchedEchoes = new Set<ViewerTimelineItem>()
+    const userMessages = new Map(aopItems.filter(isUserMessageItem).map(item => [item.id, item]))
     for (const platform of platformItems) {
       if (!isUserMessageItem(platform)) continue
-      const echo = aopItems.find(
-        (item) => isUserMessageItem(item) && item.content === platform.content && !matchedEchoes.has(item),
-      )
+      const echo = userMessages.get(platform.id)
       if (echo) {
         platform.timestamp = echo.timestamp
         matchedEchoes.add(echo)
@@ -499,10 +497,10 @@ export default function ChatPanel({
     }
     const visibleAopItems = aopItems.filter((item) => !matchedEchoes.has(item))
 
-    return [...platformItems, ...visibleAopItems].sort(
+    return withRecaps(groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
-    )
-  }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline])
+    ), guardrailReviews, aopEvents, !guardrailUnavailable)), aopEvents)
+  }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
   // activity, so the conversation and composer never jump horizontally.
@@ -654,8 +652,14 @@ export default function ChatPanel({
   }
 
   const renderViewerItem = useCallback(
-    (item: ViewerTimelineItem) => timelineContent(item, scanResults, activeThinkingResponseID),
-    [activeThinkingResponseID, scanResults],
+    (item: ViewerTimelineItem) => item.kind === 'extension' && item.extensionType === 'guardrail'
+      ? <div className="flex w-full gap-3" data-guardrail-timeline-entry>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground" aria-hidden="true"><Shield className="h-3.5 w-3.5" /></div>
+          <div className="min-w-0 flex-1"><GuardrailReviewCard review={item.data.review as Review} unavailable={item.data.unavailable === true} intercepted={item.data.intercepted === true} outcome={item.data.outcome as string | undefined} actionable={item.data.actionable === true}
+            reviewedAt={item.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} /></div>
+        </div>
+      : timelineContent(item, activeThinkingResponseID, onResolveGuardrail),
+    [activeThinkingResponseID, onResolveGuardrail],
   )
   const renderViewerMark = useCallback(
     (item: ViewerTimelineItem) => <TimelineMark item={item} />,
@@ -737,6 +741,7 @@ export default function ChatPanel({
         {livePhase ? t(livePhase === 'thinking' ? 'a11yThinking' : 'a11yTurnDone') : ''}
       </div>
       <ViewerChatPanel.Timeline
+        data-testid="conversation-timeline"
         className="overscroll-contain !px-0 !py-0"
         contentClassName={cn(workspaceClass, 'py-4')}
         railLayoutClassName={hasIOARail
@@ -748,6 +753,7 @@ export default function ChatPanel({
         renderSideNote={renderViewerSideNote}
         stickyScroll
         memoItems
+        scrollBehavior="instant"
         scrollResetKey={activeSessionID}
       />
 
@@ -767,8 +773,9 @@ export default function ChatPanel({
               </div>
             )}
             <div className={workspaceClass}>
-              <div className={inputFormClass} ref={composerRootRef}>
+              <div className={inputFormClass} ref={composerRootRef} data-session-id={activeSessionID || ''}>
                 <ViewerChatPanel.Input
+                  key={activeSessionID || 'new-session'}
                   className="!border-t-0 !bg-transparent !backdrop-blur-none"
                   leading={
                     <Tooltip>
@@ -823,8 +830,8 @@ export default function ChatPanel({
 
 function timelineContent(
   item: ViewerTimelineItem,
-  scanResults: Map<string, SCONode[]>,
   activeThinkingResponseID: string | null,
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>,
 ): ReactNode {
   switch (item.kind) {
     case 'message': {
@@ -855,7 +862,7 @@ function timelineContent(
     }
 
     case 'assistant_response':
-      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} />
+      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} onResolveGuardrail={onResolveGuardrail} />
 
     case 'tool_call':
       return (
@@ -873,7 +880,7 @@ function timelineContent(
       return (
         <SubagentRunCard run={item}>
           {item.items.map((child) => (
-            <div key={child.id}>{timelineContent(child, scanResults, activeThinkingResponseID)}</div>
+            <div key={child.id}>{timelineContent(child, activeThinkingResponseID, onResolveGuardrail)}</div>
           ))}
         </SubagentRunCard>
       )
@@ -908,7 +915,7 @@ function timelineContent(
       const config = resolveTimelineRenderer(item.extensionType)
       if (!config) return null
       const Renderer = config.renderer
-      return <Renderer item={item} context={{ scanResults }} />
+      return <Renderer item={item} context={{}} />
     }
 
     case 'divider':
@@ -1060,12 +1067,19 @@ function TokenBudgetNote({ context, budget }: { context?: number; budget?: numbe
 function AssistantResponseEntry({
   response,
   activeThinking,
+  embedded = false,
+  onResolveGuardrail,
 }: {
   response: Extract<ViewerTimelineItem, { kind: 'assistant_response' }>
   activeThinking: boolean
+  embedded?: boolean
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
 }) {
   const { t } = useTranslation('chat')
   const message = response.response
+  const { t: ta } = useTranslation('app')
+  const reviews = response.steps?.filter(step => step.kind === 'extension' && step.extensionType === 'guardrail') ?? []
+  const pendingReviews = reviews.filter(step => step.kind === 'extension' && (step.data.awaiting === true || step.data.actionable === true)).length
   const hasThinking = !!response.thinking?.trim()
   const hasResponse = !!message?.content.trim()
   const [thinkingExpanded, setThinkingExpanded] = useState(activeThinking && hasThinking)
@@ -1089,6 +1103,7 @@ function AssistantResponseEntry({
 
   return (
     <AssistantResponse
+      embedded={embedded}
       actorName={response.actorName}
       timestamp={new Date(response.timestamp).toISOString()}
       streaming={response.streaming}
@@ -1114,16 +1129,46 @@ function AssistantResponseEntry({
           ))}
         </div>
       ) : undefined}
-      response={hasResponse ? (
-        <div className={cn(response.streaming && 'max-h-96 overflow-y-auto overscroll-contain')}>
-          <MarkdownContent content={trimDisplayContent(message?.content || '')} compact />
-        </div>
-      ) : undefined}
+      response={hasResponse ? <MarkdownContent content={trimDisplayContent(message?.content || '')} compact /> : undefined}
+      footer={!embedded && typeof message?.metadata?.recap === 'string'
+        ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       labels={{ tools: toolsLabel, thinking: t('thinkingLabel'), response: t('responseLabel') }}
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}
       showResponseLabel={false}
-    />
+    >
+      {response.steps && <div data-guardrail-turn={response.id}>
+        <div className="flex justify-end border-b border-border px-3 py-2">
+          <button type="button" data-guardrail-turn-summary
+            aria-label={ta(pendingReviews ? 'guardrailGoToPending' : 'guardrailGoToRecord')}
+            onClick={event => {
+              const turn = event.currentTarget.closest('[data-guardrail-turn]')
+              const target = turn?.querySelector<HTMLElement>(pendingReviews ? '[data-guardrail-state="pending"]' : '[data-guardrail-review]')
+              target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              target?.focus({ preventScroll: true })
+            }} data-guardrail-count={reviews.length} data-guardrail-pending-count={pendingReviews}
+            aria-live="polite" aria-atomic="true"
+            className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]', pendingReviews ? 'bg-warning/10 text-warning' : 'bg-muted/60 text-muted-foreground')}>
+            <Shield className="h-3 w-3 shrink-0" aria-hidden="true" />
+            {ta('guardrailTurnCount', { count: reviews.length })}
+            {pendingReviews > 0 && <span>· {ta('guardrailTurnPending', { count: pendingReviews })}</span>}
+          </button>
+        </div>
+        <div data-guardrail-turn-steps className="divide-y divide-border">
+        {response.steps.map(step => step.kind === 'assistant_response'
+          ? <AssistantResponseEntry key={step.id} response={step} embedded
+              activeThinking={activeThinking && step.id === latestStreamingResponseID(response.steps!)} onResolveGuardrail={onResolveGuardrail} />
+          : step.kind === 'extension' && step.extensionType === 'guardrail'
+            ? <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                <GuardrailReviewCard review={step.data.review as Review} unavailable={step.data.unavailable === true} intercepted={step.data.intercepted === true} outcome={step.data.outcome as string | undefined} actionable={step.data.actionable === true}
+                  reviewedAt={step.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} embedded />
+              </div>
+            : <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                {timelineContent(step, null, onResolveGuardrail)}
+              </div>)}
+        </div>
+      </div>}
+    </AssistantResponse>
   )
 }
 
@@ -1150,7 +1195,7 @@ function TimelineMark({ item }: { item: ViewerTimelineItem }) {
   if (!descriptor) return <div className="hidden w-full xl:block" />
 
   return (
-    <div className="hidden w-full pr-2 pt-1 xl:block">
+    <div className="hidden w-full pr-2 pt-1 xl:block" data-guardrail-timeline-mark={item.kind === 'extension' && item.extensionType === 'guardrail' ? item.id : undefined}>
       <div className="relative min-h-8 border-r border-border/70 pr-3 text-right">
         <span
           className={cn(
@@ -1487,6 +1532,18 @@ function describeTimelineItem(item: ViewerTimelineItem, t: (key: string) => stri
       }
 
     case 'extension': {
+      if (item.extensionType === 'guardrail') {
+        const state = (item.data.review as Review).state
+        return {
+          label: i18n.t('app:guardrailTimelineLabel'),
+          time,
+          icon: <Shield className="h-3 w-3 text-muted-foreground" />,
+          dotClass: item.data.actionable === true ? 'border-warning bg-warning'
+            : state === ReviewState.APPROVED ? 'border-success bg-success'
+              : state === ReviewState.REJECTED ? 'border-destructive bg-destructive'
+                : 'border-border bg-muted-foreground/60',
+        }
+      }
       if (item.extensionType === 'eval') {
         return {
           label: t('evalLabel'),

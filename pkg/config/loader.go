@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"gopkg.in/yaml.v3"
 	"os"
 	"reflect"
 
@@ -42,6 +41,15 @@ func LoadConfigBytes(data []byte, v interface{}) error {
 	return decodeConfig(c, v)
 }
 
+// LoadConfigDocument decodes a document already parsed at the file boundary.
+func LoadConfigDocument(document map[string]any, v any) error {
+	c := newConfigLoader()
+	if err := c.LoadData(document); err != nil {
+		return err
+	}
+	return decodeConfig(c, v)
+}
+
 func decodeConfig(c *gkcfg.Config, v interface{}) error {
 	if err := c.Decode(v); err != nil {
 		return err
@@ -73,12 +81,8 @@ func LoadAndApplyConfig(option *Option) (string, error) {
 		return option.ConfigFile, err
 	}
 	option.Snapshot = snapshot
-	data, err := yaml.Marshal(snapshot.RuntimeDocument(option.Sections))
-	if err != nil {
-		return "", err
-	}
 	loaded := Option{Sections: option.Sections}
-	if err := LoadConfigBytes(data, &loaded); err != nil {
+	if err := LoadConfigDocument(snapshot.RuntimeDocument(option.Sections), &loaded); err != nil {
 		return snapshot.Target, fmt.Errorf("load config %s: %w", snapshot.Target, err)
 	}
 	mergeOption(option, &loaded)

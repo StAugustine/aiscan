@@ -11,7 +11,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file types/config.proto.
  */
 export const file_types_config: GenFile = /*@__PURE__*/
-  fileDesc("ChJ0eXBlcy9jb25maWcucHJvdG8SDGN5YmVyLmNvbmZpZyKRAwoQRGlzdHJpYnV0ZUNvbmZpZxIkCgNsbG0YASABKAsyFy5jeWJlci5jb25maWcuTExNQ29uZmlnEioKBnNlYXJjaBgFIAEoCzIaLmN5YmVyLmNvbmZpZy5TZWFyY2hDb25maWcSKAoFYWdlbnQYByABKAsyGS5jeWJlci5jb25maWcuQWdlbnRDb25maWcSQgoKZXh0ZW5zaW9ucxgIIAMoCzIuLmN5YmVyLmNvbmZpZy5EaXN0cmlidXRlQ29uZmlnLkV4dGVuc2lvbnNFbnRyeRImCgRub2RlGAkgASgLMhguY3liZXIuY29uZmlnLk5vZGVDb25maWcSLAoHdHJhZmZpYxgKIAEoCzIbLmN5YmVyLmNvbmZpZy5UcmFmZmljQ29uZmlnGkoKD0V4dGVuc2lvbnNFbnRyeRILCgNrZXkYASABKAkSJgoFdmFsdWUYAiABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0OgI4AUoECAIQA0oECAMQBEoECAQQBUoECAYQB1IDaW9hIiYKCk5vZGVDb25maWcSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSJXCglMTE1Db25maWcSFgoOYWN0aXZlX3Byb2ZpbGUYASABKAkSMgoJcHJvdmlkZXJzGAIgAygLMh8uY3liZXIuY29uZmlnLkxMTVByb3ZpZGVyQ29uZmlnIt0BChFMTE1Qcm92aWRlckNvbmZpZxIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJEhAKCHByb3ZpZGVyGAMgASgJEhAKCGJhc2VfdXJsGAQgASgJEg8KB2FwaV9rZXkYBSABKAkSDQoFbW9kZWwYBiABKAkSDQoFcHJveHkYByABKAkSEgoKbWF4X3Rva2VucxgIIAEoBRIWCg5jb250ZXh0X3dpbmRvdxgJIAEoBRIPCgd0aW1lb3V0GAogASgFEhMKBmltYWdlcxgLIAEoCEgAiAEBQgkKB19pbWFnZXMiIwoMU2VhcmNoQ29uZmlnEhMKC3RhdmlseV9rZXlzGAEgASgJIrgBCgtBZ2VudENvbmZpZxINCgV0b29scxgBIAMoCRIUCgd0aW1lb3V0GAIgASgFSACIAQESEQoJaGVhcnRiZWF0GAQgASgFEhUKDWV2YWxfY3JpdGVyaWEYBSABKAkSEgoKZXZhbF9tb2RlbBgGIAEoCRITCgtldmFsX3JvdW5kcxgHIAEoCRIfChdjYXB0dXJlX3Byb3ZpZGVyX2ZyYW1lcxgIIAEoCEIKCghfdGltZW91dEoECAMQBCJbCg1UcmFmZmljQ29uZmlnEhQKDGJvZHlfc3RvcmFnZRgBIAEoCRIWCg5ib2R5X21heF9ieXRlcxgCIAEoAxIcChRib2R5X3JldGVudGlvbl9ieXRlcxgDIAEoAyLmAQoPTExNUHJvdmlkZXJWaWV3EgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEAoIcHJvdmlkZXIYAyABKAkSEAoIYmFzZV91cmwYBCABKAkSGgoSYXBpX2tleV9jb25maWd1cmVkGAUgASgIEg0KBW1vZGVsGAYgASgJEg0KBXByb3h5GAcgASgJEhIKCm1heF90b2tlbnMYCCABKAUSFgoOY29udGV4dF93aW5kb3cYCSABKAUSDwoHdGltZW91dBgKIAEoBRITCgZpbWFnZXMYCyABKAhIAIgBAUIJCgdfaW1hZ2VzIoIBCgdMTE1WaWV3EhYKDmFjdGl2ZV9wcm9maWxlGAEgASgJEi0KBmFjdGl2ZRgCIAEoCzIdLmN5YmVyLmNvbmZpZy5MTE1Qcm92aWRlclZpZXcSMAoJcHJvdmlkZXJzGAMgAygLMh0uY3liZXIuY29uZmlnLkxMTVByb3ZpZGVyVmlldyIsCgpTZWFyY2hWaWV3Eh4KFnRhdmlseV9rZXlzX2NvbmZpZ3VyZWQYASABKAgi+wIKCkNvbmZpZ1ZpZXcSDAoEcGF0aBgBIAEoCRIOCgZsb2FkZWQYAiABKAgSIgoDbGxtGAMgASgLMhUuY3liZXIuY29uZmlnLkxMTVZpZXcSKAoGc2VhcmNoGAcgASgLMhguY3liZXIuY29uZmlnLlNlYXJjaFZpZXcSKAoFYWdlbnQYCSABKAsyGS5jeWJlci5jb25maWcuQWdlbnRDb25maWcSPAoKZXh0ZW5zaW9ucxgKIAMoCzIoLmN5YmVyLmNvbmZpZy5Db25maWdWaWV3LkV4dGVuc2lvbnNFbnRyeRIsCgd0cmFmZmljGAsgASgLMhsuY3liZXIuY29uZmlnLlRyYWZmaWNDb25maWcaTgoPRXh0ZW5zaW9uc0VudHJ5EgsKA2tleRgBIAEoCRIqCgV2YWx1ZRgCIAEoCzIbLmN5YmVyLmNvbmZpZy5FeHRlbnNpb25WaWV3OgI4AUoECAQQBUoECAUQBkoECAYQB0oECAgQCVIDaW9hIhIKEEdldENvbmZpZ1JlcXVlc3QiPQoRR2V0Q29uZmlnUmVzcG9uc2USKAoGY29uZmlnGAEgASgLMhguY3liZXIuY29uZmlnLkNvbmZpZ1ZpZXciRQoTVXBkYXRlQ29uZmlnUmVxdWVzdBIuCgZjb25maWcYASABKAsyHi5jeWJlci5jb25maWcuRGlzdHJpYnV0ZUNvbmZpZyJAChRVcGRhdGVDb25maWdSZXNwb25zZRIoCgZjb25maWcYASABKAsyGC5jeWJlci5jb25maWcuQ29uZmlnVmlldyIsChZBY3RpdmF0ZVByb2ZpbGVSZXF1ZXN0EhIKCnByb2ZpbGVfaWQYASABKAkiQwoXQWN0aXZhdGVQcm9maWxlUmVzcG9uc2USKAoGY29uZmlnGAEgASgLMhguY3liZXIuY29uZmlnLkNvbmZpZ1ZpZXcieAoPTExNUHJvYmVSZXF1ZXN0EhIKCnByb2ZpbGVfaWQYASABKAkSEAoIcHJvdmlkZXIYAiABKAkSEAoIYmFzZV91cmwYAyABKAkSDwoHYXBpX2tleRgEIAEoCRINCgVtb2RlbBgFIAEoCRINCgVwcm94eRgGIAEoCSJvCg5MTE1Qcm9iZVJlc3VsdBIKCgJvaxgBIAEoCBIQCghwcm92aWRlchgCIAEoCRINCgVtb2RlbBgDIAEoCRISCgpsYXRlbmN5X21zGAQgASgDEg0KBXJlcGx5GAUgASgJEg0KBWVycm9yGAYgASgJIlAKEExpc3RNb2RlbHNSZXN1bHQSCgoCb2sYASABKAgSEQoJc3VwcG9ydGVkGAIgASgIEg4KBm1vZGVscxgDIAMoCRINCgVlcnJvchgEIAEoCSJYChVUZXN0Q29ubmVjdGlvblJlcXVlc3QSDwoHc2VjdGlvbhgBIAEoCRIuCgZjb25maWcYAiABKAsyHi5jeWJlci5jb25maWcuRGlzdHJpYnV0ZUNvbmZpZyJeCg9Db25uZWN0aW9uQ2hlY2sSDAoEbmFtZRgBIAEoCRIKCgJvaxgCIAEoCBISCgpsYXRlbmN5X21zGAMgASgDEg4KBmRldGFpbBgEIAEoCRINCgVlcnJvchgFIAEoCSJHChZUZXN0Q29ubmVjdGlvblJlc3BvbnNlEi0KBmNoZWNrcxgBIAMoCzIdLmN5YmVyLmNvbmZpZy5Db25uZWN0aW9uQ2hlY2siVAoNRXh0ZW5zaW9uVmlldxInCgZ2YWx1ZXMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EhoKEmNvbmZpZ3VyZWRfc2VjcmV0cxgCIAMoCUIxWi9naXRodWIuY29tL2NoYWlucmVhY3RvcnMvY3liZXIvY29yZS90eXBlczt0eXBlc2IGcHJvdG8z", [file_google_protobuf_struct]);
+  fileDesc("ChJ0eXBlcy9jb25maWcucHJvdG8SDGN5YmVyLmNvbmZpZyLzAgoQRGlzdHJpYnV0ZUNvbmZpZxIkCgNsbG0YASABKAsyFy5jeWJlci5jb25maWcuTExNQ29uZmlnEigKBWFnZW50GAcgASgLMhkuY3liZXIuY29uZmlnLkFnZW50Q29uZmlnEkIKCmV4dGVuc2lvbnMYCCADKAsyLi5jeWJlci5jb25maWcuRGlzdHJpYnV0ZUNvbmZpZy5FeHRlbnNpb25zRW50cnkSJgoEbm9kZRgJIAEoCzIYLmN5YmVyLmNvbmZpZy5Ob2RlQ29uZmlnEiwKB3RyYWZmaWMYCiABKAsyGy5jeWJlci5jb25maWcuVHJhZmZpY0NvbmZpZxpKCg9FeHRlbnNpb25zRW50cnkSCwoDa2V5GAEgASgJEiYKBXZhbHVlGAIgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdDoCOAFKBAgCEANKBAgDEARKBAgEEAVKBAgFEAZKBAgGEAdSA2lvYVIGc2VhcmNoIiYKCk5vZGVDb25maWcSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCSJXCglMTE1Db25maWcSFgoOYWN0aXZlX3Byb2ZpbGUYASABKAkSMgoJcHJvdmlkZXJzGAIgAygLMh8uY3liZXIuY29uZmlnLkxMTVByb3ZpZGVyQ29uZmlnIt0BChFMTE1Qcm92aWRlckNvbmZpZxIKCgJpZBgBIAEoCRIMCgRuYW1lGAIgASgJEhAKCHByb3ZpZGVyGAMgASgJEhAKCGJhc2VfdXJsGAQgASgJEg8KB2FwaV9rZXkYBSABKAkSDQoFbW9kZWwYBiABKAkSDQoFcHJveHkYByABKAkSEgoKbWF4X3Rva2VucxgIIAEoBRIWCg5jb250ZXh0X3dpbmRvdxgJIAEoBRIPCgd0aW1lb3V0GAogASgFEhMKBmltYWdlcxgLIAEoCEgAiAEBQgkKB19pbWFnZXMiuAEKC0FnZW50Q29uZmlnEg0KBXRvb2xzGAEgAygJEhQKB3RpbWVvdXQYAiABKAVIAIgBARIRCgloZWFydGJlYXQYBCABKAUSFQoNZXZhbF9jcml0ZXJpYRgFIAEoCRISCgpldmFsX21vZGVsGAYgASgJEhMKC2V2YWxfcm91bmRzGAcgASgJEh8KF2NhcHR1cmVfcHJvdmlkZXJfZnJhbWVzGAggASgIQgoKCF90aW1lb3V0SgQIAxAEIlsKDVRyYWZmaWNDb25maWcSFAoMYm9keV9zdG9yYWdlGAEgASgJEhYKDmJvZHlfbWF4X2J5dGVzGAIgASgDEhwKFGJvZHlfcmV0ZW50aW9uX2J5dGVzGAMgASgDIuYBCg9MTE1Qcm92aWRlclZpZXcSCgoCaWQYASABKAkSDAoEbmFtZRgCIAEoCRIQCghwcm92aWRlchgDIAEoCRIQCghiYXNlX3VybBgEIAEoCRIaChJhcGlfa2V5X2NvbmZpZ3VyZWQYBSABKAgSDQoFbW9kZWwYBiABKAkSDQoFcHJveHkYByABKAkSEgoKbWF4X3Rva2VucxgIIAEoBRIWCg5jb250ZXh0X3dpbmRvdxgJIAEoBRIPCgd0aW1lb3V0GAogASgFEhMKBmltYWdlcxgLIAEoCEgAiAEBQgkKB19pbWFnZXMiggEKB0xMTVZpZXcSFgoOYWN0aXZlX3Byb2ZpbGUYASABKAkSLQoGYWN0aXZlGAIgASgLMh0uY3liZXIuY29uZmlnLkxMTVByb3ZpZGVyVmlldxIwCglwcm92aWRlcnMYAyADKAsyHS5jeWJlci5jb25maWcuTExNUHJvdmlkZXJWaWV3It8CCgpDb25maWdWaWV3EgwKBHBhdGgYASABKAkSDgoGbG9hZGVkGAIgASgIEiIKA2xsbRgDIAEoCzIVLmN5YmVyLmNvbmZpZy5MTE1WaWV3EigKBWFnZW50GAkgASgLMhkuY3liZXIuY29uZmlnLkFnZW50Q29uZmlnEjwKCmV4dGVuc2lvbnMYCiADKAsyKC5jeWJlci5jb25maWcuQ29uZmlnVmlldy5FeHRlbnNpb25zRW50cnkSLAoHdHJhZmZpYxgLIAEoCzIbLmN5YmVyLmNvbmZpZy5UcmFmZmljQ29uZmlnGk4KD0V4dGVuc2lvbnNFbnRyeRILCgNrZXkYASABKAkSKgoFdmFsdWUYAiABKAsyGy5jeWJlci5jb25maWcuRXh0ZW5zaW9uVmlldzoCOAFKBAgEEAVKBAgFEAZKBAgGEAdKBAgHEAhKBAgIEAlSA2lvYVIGc2VhcmNoIhIKEEdldENvbmZpZ1JlcXVlc3QiPQoRR2V0Q29uZmlnUmVzcG9uc2USKAoGY29uZmlnGAEgASgLMhguY3liZXIuY29uZmlnLkNvbmZpZ1ZpZXciRQoTVXBkYXRlQ29uZmlnUmVxdWVzdBIuCgZjb25maWcYASABKAsyHi5jeWJlci5jb25maWcuRGlzdHJpYnV0ZUNvbmZpZyJAChRVcGRhdGVDb25maWdSZXNwb25zZRIoCgZjb25maWcYASABKAsyGC5jeWJlci5jb25maWcuQ29uZmlnVmlldyIsChZBY3RpdmF0ZVByb2ZpbGVSZXF1ZXN0EhIKCnByb2ZpbGVfaWQYASABKAkiQwoXQWN0aXZhdGVQcm9maWxlUmVzcG9uc2USKAoGY29uZmlnGAEgASgLMhguY3liZXIuY29uZmlnLkNvbmZpZ1ZpZXcieAoPTExNUHJvYmVSZXF1ZXN0EhIKCnByb2ZpbGVfaWQYASABKAkSEAoIcHJvdmlkZXIYAiABKAkSEAoIYmFzZV91cmwYAyABKAkSDwoHYXBpX2tleRgEIAEoCRINCgVtb2RlbBgFIAEoCRINCgVwcm94eRgGIAEoCSJvCg5MTE1Qcm9iZVJlc3VsdBIKCgJvaxgBIAEoCBIQCghwcm92aWRlchgCIAEoCRINCgVtb2RlbBgDIAEoCRISCgpsYXRlbmN5X21zGAQgASgDEg0KBXJlcGx5GAUgASgJEg0KBWVycm9yGAYgASgJIlAKEExpc3RNb2RlbHNSZXN1bHQSCgoCb2sYASABKAgSEQoJc3VwcG9ydGVkGAIgASgIEg4KBm1vZGVscxgDIAMoCRINCgVlcnJvchgEIAEoCSJYChVUZXN0Q29ubmVjdGlvblJlcXVlc3QSDwoHc2VjdGlvbhgBIAEoCRIuCgZjb25maWcYAiABKAsyHi5jeWJlci5jb25maWcuRGlzdHJpYnV0ZUNvbmZpZyJeCg9Db25uZWN0aW9uQ2hlY2sSDAoEbmFtZRgBIAEoCRIKCgJvaxgCIAEoCBISCgpsYXRlbmN5X21zGAMgASgDEg4KBmRldGFpbBgEIAEoCRINCgVlcnJvchgFIAEoCSJHChZUZXN0Q29ubmVjdGlvblJlc3BvbnNlEi0KBmNoZWNrcxgBIAMoCzIdLmN5YmVyLmNvbmZpZy5Db25uZWN0aW9uQ2hlY2siVAoNRXh0ZW5zaW9uVmlldxInCgZ2YWx1ZXMYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EhoKEmNvbmZpZ3VyZWRfc2VjcmV0cxgCIAMoCUIxWi9naXRodWIuY29tL2NoYWlucmVhY3RvcnMvY3liZXIvY29yZS90eXBlczt0eXBlc2IGcHJvdG8z", [file_google_protobuf_struct]);
 
 /**
  * @generated from message cyber.config.DistributeConfig
@@ -21,11 +21,6 @@ export type DistributeConfig = Message<"cyber.config.DistributeConfig"> & {
    * @generated from field: cyber.config.LLMConfig llm = 1;
    */
   llm?: LLMConfig | undefined;
-
-  /**
-   * @generated from field: cyber.config.SearchConfig search = 5;
-   */
-  search?: SearchConfig | undefined;
 
   /**
    * @generated from field: cyber.config.AgentConfig agent = 7;
@@ -167,23 +162,6 @@ export const LLMProviderConfigSchema: GenMessage<LLMProviderConfig> = /*@__PURE_
   messageDesc(file_types_config, 3);
 
 /**
- * @generated from message cyber.config.SearchConfig
- */
-export type SearchConfig = Message<"cyber.config.SearchConfig"> & {
-  /**
-   * @generated from field: string tavily_keys = 1;
-   */
-  tavilyKeys: string;
-};
-
-/**
- * Describes the message cyber.config.SearchConfig.
- * Use `create(SearchConfigSchema)` to create a new message.
- */
-export const SearchConfigSchema: GenMessage<SearchConfig> = /*@__PURE__*/
-  messageDesc(file_types_config, 4);
-
-/**
  * @generated from message cyber.config.AgentConfig
  */
 export type AgentConfig = Message<"cyber.config.AgentConfig"> & {
@@ -228,7 +206,7 @@ export type AgentConfig = Message<"cyber.config.AgentConfig"> & {
  * Use `create(AgentConfigSchema)` to create a new message.
  */
 export const AgentConfigSchema: GenMessage<AgentConfig> = /*@__PURE__*/
-  messageDesc(file_types_config, 5);
+  messageDesc(file_types_config, 4);
 
 /**
  * @generated from message cyber.config.TrafficConfig
@@ -255,7 +233,7 @@ export type TrafficConfig = Message<"cyber.config.TrafficConfig"> & {
  * Use `create(TrafficConfigSchema)` to create a new message.
  */
 export const TrafficConfigSchema: GenMessage<TrafficConfig> = /*@__PURE__*/
-  messageDesc(file_types_config, 6);
+  messageDesc(file_types_config, 5);
 
 /**
  * @generated from message cyber.config.LLMProviderView
@@ -322,7 +300,7 @@ export type LLMProviderView = Message<"cyber.config.LLMProviderView"> & {
  * Use `create(LLMProviderViewSchema)` to create a new message.
  */
 export const LLMProviderViewSchema: GenMessage<LLMProviderView> = /*@__PURE__*/
-  messageDesc(file_types_config, 7);
+  messageDesc(file_types_config, 6);
 
 /**
  * @generated from message cyber.config.LLMView
@@ -349,24 +327,7 @@ export type LLMView = Message<"cyber.config.LLMView"> & {
  * Use `create(LLMViewSchema)` to create a new message.
  */
 export const LLMViewSchema: GenMessage<LLMView> = /*@__PURE__*/
-  messageDesc(file_types_config, 8);
-
-/**
- * @generated from message cyber.config.SearchView
- */
-export type SearchView = Message<"cyber.config.SearchView"> & {
-  /**
-   * @generated from field: bool tavily_keys_configured = 1;
-   */
-  tavilyKeysConfigured: boolean;
-};
-
-/**
- * Describes the message cyber.config.SearchView.
- * Use `create(SearchViewSchema)` to create a new message.
- */
-export const SearchViewSchema: GenMessage<SearchView> = /*@__PURE__*/
-  messageDesc(file_types_config, 9);
+  messageDesc(file_types_config, 7);
 
 /**
  * @generated from message cyber.config.ConfigView
@@ -386,11 +347,6 @@ export type ConfigView = Message<"cyber.config.ConfigView"> & {
    * @generated from field: cyber.config.LLMView llm = 3;
    */
   llm?: LLMView | undefined;
-
-  /**
-   * @generated from field: cyber.config.SearchView search = 7;
-   */
-  search?: SearchView | undefined;
 
   /**
    * @generated from field: cyber.config.AgentConfig agent = 9;
@@ -413,7 +369,7 @@ export type ConfigView = Message<"cyber.config.ConfigView"> & {
  * Use `create(ConfigViewSchema)` to create a new message.
  */
 export const ConfigViewSchema: GenMessage<ConfigView> = /*@__PURE__*/
-  messageDesc(file_types_config, 10);
+  messageDesc(file_types_config, 8);
 
 /**
  * @generated from message cyber.config.GetConfigRequest
@@ -426,7 +382,7 @@ export type GetConfigRequest = Message<"cyber.config.GetConfigRequest"> & {
  * Use `create(GetConfigRequestSchema)` to create a new message.
  */
 export const GetConfigRequestSchema: GenMessage<GetConfigRequest> = /*@__PURE__*/
-  messageDesc(file_types_config, 11);
+  messageDesc(file_types_config, 9);
 
 /**
  * @generated from message cyber.config.GetConfigResponse
@@ -443,7 +399,7 @@ export type GetConfigResponse = Message<"cyber.config.GetConfigResponse"> & {
  * Use `create(GetConfigResponseSchema)` to create a new message.
  */
 export const GetConfigResponseSchema: GenMessage<GetConfigResponse> = /*@__PURE__*/
-  messageDesc(file_types_config, 12);
+  messageDesc(file_types_config, 10);
 
 /**
  * @generated from message cyber.config.UpdateConfigRequest
@@ -460,7 +416,7 @@ export type UpdateConfigRequest = Message<"cyber.config.UpdateConfigRequest"> & 
  * Use `create(UpdateConfigRequestSchema)` to create a new message.
  */
 export const UpdateConfigRequestSchema: GenMessage<UpdateConfigRequest> = /*@__PURE__*/
-  messageDesc(file_types_config, 13);
+  messageDesc(file_types_config, 11);
 
 /**
  * @generated from message cyber.config.UpdateConfigResponse
@@ -477,7 +433,7 @@ export type UpdateConfigResponse = Message<"cyber.config.UpdateConfigResponse"> 
  * Use `create(UpdateConfigResponseSchema)` to create a new message.
  */
 export const UpdateConfigResponseSchema: GenMessage<UpdateConfigResponse> = /*@__PURE__*/
-  messageDesc(file_types_config, 14);
+  messageDesc(file_types_config, 12);
 
 /**
  * @generated from message cyber.config.ActivateProfileRequest
@@ -494,7 +450,7 @@ export type ActivateProfileRequest = Message<"cyber.config.ActivateProfileReques
  * Use `create(ActivateProfileRequestSchema)` to create a new message.
  */
 export const ActivateProfileRequestSchema: GenMessage<ActivateProfileRequest> = /*@__PURE__*/
-  messageDesc(file_types_config, 15);
+  messageDesc(file_types_config, 13);
 
 /**
  * @generated from message cyber.config.ActivateProfileResponse
@@ -511,7 +467,7 @@ export type ActivateProfileResponse = Message<"cyber.config.ActivateProfileRespo
  * Use `create(ActivateProfileResponseSchema)` to create a new message.
  */
 export const ActivateProfileResponseSchema: GenMessage<ActivateProfileResponse> = /*@__PURE__*/
-  messageDesc(file_types_config, 16);
+  messageDesc(file_types_config, 14);
 
 /**
  * @generated from message cyber.config.LLMProbeRequest
@@ -553,7 +509,7 @@ export type LLMProbeRequest = Message<"cyber.config.LLMProbeRequest"> & {
  * Use `create(LLMProbeRequestSchema)` to create a new message.
  */
 export const LLMProbeRequestSchema: GenMessage<LLMProbeRequest> = /*@__PURE__*/
-  messageDesc(file_types_config, 17);
+  messageDesc(file_types_config, 15);
 
 /**
  * @generated from message cyber.config.LLMProbeResult
@@ -595,7 +551,7 @@ export type LLMProbeResult = Message<"cyber.config.LLMProbeResult"> & {
  * Use `create(LLMProbeResultSchema)` to create a new message.
  */
 export const LLMProbeResultSchema: GenMessage<LLMProbeResult> = /*@__PURE__*/
-  messageDesc(file_types_config, 18);
+  messageDesc(file_types_config, 16);
 
 /**
  * @generated from message cyber.config.ListModelsResult
@@ -627,7 +583,7 @@ export type ListModelsResult = Message<"cyber.config.ListModelsResult"> & {
  * Use `create(ListModelsResultSchema)` to create a new message.
  */
 export const ListModelsResultSchema: GenMessage<ListModelsResult> = /*@__PURE__*/
-  messageDesc(file_types_config, 19);
+  messageDesc(file_types_config, 17);
 
 /**
  * @generated from message cyber.config.TestConnectionRequest
@@ -649,7 +605,7 @@ export type TestConnectionRequest = Message<"cyber.config.TestConnectionRequest"
  * Use `create(TestConnectionRequestSchema)` to create a new message.
  */
 export const TestConnectionRequestSchema: GenMessage<TestConnectionRequest> = /*@__PURE__*/
-  messageDesc(file_types_config, 20);
+  messageDesc(file_types_config, 18);
 
 /**
  * @generated from message cyber.config.ConnectionCheck
@@ -686,7 +642,7 @@ export type ConnectionCheck = Message<"cyber.config.ConnectionCheck"> & {
  * Use `create(ConnectionCheckSchema)` to create a new message.
  */
 export const ConnectionCheckSchema: GenMessage<ConnectionCheck> = /*@__PURE__*/
-  messageDesc(file_types_config, 21);
+  messageDesc(file_types_config, 19);
 
 /**
  * @generated from message cyber.config.TestConnectionResponse
@@ -703,7 +659,7 @@ export type TestConnectionResponse = Message<"cyber.config.TestConnectionRespons
  * Use `create(TestConnectionResponseSchema)` to create a new message.
  */
 export const TestConnectionResponseSchema: GenMessage<TestConnectionResponse> = /*@__PURE__*/
-  messageDesc(file_types_config, 22);
+  messageDesc(file_types_config, 20);
 
 /**
  * @generated from message cyber.config.ExtensionView
@@ -725,4 +681,4 @@ export type ExtensionView = Message<"cyber.config.ExtensionView"> & {
  * Use `create(ExtensionViewSchema)` to create a new message.
  */
 export const ExtensionViewSchema: GenMessage<ExtensionView> = /*@__PURE__*/
-  messageDesc(file_types_config, 23);
+  messageDesc(file_types_config, 21);

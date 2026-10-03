@@ -1,0 +1,64 @@
+package jev
+
+import (
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/chainreactors/cyber/core/types"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+type probeTransport func(*http.Request) (*http.Response, error)
+
+func (f probeTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestConnectionEnvironmentAndSecretPrecedence(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "fixture-env-key")
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	cases := []struct{ name, stored, incoming, want string }{
+		{"environment", "", "", "fixture-env-key"},
+		{"stored", "fixture-stored-key", "", "fixture-stored-key"},
+		{"incoming", "fixture-stored-key", "fixture-incoming-key", "fixture-incoming-key"},
+	}
+	config := func(key string) *types.DistributeConfig {
+		fields, err := structpb.NewStruct(map[string]any{"api_key": key})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &types.DistributeConfig{Extensions: map[string]*structpb.Struct{ConfigKey: fields}}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			http.DefaultTransport = probeTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.Header.Get("Authorization") != "Bearer "+tc.want {
+					t.Error("wrong credential precedence")
+				}
+				return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"answers":{"action":{"type":"choice","choice":"record"}}}`))}, nil
+			})
+			checks := testConnection(t.Context(), config(tc.incoming), config(tc.stored))
+			if len(checks) != 1 || !checks[0].Ok || calls != 1 {
+				t.Fatalf("unexpected probe: %v calls=%d", checks, calls)
+			}
+		})
+	}
+	http.DefaultTransport = probeTransport(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 401, Body: io.NopCloser(strings.NewReader("private-provider-response"))}, nil
+	})
+	checks := testConnection(t.Context(), config(""), nil)
+	if len(checks) != 1 || checks[0].Ok || checks[0].Error != "JEV HTTP status 401" {
+		t.Fatalf("fallback masqueraded as success: %v", checks)
+	}
+}
+
+func TestConnectionMissingKey(t *testing.T) {
+	t.Setenv("TYPESAFE_API_KEY", "")
+	checks := testConnection(t.Context(), nil, nil)
+	if len(checks) != 1 || checks[0].Ok || checks[0].Error != "JEV API key is not configured" {
+		t.Fatalf("unexpected probe: %v", checks)
+	}
+}

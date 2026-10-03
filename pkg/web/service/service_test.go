@@ -22,10 +22,10 @@ import (
 	aop "github.com/chainreactors/cyber/aop"
 	"github.com/chainreactors/cyber/core/extension"
 	types "github.com/chainreactors/cyber/core/types"
-	"github.com/chainreactors/cyber/internal/testutil/apptest"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
 	profile "github.com/chainreactors/cyber/pkg/profile"
 	rpc "github.com/chainreactors/cyber/pkg/rpc"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
 	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 )
 
@@ -385,7 +385,7 @@ func TestSwapProfileCancelsAndDrainsOldWork(t *testing.T) {
 		svc.work.Done()
 		close(drained)
 	}()
-	if err := svc.swapProfile(next); err != nil {
+	if err := svc.swapProfile(next, nil); err != nil {
 		t.Fatal(err)
 	}
 	<-drained
@@ -426,7 +426,7 @@ func TestSwapProfileRejectsClosingServiceWithoutTakingOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate, _, closed := newRecordingProfile(t)
-	if err := svc.swapProfile(candidate); err == nil {
+	if err := svc.swapProfile(candidate, nil); err == nil {
 		t.Fatal("closing service accepted a profile")
 	}
 	if _, err := candidate.Providers(); err != nil {
