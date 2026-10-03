@@ -15,8 +15,8 @@ const modulePath = "github.com/chainreactors/cyber"
 
 const (
 	protocVersion           = "35.1"
-	protocGenGoVersion      = "v1.36.11"
-	protocGenConnectVersion = "1.20.0"
+	protocGenGoVersion      = "v1.36.12"
+	protocGenConnectVersion = "1.21.0"
 	protocGenESVersion      = "v2.13.0"
 )
 
