@@ -20,6 +20,13 @@ import (
 )
 
 func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger) error {
+	return RunWebSocketWithCapabilities(ctx, newProfile, option, logger)
+}
+
+// RunWebSocketWithCapabilities is the profile-aware transport entry point.
+// Capabilities travel in the enrollment hello and remain independent of the
+// core node protocol.
+func RunWebSocketWithCapabilities(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, capabilities ...string) error {
 	if err := cfg.ResolveAgentServerURLs(option); err != nil {
 		return fmt.Errorf("resolve remote agent URLs: %w", err)
 	}
@@ -154,6 +161,11 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 				// new one.
 				before, after := proto.CloneOf(currentConfig), proto.CloneOf(nextConfig)
 				before.Llm, after.Llm = nil, nil
+				// A node enrolls with its provider deliberately disabled. The first
+				// server config therefore has to build a provider-owned profile when
+				// the only graph change is the LLM section and the profile has no
+				// in-place reload hook. Profiles that do provide the hook can still
+				// activate their first provider without a rebuild.
 				if !unchanged && proto.Equal(before, after) {
 					if reloader, ok := current.(interface {
 						ReloadProvider(context.Context, agent.ProviderConfig) error
@@ -167,7 +179,9 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 						}
 						return reloadStatus(current)
 					}
-					return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
+					if configured {
+						return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
+					}
 				}
 				mode := profile.ProviderOptional
 				if len(distributed.GetLlm().GetProviders()) == 0 {
@@ -200,7 +214,8 @@ func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile
 			return connect(connectionCtx, connectionConfig{
 				ServerURL: option.ServerURL, Name: rt.NodeName(), Executor: rt.Tools(), Events: events,
 				Progress: progress, Logger: logger, Upload: uploadNodeFile, ReloadConfig: reload, CommitReload: commit, NodeID: nodeID, Runtime: DefaultRuntimeInfo(),
-				Status: current.AgentStatus, Menu: func() []*types.CommandSpec { return CommandSpecs(rt) }, RegisterNamespaces: current.RegisterNamespaces,
+				Capabilities: capabilities,
+				Status:       current.AgentStatus, Menu: func() []*types.CommandSpec { return CommandSpecs(rt) }, RegisterNamespaces: current.RegisterNamespaces,
 			})
 		}()
 		if candidate == nil {

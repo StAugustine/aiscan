@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chainreactors/cyber/agent/provider"
 	"github.com/chainreactors/cyber/core/extension"
 	types "github.com/chainreactors/cyber/core/types"
 	"github.com/chainreactors/cyber/pkg/config"
@@ -35,6 +36,8 @@ type ServiceConfig struct {
 	BuildProfile func(ctx context.Context, prepared *PreparedConfig) (profile.Profile, error)
 	Scans        *ScanServiceConfig
 	AccessKey    string
+	RuntimeLLM   func() provider.ProviderConfig
+	Capabilities []Capability
 }
 
 type Service struct {
@@ -47,6 +50,7 @@ type Service struct {
 	configGate   chan struct{}
 	configStore  ConfigStore
 	buildProfile func(context.Context, *PreparedConfig) (profile.Profile, error)
+	runtimeLLM   func() provider.ProviderConfig
 	pending      profile.Profile
 	store        *SQLiteStore
 	appMu        sync.Mutex
@@ -64,8 +68,9 @@ type Service struct {
 	scanNodeIDs  map[string]string
 	taskSessions map[string]string // taskID → sessionID
 
-	eventMu    sync.Mutex
-	eventState map[string]*sessionEventState
+	eventMu      sync.Mutex
+	eventState   map[string]*sessionEventState
+	capabilities []Capability
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -75,6 +80,7 @@ func NewService(cfg ServiceConfig) *Service {
 		configGate:   make(chan struct{}, 1),
 		configStore:  cfg.ConfigStore,
 		buildProfile: cfg.BuildProfile,
+		runtimeLLM:   cfg.RuntimeLLM,
 		store:        cfg.Store,
 		hub:          NewHub(),
 		auth:         NewAuth(cfg.AccessKey),
@@ -82,6 +88,7 @@ func NewService(cfg ServiceConfig) *Service {
 		scanNodeIDs:  make(map[string]string),
 		taskSessions: make(map[string]string),
 		eventState:   make(map[string]*sessionEventState),
+		capabilities: append([]Capability(nil), cfg.Capabilities...),
 	}
 	if cfg.Profile != nil {
 		svc.profile = cfg.Profile
@@ -113,6 +120,14 @@ func NewService(cfg ServiceConfig) *Service {
 }
 
 func (s *Service) Hub() *Hub { return s.hub }
+
+// Capabilities returns the immutable capability set selected at startup.
+func (s *Service) Capabilities() []Capability {
+	if s == nil {
+		return nil
+	}
+	return append([]Capability(nil), s.capabilities...)
+}
 
 func (s *Service) SetAgentPool(pool *AgentPool) {
 	s.agents = pool
@@ -170,6 +185,11 @@ func (s *Service) Close(ctx context.Context) (resultErr error) {
 			s.appMu.Unlock()
 		}
 	}
+	for i := len(s.capabilities) - 1; i >= 0; i-- {
+		if s.capabilities[i] != nil {
+			resultErr = errors.Join(resultErr, s.capabilities[i].Close(ctx))
+		}
+	}
 	return resultErr
 }
 
@@ -209,6 +229,11 @@ func (s *Service) Status() *types.SystemStatus {
 		status.LlmProvider = providerConfig.Provider
 		status.LlmModel = providerConfig.Model
 		status.LlmApiKeyConfigured = strings.TrimSpace(providerConfig.APIKey) != ""
+	}
+	if providers == nil {
+		effective := s.runtimeLLMConfig()
+		status.LlmProvider, status.LlmModel = effective.Provider, effective.Model
+		status.LlmApiKeyConfigured = strings.TrimSpace(effective.APIKey) != ""
 	}
 	if response, err := s.api.Config.GetConfig(context.Background(), &types.GetConfigRequest{}); err == nil {
 		view := response.GetConfig()

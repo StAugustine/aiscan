@@ -331,7 +331,7 @@ func hasComputationBody(source []byte) bool {
 		switch value := node.(type) {
 		case *ast.Heading:
 			if value.Level == 1 {
-				inSection = strings.EqualFold(strings.TrimSpace(string(value.Text(source))), "Computation")
+				inSection = strings.EqualFold(strings.TrimSpace(headingText(value, source)), "Computation")
 			}
 		case *ast.FencedCodeBlock, *ast.CodeBlock:
 			found = inSection
@@ -348,7 +348,7 @@ func checkReserved(name, path string, body []byte, report *Report) {
 	_ = ast.Walk(root, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			if heading, ok := node.(*ast.Heading); ok {
-				headings = append(headings, string(heading.Text(source)))
+				headings = append(headings, headingText(heading, source))
 			}
 		}
 		return ast.WalkContinue, nil
@@ -364,6 +364,29 @@ func checkReserved(name, path string, body []byte, report *Report) {
 			}
 		}
 	}
+}
+
+func headingText(heading *ast.Heading, source []byte) string {
+	var content strings.Builder
+	_ = ast.Walk(heading, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			switch value := node.(type) {
+			case *ast.Text:
+				content.Write(value.Value(source))
+				if value.SoftLineBreak() {
+					content.WriteByte('\n')
+				}
+			case *ast.String:
+				content.Write(value.Value)
+			case *ast.AutoLink:
+				content.Write(value.Label(source))
+			case *ast.RawHTML:
+				content.Write(value.Segments.Value(source))
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	return content.String()
 }
 
 func markdownLinks(source []byte) []string {

@@ -1,10 +1,6 @@
 module github.com/chainreactors/cyber/audit
 
-replace github.com/chainreactors/utils/proc => ../third_party/proc
-
-replace github.com/chainreactors/utils/mitmproxy => ../third_party/mitmproxy
-
-go 1.26
+go 1.26.0
 
 require (
 	github.com/chainreactors/crtm v0.0.3-0.20260924103954-9432523918ae
@@ -12,16 +8,16 @@ require (
 	github.com/chainreactors/cyber/aop v0.0.0-20260818112202-76d90a72b2c5
 	github.com/gorilla/websocket v1.5.3
 	github.com/jessevdk/go-flags v1.6.1
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
 	aead.dev/minisign v0.2.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Knetic/govaluate v3.0.1-0.20171022003610-9aa49832a739+incompatible // indirect
-	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Masterminds/semver/v3 v3.5.0 // indirect
 	github.com/VividCortex/ewma v1.2.0 // indirect
-	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
+	github.com/alecthomas/chroma/v2 v2.27.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
@@ -29,7 +25,7 @@ require (
 	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
-	github.com/carapace-sh/carapace v1.11.6 // indirect
+	github.com/carapace-sh/carapace v1.16.2 // indirect
 	github.com/carapace-sh/carapace-shlex v1.1.1 // indirect
 	github.com/chainreactors/fingers v1.2.2-0.20260714063144-070758342f45 // indirect
 	github.com/chainreactors/logs v0.0.0-20260624034259-9aaea4aa52cc // indirect
@@ -41,15 +37,16 @@ require (
 	github.com/chainreactors/tui/readline v0.0.0-20260723062039-ed89e758c21b // indirect
 	github.com/chainreactors/utils v0.0.0-20260711153742-f3d210a5fa9d // indirect
 	github.com/chainreactors/utils/parsers v0.0.3 // indirect
-	github.com/chainreactors/utils/proc v0.0.0-20260917082019-d9b6bc48f7e2 // indirect
+	github.com/chainreactors/utils/proc v0.0.0-20261002195803-fc9e07c4b4fd // indirect
 	github.com/charlievieth/fastwalk v1.0.14 // indirect
 	github.com/charmbracelet/bubbles v1.0.0 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/glamour v0.8.0 // indirect
-	github.com/charmbracelet/lipgloss v1.1.0 // indirect
+	github.com/charmbracelet/glamour v1.0.0 // indirect
+	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834 // indirect
 	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/cellbuf v0.0.15 // indirect
+	github.com/charmbracelet/x/exp/slice v0.0.0-20250327172914-2fdc97757edf // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/cheggaaa/pb/v3 v3.1.4 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
@@ -57,7 +54,7 @@ require (
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/djherbis/times v1.6.0 // indirect
-	github.com/dlclark/regexp2 v1.12.0 // indirect
+	github.com/dlclark/regexp2/v2 v2.5.2 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
@@ -73,8 +70,8 @@ require (
 	github.com/google/go-github v17.0.0+incompatible // indirect
 	github.com/google/go-github/v30 v30.1.0 // indirect
 	github.com/google/go-querystring v1.2.0 // indirect
-	github.com/gookit/config/v2 v2.2.8 // indirect
-	github.com/gookit/goutil v0.7.5 // indirect
+	github.com/gookit/config/v2 v2.2.9 // indirect
+	github.com/gookit/goutil v0.8.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
@@ -86,9 +83,9 @@ require (
 	github.com/logrusorgru/aurora/v4 v4.0.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.22 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
-	github.com/mattn/go-runewidth v0.0.23 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/mholt/archiver v3.1.1+incompatible // indirect
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/minio/selfupdate v0.6.1-0.20230907112617-f11e74f84ca7 // indirect
@@ -103,9 +100,9 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/pierrec/lz4 v2.6.1+incompatible // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/projectdiscovery/blackrock v0.0.1 // indirect
-	github.com/projectdiscovery/gologger v1.1.71 // indirect
-	github.com/projectdiscovery/utils v0.11.1 // indirect
+	github.com/projectdiscovery/blackrock v0.0.2 // indirect
+	github.com/projectdiscovery/gologger v1.1.73 // indirect
+	github.com/projectdiscovery/utils v0.11.6 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sahilm/fuzzy v0.1.1 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
@@ -120,19 +117,19 @@ require (
 	github.com/wasilibs/wazero-helpers v0.0.0-20250123031827-cd30c44769bb // indirect
 	github.com/xi2/xz v0.0.0-20171230120015-48954b6210f8 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	github.com/yuin/goldmark v1.7.4 // indirect
-	github.com/yuin/goldmark-emoji v1.0.3 // indirect
+	github.com/yuin/goldmark v1.7.13 // indirect
+	github.com/yuin/goldmark-emoji v1.0.6 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260529124908-c761662dc8c9 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/term v0.44.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/sync v0.23.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	mvdan.cc/sh/v3 v3.13.1 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
 replace github.com/chainreactors/cyber => ..

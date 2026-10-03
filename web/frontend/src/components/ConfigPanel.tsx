@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Plus, Settings, Trash2, Zap } from 'lucide-react'
-import { create, equals } from '@bufbuild/protobuf'
+import { create, equals, type JsonObject } from '@bufbuild/protobuf'
 import { AgentConfigSchema, ConnectionCheckSchema, DistributeConfigSchema, LLMProbeResultSchema } from '../cyber-proto'
 import { getConfigStatus, llmConfigured, saveConfig, testLLM, testConn, listLLMModels } from '../api'
 import type { ConfigView, ConnectionCheck, DistributeConfig, LLMProbeResult, ServerStatus } from '../api'
@@ -39,7 +39,7 @@ interface ConfigFormState {
   extensions: DistributeConfig['extensions']
 }
 
-function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormState): DistributeConfig {
+function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormState, scanEnabled = false): DistributeConfig {
   // Opening LLM settings must not materialize empty defaults in every other
   // extension. Those apparent graph changes used to cancel active sessions.
   const extensions = { ...form.extensions }
@@ -50,7 +50,7 @@ function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormStat
   }
   editSection('cyberhub', form.cyberhub, original?.cyberhub)
   editSection('recon', form.recon, original?.recon, { ...form.recon, limit: form.recon.limit ?? 0 })
-  editSection('scan', form.scan, original?.scan)
+  if (scanEnabled) editSection('scan', form.scan, original?.scan)
   editSection('search', form.search, original?.search)
   editSection('ioa.client', form.ioa, original?.ioa, {
     url: form.ioa.url, token: form.ioa.token, node_name: form.ioa.node_name, space: form.ioa.space,
@@ -81,6 +81,7 @@ function formToDistributeConfig(form: ConfigFormState, original?: ConfigFormStat
 interface ConfigPanelProps {
   open: boolean
   status: ServerStatus | null
+  capabilities?: readonly string[]
   initialSection?: 'llm' | 'jev'
   onClose: () => void
   onSaved: () => void
@@ -235,7 +236,7 @@ function sectionStatus(
       return [tag('Tavily', !!cs?.extensions.search?.configuredSecrets.includes('tavily_keys'))]
     case 'guardrail':
       // The settings view contains stored values; an environment key stays server-side.
-      return cs?.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []
+      return cs?.extensions.guardrail?.values?.provider === 'jev' && cs.extensions.jev?.configuredSecrets.includes('api_key') ? [tag('JEV', true)] : []
     case 'ioa': {
       const ioa = cs?.extensions['ioa.client']
       return [tag('Server', !!(ioa?.values?.url && ioa.configuredSecrets.includes('token')))]
@@ -245,7 +246,7 @@ function sectionStatus(
   }
 }
 
-export default function ConfigPanel({ open, status, initialSection = 'llm', onClose, onSaved }: ConfigPanelProps) {
+export default function ConfigPanel({ open, status, capabilities = [], initialSection = 'llm', onClose, onSaved }: ConfigPanelProps) {
   const { t } = useTranslation('config')
   const [cs, setCs] = useState<ConfigView | null>(null)
   const [form, setForm] = useState<ConfigFormState>(() => emptyForm(t('newProfileName')))
@@ -257,6 +258,7 @@ export default function ConfigPanel({ open, status, initialSection = 'llm', onCl
   const [invalidModelProfileID, setInvalidModelProfileID] = useState('')
   const jevInputRef = useRef<HTMLInputElement>(null)
   const [focusJEV, setFocusJEV] = useState(false)
+  const scanEnabled = capabilities.includes('scan')
 
   useEffect(() => {
     if (!open) return
@@ -298,7 +300,7 @@ export default function ConfigPanel({ open, status, initialSection = 'llm', onCl
     setSaving(true)
     setError('')
     try {
-      await saveConfig(formToDistributeConfig(form, cs ? statusToForm(cs) : undefined))
+      await saveConfig(formToDistributeConfig(form, cs ? statusToForm(cs) : undefined, scanEnabled))
       onSaved()
       onClose()
     } catch (err: unknown) {
@@ -320,7 +322,7 @@ export default function ConfigPanel({ open, status, initialSection = 'llm', onCl
     >
       <form onSubmit={handleSave} className="flex h-full min-h-0 w-full flex-col">
         <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-4 py-1">
-          {TABS.map((tab) => (
+          {TABS.filter(tab => (tab.key === 'llm' || tab.key === 'agent' || !!cs?.extensions[tab.key === 'ioa' ? 'ioa.client' : tab.key]) && (tab.key !== 'scan' || scanEnabled)).map((tab) => (
             <Button
               key={tab.key} type="button" variant="ghost" size="sm"
               active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)}
@@ -644,7 +646,7 @@ function LLMTab({
             placeholder={configuredProfile?.apiKeyConfigured ? t('configuredKeep') : t('apiKeyRequired')} />
         </Field>
       </div>
-      <div className="sm:col-span-2">
+      {cs?.extensions.jev && <div className="sm:col-span-2">
         <Field label={t('jevApiKey')} hint={t('jevKeyInLLMHint')}>
           <Input
             ref={jevInputRef}
@@ -659,7 +661,7 @@ function LLMTab({
             placeholder={cs?.extensions.jev?.configuredSecrets.includes('api_key') ? t('configuredKeep') : 'TYPESAFE_API_KEY'}
           />
         </Field>
-      </div>
+      </div>}
       <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" onClick={handleTest} disabled={testing || !profile.model.trim()}>
           {testing ? <ProbePulse /> : <Zap className="h-4 w-4" />}
@@ -772,13 +774,26 @@ function IOATab({ form, setForm, cs }: TabProps) {
 function GuardrailTab({ form, setForm, onConfigureJEV }: TabProps & { onConfigureJEV: () => void }) {
   const { t } = useTranslation('config')
   const jev = form.extensions.jev ?? {}
+  const policy = (form.extensions.guardrail?.jev ?? {}) as JsonObject
   const update = (key: string, value: string | boolean) => setForm(f => ({
     ...f, extensions: { ...f.extensions, jev: { ...f.extensions.jev, [key]: value } },
   }))
   const value = (key: string, fallback = '') => typeof jev[key] === 'string' ? jev[key] as string : fallback
+  const policyValue = (key: string, fallback: string) => typeof policy[key] === 'string' ? policy[key] as string : fallback
+  const updatePolicy = (key: string, value: string) => setForm(f => ({
+    ...f, extensions: { ...f.extensions, guardrail: {
+      ...f.extensions.guardrail,
+      jev: { ...(f.extensions.guardrail?.jev as JsonObject | undefined), [key]: value },
+    } },
+  }))
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <Callout className="sm:col-span-2">{t('guardrailReloadHint')}</Callout>
+      <Field label={t('guardrailEnabled')}>
+        <Switch checked={form.extensions.guardrail?.provider === 'jev'} onCheckedChange={enabled => {
+          setForm(f => ({ ...f, extensions: { ...f.extensions, guardrail: { ...f.extensions.guardrail, provider: enabled ? 'jev' : 'none' } } }))
+        }} />
+      </Field>
       <div className="sm:col-span-2">
         <Button type="button" variant="outline" size="sm" onClick={onConfigureJEV}>
           <Settings className="h-4 w-4" />{t('configureJEV')}
@@ -794,13 +809,13 @@ function GuardrailTab({ form, setForm, onConfigureJEV }: TabProps & { onConfigur
       </Field>
       <p className="self-center text-xs text-muted-foreground">{t('guardrailModeHint_' + (form.extensions.guardrail?.mode === 'safe' ? 'safe' : 'auto'))}</p>
       <Field label={t('guardrailLevel')}>
-        <Select value={value('level', 'standard')} onValueChange={v => update('level', v)}>
+        <Select value={policyValue('level', 'standard')} onValueChange={v => updatePolicy('level', v)}>
           <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>{['permissive', 'standard', 'strict'].map(v => <SelectItem key={v} value={v}>{t('guardrailLevel_' + v)}</SelectItem>)}</SelectContent>
         </Select>
       </Field>
       <Field label={t('guardrailOnError')}>
-        <Select value={value('on_error', 'block') === 'record' ? 'review' : value('on_error', 'block')} onValueChange={v => update('on_error', v)}>
+        <Select value={policyValue('on_error', 'block')} onValueChange={v => updatePolicy('on_error', v)}>
           <SelectTrigger className="h-9 w-full"><SelectValue /></SelectTrigger>
           <SelectContent>{['block', 'review'].map(v => <SelectItem key={v} value={v}>{t('guardrailAction_' + v)}</SelectItem>)}</SelectContent>
         </Select>

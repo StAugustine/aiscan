@@ -128,7 +128,7 @@ executor: { resource: run.md, receipt: [job_id, result] }
 attester: { resource: attest.py }
 ---
 
-# Computation
+# **Computation**
 
 `+"```sql"+`
 SELECT 1

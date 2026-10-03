@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/chainreactors/cyber/exts/guardrail"
 	"github.com/chainreactors/cyber/pkg/aopconn"
-	"github.com/chainreactors/cyber/pkg/exts/guardrail"
 	"strconv"
 	"sync"
 
@@ -374,6 +374,11 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 	if registerNamespaces != nil {
 		if err := registerNamespaces(mux); err != nil {
 			return fmt.Errorf("register application extension namespace: %w", err)
+		}
+	}
+	for _, capability := range s.capabilities {
+		if err := capability.RegisterNamespaces(mux); err != nil {
+			return fmt.Errorf("register %s capability namespace: %w", capability.ID(), err)
 		}
 	}
 	dispatch := func(_ context.Context, envelope *aop.Envelope, sendEnvelope aop.SendFunc) error {

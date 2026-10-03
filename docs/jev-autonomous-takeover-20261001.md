@@ -34,5 +34,5 @@
 $env:JEV_BROWSER_LIVE='1'
 $env:JEV_DECLARATION_EFFORT='low'
 $env:JEV_BROWSER_REPORT='<新的报告路径>'
-go test -tags full,sqlite ./pkg/exts/jev -run '^TestBrowserAutomaticTakeoverAfterBoundedDiscovery$' -count=1 -timeout=20m -v
+go test -tags full,sqlite ./exts/jev -run '^TestBrowserAutomaticTakeoverAfterBoundedDiscovery$' -count=1 -timeout=20m -v
 ```
