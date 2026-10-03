@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { test } from 'node:test'
@@ -97,8 +97,8 @@ test('one-line bootstrap downloads, executes and cleans up on success and failur
         const expected = ['--server-url', url.toString().replace(/\/$/, ''), '--node-name', options.nodeName]
         if (scenario.distribution === 'cyber-scan') expected.unshift('agent')
         assert.deepEqual(result.args, expected, 'shell quoting changed the connection arguments')
-        assert.equal(resolve(result.cwd), resolve(workdir), 'bootstrap changed the node workspace')
-        assert.equal(dirname(dirname(result.binary)), temporary, 'node did not run in its private download directory')
+        assert.equal(await realpath(result.cwd), await realpath(workdir), 'bootstrap changed the node workspace')
+        assert.equal(await realpath(dirname(dirname(result.binary))), await realpath(temporary), 'node did not run in its private download directory')
       }
     })
   }
