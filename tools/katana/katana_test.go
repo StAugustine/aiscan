@@ -17,7 +17,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -302,7 +301,7 @@ type ownedTestWriter struct {
 
 func (w *ownedTestWriter) Close() error { w.closed++; return nil }
 func TestEmbeddedCrawlerOwnsOutputWithoutChangingProcessState(t *testing.T) {
-	before := *gologger.DefaultLogger
+	before := fmt.Sprintf("%#v", gologger.DefaultLogger)
 	path := filepath.Join(t.TempDir(), "not-created", "results.json")
 	options := &katanatypes.Options{OutputFile: path, Silent: true, RateLimit: 1}
 	writer := &ownedTestWriter{}
@@ -314,7 +313,7 @@ func TestEmbeddedCrawlerOwnsOutputWithoutChangingProcessState(t *testing.T) {
 	if crawler.Logger != logger || crawler.OutputWriter != writer {
 		t.Fatal("lost injected output")
 	}
-	if !reflect.DeepEqual(before, *gologger.DefaultLogger) {
+	if fmt.Sprintf("%#v", gologger.DefaultLogger) != before {
 		t.Fatal("modified global logger")
 	}
 	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {

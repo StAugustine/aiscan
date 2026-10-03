@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/cyber/core/operation"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/cyber/core/truncate"
@@ -42,9 +41,6 @@ type Command struct {
 	openMu     sync.Mutex
 	sessions   map[string]*Session
 	sessionsMu sync.Mutex
-	// Observed call IDs survive consumption and session closure so stale calls
-	// cannot fall through to ordinary execution. Protected by sessionsMu.
-	observed map[string]struct{}
 
 	// Proxy URL for Chrome's --proxy-server flag. Updated via SetProxy().
 	proxyMu  sync.RWMutex
@@ -100,6 +96,16 @@ Usage:
 Global Options:
   -s <name> / -s=<name>                            Target a named session (all subcommands)
   Environment: PLAYWRIGHT_CLI_SESSION=<name>       Default session when -s is not provided
+
+Selector Syntax:
+  Standard CSS, xpath:<expression>, text=<text>, label=<text>,
+  testid=<value>, role=button[name="Name"] are supported.
+  Extended CSS pseudo-classes such as :has-text() and :text-is() are not supported.
+  A selector must resolve to the intended current element; use a unique existing address.
+
+JavaScript Evaluation:
+  Pass an evaluated expression, for example (() => { return document.body.innerText; })().
+  Object results are returned as JSON. A function without invocation is not a page read.
 
 Unified Subcommands (URL or session):
   goto <url|session> [selector]                  Navigate to URL and return text, or extract text from session
@@ -280,17 +286,6 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 
 	if globalSession != "" {
 		subArgs = c.injectGlobalSession(sub, subArgs, globalSession)
-	}
-	c.sessionsMu.Lock()
-	_, observed := c.observed[operation.InvocationFromContext(ctx).CallID]
-	c.sessionsMu.Unlock()
-	if observed {
-		result, err := c.runObserved(ctx, sub, subArgs)
-		if err != nil {
-			return nil, err
-		}
-		_, err = fmt.Fprint(execution.Stdout, result)
-		return nil, err
 	}
 
 	var result string

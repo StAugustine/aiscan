@@ -131,6 +131,7 @@ test('operator completes a full Cyber Web journey', async ({ page, request }) =>
     const quickConnect = page.getByRole('dialog', { name: 'Download & connect an agent' })
     await expect(quickConnect).toBeVisible()
     await expect(quickConnect.getByText('Token configured', { exact: true })).toBeVisible()
+    await quickConnect.locator('input[placeholder^="node-"]').fill('journey-node')
     const commands = quickConnect.locator('pre')
     await expect(commands).toHaveCount(2)
     for (let i = 0; i < 2; i++) {
@@ -139,7 +140,8 @@ test('operator completes a full Cyber Web journey', async ({ page, request }) =>
       expect(command).not.toContain('--web-url')
       expect(command).not.toContain('ACCESS_TOKEN')
       expect(command).toContain(`http://${API_TOKEN}@`)
-      expect(command).toContain('NODE_NAME')
+      expect(command).toContain("--node-name 'journey-node'")
+      expect(command).not.toContain('NODE_NAME')
     }
     await page.keyboard.press('Escape')
     await expect(quickConnect).toBeHidden()

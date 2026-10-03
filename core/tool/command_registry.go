@@ -2,15 +2,12 @@ package tool
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"strings"
 	"time"
-
-	aop "github.com/chainreactors/cyber/aop"
 
 	operationpb "github.com/chainreactors/cyber/aop/operation"
 	"github.com/chainreactors/cyber/core/extension"
@@ -128,42 +125,6 @@ func (r *CommandRegistry) DescriptionPath(name string) string {
 		return ""
 	}
 	return entry.Value.DescriptionPath
-}
-
-// ObserveCommands shares the command registration lifetime; it is not another
-// registry. Consumers cannot retain callbacks beyond an acquired observation.
-func (r *CommandRegistry) ObserveCommands() []string {
-	if r == nil || r.store == nil {
-		return nil
-	}
-	var result []string
-	for _, entry := range r.store.Entries() {
-		if entry.Value.Observe != nil {
-			result = append(result, entry.Name)
-		}
-	}
-	return result
-}
-
-func (r *CommandRegistry) Observe(ctx context.Context, name string, messages []*aop.Message) (state json.RawMessage, candidates map[string]*aop.Content, err error) {
-	if r == nil || r.store == nil {
-		return nil, nil, ErrUnavailable
-	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			state, candidates, err = nil, nil, operation.PanicError("command observation", name)
-			slog.ErrorContext(ctx, "command observation panicked", "command", name, "error", recovered, "stack", string(debug.Stack()))
-		}
-	}()
-	entry, call, release, err := r.store.Acquire(ctx, name)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer release()
-	if entry.Value.Observe == nil {
-		return nil, nil, nil
-	}
-	return entry.Value.Observe(call, messages)
 }
 
 func (r *CommandRegistry) Execute(ctx context.Context, name string, execution *Execution) (result any, err error) {

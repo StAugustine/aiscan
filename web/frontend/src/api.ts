@@ -84,9 +84,18 @@ const cyberRPC = {
 }
 const aopClient = new AOPClient()
   .register(CommandProtocolMessageSchema)
-  .register(ScanProtocolMessageSchema)
   .register(ReloadProtocolMessageSchema)
   .register(GuardrailProtocolMessageSchema)
+
+const registeredCapabilities = new Set<string>()
+// Protocol packages are mounted from the server manifest. A profile-neutral
+// Hub therefore does not register or dispatch scan messages unless the Hub or
+// a connected profile advertises the scan capability.
+export function registerCapabilityProtocols(capability: string): void {
+  if (registeredCapabilities.has(capability)) return
+  if (capability === 'scan') aopClient.register(ScanProtocolMessageSchema)
+  registeredCapabilities.add(capability)
+}
 
 export const AUTH_REQUIRED_EVENT = 'cyber:auth-required'
 export const CONFIG_CHANGED_EVENT = 'cyber:config-changed'
@@ -197,12 +206,16 @@ export async function listAgents(): Promise<AgentView[]> {
   }
 }
 
-// The single "is the LLM usable" predicate: a provider client exists and it
-// targets a model. An API key is deliberately not required — self-hosted
-// endpoints (Ollama, vLLM) are keyless — and the server already merges the
-// runtime provider with the stored settings view before answering.
+// The Hub may intentionally have no local provider client: in the profile-
+// neutral deployment the connected scan/audit node owns the provider. The
+// status endpoint still exposes the saved provider/model, so configuration is
+// present when a model and provider are available even if `llm_available` is
+// false on the Hub itself.
 export function llmConfigured(status: ServerStatus | null | undefined): boolean {
-  return !!(status?.llmAvailable && status.llmModel?.trim())
+  return !!(
+    status?.llmModel?.trim() &&
+    (status.llmAvailable || status.llmApiKeyConfigured || status.llmProvider?.trim())
+  )
 }
 
 export async function getConfigStatus(): Promise<ConfigView> {

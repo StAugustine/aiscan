@@ -1,0 +1,93 @@
+//go:build full
+
+package browser
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/chainreactors/cyber/core/extension"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/playwright"
+)
+
+// Extension owns the browser command registration and the browser processes
+// opened by that command. The profile owns the command registry.
+type Extension struct {
+	mu             sync.Mutex
+	workDir        string
+	defaultSession string
+	command        *playwright.Command
+	registered     bool
+	closed         bool
+	done           chan struct{}
+}
+
+var _ extension.Extension = (*Extension)(nil)
+
+func New(workDir, defaultSession string) (*Extension, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return nil, fmt.Errorf("browser extension requires a working directory")
+	}
+	return &Extension{workDir: workDir, defaultSession: defaultSession}, nil
+}
+
+func (m *Extension) Load(scope *extension.Scope) error {
+	ctx := scope.Init()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return coretool.ErrUnavailable
+	}
+	if m.registered {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	command := playwright.New(m.workDir).WithDefaultSession(m.defaultSession)
+	if err := extension.Add(scope, coretool.Command{
+		Name: command.Name(), Usage: command.Usage(),
+		DescriptionPath: "cyber://skills/runtime/playwright.md",
+		Run:             command.Run,
+	}); err != nil {
+		command.Close()
+		return err
+	}
+	m.command = command
+	m.registered = true
+	return nil
+}
+
+func (m *Extension) Close(ctx context.Context) error {
+	m.mu.Lock()
+	if m.closed {
+		m.mu.Unlock()
+		return nil
+	}
+	m.registered = false
+	if m.done == nil {
+		m.done = make(chan struct{})
+		command := m.command
+		go func() {
+			if command != nil {
+				command.Close()
+			}
+			close(m.done)
+		}()
+	}
+	done := m.done
+	m.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	m.mu.Lock()
+	m.command = nil
+	m.closed = true
+	m.mu.Unlock()
+	return nil
+}

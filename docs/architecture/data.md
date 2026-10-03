@@ -82,4 +82,4 @@ Session 就是用户持续处理的一项任务，沿用既有消息、执行与
 
 本次开发版数据库结构新增 Session 的 `archived`，Scan 的 `verify` 改为可空值并移除 `deep`。未提供旧库迁移；启动新版时请使用新的数据库路径，或在自行备份后显式重建开发库。程序不会自动删除已有数据库。浏览器 IndexedDB 是派生缓存，版本升级时会重新消费服务端归档。
 
-实现：[事件流](../../core/events)、[telemetry 扩展](../../pkg/exts/telemetry/extension.go)、[会话 JSONL](../../agent/session/session_jsonl.go)、[Web 存储](../../pkg/web/service/store_sqlite.go)、[浏览器 CSTX](../../web/frontend/src/lib/cstx-runtime.ts)。验证入口：[历史记录测试](../../agent/session/session_jsonl_test.go)、[artifact API 测试](../../pkg/web/api/artifact_test.go)。
+实现：[事件流](../../core/events)、[telemetry 扩展](../../exts/telemetry/extension.go)、[会话 JSONL](../../agent/session/session_jsonl.go)、[Web 存储](../../pkg/web/service/store_sqlite.go)、[浏览器 CSTX](../../web/frontend/src/lib/cstx-runtime.ts)。验证入口：[历史记录测试](../../agent/session/session_jsonl_test.go)、[artifact API 测试](../../pkg/web/api/artifact_test.go)。

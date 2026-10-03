@@ -22,21 +22,21 @@ import (
 	"github.com/chainreactors/cyber/core/proc"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
+	guardrailext "github.com/chainreactors/cyber/exts/guardrail"
+	ioaclient "github.com/chainreactors/cyber/exts/ioa/client"
+	jevext "github.com/chainreactors/cyber/exts/jev"
+	nativeext "github.com/chainreactors/cyber/exts/native"
+	nodeext "github.com/chainreactors/cyber/exts/node"
+	observeext "github.com/chainreactors/cyber/exts/observe"
+	proxyext "github.com/chainreactors/cyber/exts/proxy"
+	ptyext "github.com/chainreactors/cyber/exts/pty"
+	recapext "github.com/chainreactors/cyber/exts/recap"
+	sessionext "github.com/chainreactors/cyber/exts/session"
+	subagentext "github.com/chainreactors/cyber/exts/subagent"
+	telemetryext "github.com/chainreactors/cyber/exts/telemetry"
+	tuiext "github.com/chainreactors/cyber/exts/tui"
 	cfg "github.com/chainreactors/cyber/pkg/config"
 	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
-	guardrailext "github.com/chainreactors/cyber/pkg/exts/guardrail"
-	ioaclient "github.com/chainreactors/cyber/pkg/exts/ioa/client"
-	jevext "github.com/chainreactors/cyber/pkg/exts/jev"
-	nativeext "github.com/chainreactors/cyber/pkg/exts/native"
-	nodeext "github.com/chainreactors/cyber/pkg/exts/node"
-	observeext "github.com/chainreactors/cyber/pkg/exts/observe"
-	proxyext "github.com/chainreactors/cyber/pkg/exts/proxy"
-	ptyext "github.com/chainreactors/cyber/pkg/exts/pty"
-	recapext "github.com/chainreactors/cyber/pkg/exts/recap"
-	sessionext "github.com/chainreactors/cyber/pkg/exts/session"
-	subagentext "github.com/chainreactors/cyber/pkg/exts/subagent"
-	telemetryext "github.com/chainreactors/cyber/pkg/exts/telemetry"
-	tuiext "github.com/chainreactors/cyber/pkg/exts/tui"
 	nodepkg "github.com/chainreactors/cyber/pkg/node"
 	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	ioatools "github.com/chainreactors/cyber/tools/ioa"
@@ -153,20 +153,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Normalize legacy risk settings once, independently of acceleration mode.
+	// Screening is selected explicitly and independently of acceleration.
 	guardrailValue := *guardrailConfig
-	if guardrailValue.Provider == "" && (jevConfig.Enabled || strings.TrimSpace(jevConfig.APIKey) != "") {
-		guardrailValue.Provider = "jev"
-		if guardrailValue.JEV.Level == "" {
-			guardrailValue.JEV.Level = jevConfig.Level
-		}
-		if guardrailValue.JEV.OnError == "" {
-			guardrailValue.JEV.OnError = jevConfig.OnError
-		}
-		if guardrailValue.JEV.Criteria == nil {
-			guardrailValue.JEV.Criteria = jevConfig.Criteria
-		}
-	}
+
 	graph, err := extensions(config.Base, loop, workDir, proxyExtension, guardrailValue)
 	if err != nil {
 		return nil, fmt.Errorf("construct Cyber application: %w", err)
