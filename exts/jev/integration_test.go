@@ -326,12 +326,11 @@ func TestDeferAndInvalidAnswerLeaveHistoryUntouched(t *testing.T) {
 // Unit execution tests install a scene to isolate the executor; automatic
 // declaration/compilation is covered separately from an empty library.
 func installReflex(e *Extension, sources ...string) {
-	code := constantObserve(`{}`, map[string]string{})
 	calls := map[string]string{}
 	for _, source := range sources {
 		calls[source+"/go"] = source
 	}
-	code = constantObserve(`{}`, calls)
+	code := constantObserve(`{}`, calls)
 	if len(sources) == 1 && (sources[0] == "advance" || sources[0] == "workflow") {
 		code = stepObserve(sources[0], sources[0] == "advance")
 	}
