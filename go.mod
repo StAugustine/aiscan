@@ -1,9 +1,5 @@
 module github.com/chainreactors/cyber
 
-replace github.com/chainreactors/utils/proc => ./third_party/proc
-
-replace github.com/chainreactors/utils/mitmproxy => ./third_party/mitmproxy
-
 go 1.26
 
 tool (
@@ -33,9 +29,9 @@ require (
 	github.com/chainreactors/tui/console v0.0.0-20260712082522-2ba36ad7841f
 	github.com/chainreactors/tui/readline v0.0.0-20260723062039-ed89e758c21b
 	github.com/chainreactors/utils v0.0.0-20260711153742-f3d210a5fa9d
-	github.com/chainreactors/utils/mitmproxy v0.0.0-20260909040842-68732c4ef873
+	github.com/chainreactors/utils/mitmproxy v0.0.0-20261002195803-fc9e07c4b4fd
 	github.com/chainreactors/utils/parsers v0.0.3
-	github.com/chainreactors/utils/proc v0.0.0-20260917082019-d9b6bc48f7e2
+	github.com/chainreactors/utils/proc v0.0.0-20261002195803-fc9e07c4b4fd
 	github.com/chainreactors/zombie v1.3.1-0.20260809133033-0d0df6fa50f5
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/glamour v0.8.0
