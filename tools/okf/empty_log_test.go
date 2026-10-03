@@ -28,3 +28,29 @@ func TestLogWithoutHeadingsReturnsValidationError(t *testing.T) {
 		})
 	}
 }
+
+func TestLogValidatesFormattedDateHeadings(t *testing.T) {
+	for _, tc := range []struct {
+		heading string
+		valid   bool
+	}{
+		{"**2026-10-03**", true},
+		{"`2026-10-03`", true},
+		{"[2026-10-03](https://example.com)", true},
+		{"**not-a-date**", false},
+	} {
+		t.Run(tc.heading, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "log.md")
+			if err := os.WriteFile(path, []byte("# Log\n\n## "+tc.heading+"\n\nEntry.\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			report, err := Validate(t.Context(), path, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Valid() != tc.valid || hasRule(report, "log.date", Error) == tc.valid {
+				t.Fatalf("formatted heading validation = %+v, want valid=%t", report, tc.valid)
+			}
+		})
+	}
+}
