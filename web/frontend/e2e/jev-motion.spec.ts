@@ -150,13 +150,24 @@ test.describe('shareable motion preview', () => {
   })
 })
 
-test('ordinary tool calls use the model path and background decisions do not control execution', async ({ page }) => {
+test('ordinary chat preserves reasoning and tool disclosures without JEV activity', async ({ page }) => {
   await mount(page)
   await render(page, [initial[0], initial[1], event(3, { case: 'toolCall', value: call })])
+  await expect(page.getByTestId('agent-workflow')).toHaveCount(0)
+  await page.getByRole('button', { name: '思考', exact: true }).click()
+  await expect(page.getByRole('region', { name: '思考', exact: true })).toContainText('Inspect the current documentation')
+  await expect(page.getByRole('button', { name: /1.*工具/ })).toBeVisible()
+})
+
+test('ordinary tool calls use the model path and background decisions do not control execution', async ({ page }) => {
+  await mount(page)
+  await render(page, [initial[0], initial[1],
+    trace(3, { case: 'decisionRequest', value: { requestId: 'background-entry', questions } }, true),
+    event(4, { case: 'toolCall', value: call })])
   await expect(page.locator('[data-control-route=model-executor-0]')).toHaveAttribute('data-active', 'true')
   await expect(page.locator('[data-control-route=judgment-executor-0]')).toHaveAttribute('data-active', 'false')
-  await render(page, [event(4, { case: 'toolResult', value: { callId: call.id, name: call.name } }), event(5, { case: 'turnEnded', value: {} }),
-    trace(6, { case: 'decisionRequest', value: { requestId: 'background', questions } }, true)], true)
+  await render(page, [event(5, { case: 'toolResult', value: { callId: call.id, name: call.name } }), event(6, { case: 'turnEnded', value: {} }),
+    trace(7, { case: 'decisionRequest', value: { requestId: 'background', questions } }, true)], true)
   await expect(page.getByTestId('jev-control-flow')).toHaveAttribute('data-stage', 'background')
   await expect(page.locator('[data-control-route^=judgment-executor][data-active=true]')).toHaveCount(0)
 })
@@ -164,9 +175,11 @@ test('ordinary tool calls use the model path and background decisions do not con
 test('parallel tools retain their own arrival route while sibling calls are still running', async ({ page }) => {
   await mount(page)
   const other = { ...call, id: 'http', name: 'http-reader' }
-  await render(page, [initial[0], initial[1], event(3, { case: 'toolCall', value: call }), event(4, { case: 'toolCall', value: other })])
+  await render(page, [initial[0], initial[1],
+    trace(3, { case: 'decisionRequest', value: { requestId: 'background-entry', questions } }, true),
+    event(4, { case: 'toolCall', value: call }), event(5, { case: 'toolCall', value: other })])
   await expect(page.locator('[data-control-route^=model-executor][data-active=true]')).toHaveCount(2)
-  await render(page, [event(5, { case: 'toolResult', value: { callId: 'http', name: 'http-reader' } })], true)
+  await render(page, [event(6, { case: 'toolResult', value: { callId: 'http', name: 'http-reader' } })], true)
   // Inspect the arrival while bash remains pending, using the real replay frame.
   const progress = page.getByRole('slider', { name: '执行回放进度' })
   await progress.focus(); await progress.press('End')

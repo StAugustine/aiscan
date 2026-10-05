@@ -843,6 +843,12 @@
         "result": "pass",
         "passed": 33,
         "coverage": "production Hub/node streaming retry, reconnect, Goal round order, compact help, recap and full user journey"
+      },
+      {
+        "command": "npm run test:jev -- jev-motion.spec.ts --grep 'ordinary|parallel'",
+        "result": "pass",
+        "passed": 3,
+        "coverage": "ordinary reasoning/tool disclosures without JEV; model-directed native tools and parallel feedback during background JEV work"
       }
     ],
     "profile_boundary": "Production profile exercises native browser contract, namespace mux, streaming execution, compilation, publication and ProtoJSON event replay. SQLite durability/backpressure is tested in pkg/web/service; the profile does not construct the Web store.",
