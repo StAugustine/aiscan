@@ -204,11 +204,12 @@ func (s *mechanismSuite) realJEV(t *testing.T) {
 					cfg.SessionID = fmt.Sprintf("E6-%s-%s-%d", condition, mode, seed)
 					r := mechanismRunAgent(t, e, cfg, mechanismSemanticSource, l.arguments(), user+" Resource "+l.resource+" reference "+l.reference, t.Context(), false)
 					ok := r.SourceStable && r.Generations == 0 && r.MainCalls == 0 && l.wrong == 0 && r.Error == ""
-					if condition == "cancel" {
-						ok = ok && l.effects == 0 && r.Reports == 1 && strings.Contains(r.Output, `"cancelled":true`)
-					} else if condition == "unrelated" {
+					switch condition {
+					case "cancel":
+						ok = ok && l.effects == 0 && r.Reports == 1 && strings.Contains(r.Output, `"canceled":true`)
+					case "unrelated":
 						ok = ok && l.effects == 0 && r.Reports == 0
-					} else {
+					default:
 						ok = ok && l.effects == 1 && l.reads == 3 && r.Reports == 1 && mechanismHasReceipt(r, l.receipt)
 					}
 					observed := l.snapshot()

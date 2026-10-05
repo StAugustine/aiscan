@@ -802,6 +802,22 @@
         "result": "pass",
         "missing_local_links": 0,
         "credential_pattern_matches": 0
+      },
+      {
+        "command": "golangci-lint run --timeout=8m",
+        "result": "pass",
+        "issues": 0
+      },
+      {
+        "command": "golangci-lint run --build-tags='full,sqlite' --new-from-rev=origin/master --timeout=8m ./exts/jev/... ./cmd/aiscan/... ./core/tool/... ./agent/... ./pkg/web/service/... ./tools/playwright/... ./exts/browser/...",
+        "result": "pass",
+        "issues": 0,
+        "scope": "changes against master; existing full-tag issues outside this change remain"
+      },
+      {
+        "command": "go mod tidy (audit)",
+        "result": "pass",
+        "changes": "goja, sourcemap and pprof checksums synchronized"
       }
     ],
     "profile_boundary": "Production profile exercises native browser contract, namespace mux, streaming execution, compilation, publication and ProtoJSON event replay. SQLite durability/backpressure is tested in pkg/web/service; the profile does not construct the Web store.",

@@ -229,7 +229,7 @@ const mechanismSemanticSource = `js:function(context,args){
  if(!args||!args.resource||!args.reference||typeof args.query!=='boolean')return {defer:'missing current arguments',parameters:'resource, reference, query, mode'};
  const route=jev({state:{user:context.user},questions:{route:{type:'choice',instructions:'Select the current user request: create an asynchronous record, inspect the existing record, or cancel without effects. Unrelated requests defer.',criteria:{create:'Create the requested record',inspect:'Inspect an existing record without creation',cancel:'Cancel; perform no operation',defer:'Unsupported task'}}}}).answers.route.choice;
  if(route==='defer')return {defer:'unsupported task'};
- if(route==='cancel')return {report:{cancelled:true}};
+ if(route==='cancel')return {report:{canceled:true}};
  if(route==='create')execute({name:'bash',arguments:{command:'mechanism submit '+quote(args.resource)+' '+quote(args.reference)},read:false});
  for(let i=0;i<8;i++){
   const r=execute({name:'bash',arguments:{command:'mechanism status '+quote(args.resource)},read:true});
@@ -287,7 +287,7 @@ func mechanismFake(t *testing.T, branch string) *jevapi.Client {
 }
 
 func mechanismRunAgent(t *testing.T, e *Extension, cfg agent.Config, source string, args map[string]any, user string, ctx context.Context, supplement bool) mechanismRun {
-	return mechanismRunReflex(t, e, cfg, Reflex{When: "The user requests creating, inspecting or cancelling a native record, or a supported browser business workflow", Decide: "Select current requested work; unrelated requests defer", Observe: source}, args, user, ctx, supplement)
+	return mechanismRunReflex(t, e, cfg, Reflex{When: "The user requests creating, inspecting or canceling a native record, or a supported browser business workflow", Decide: "Select current requested work; unrelated requests defer", Observe: source}, args, user, ctx, supplement)
 }
 
 func (s *mechanismSuite) verifier(t *testing.T) {

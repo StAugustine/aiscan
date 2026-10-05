@@ -59,7 +59,7 @@ func (s *mechanismSuite) liveClient(t *testing.T, dir string, foregroundOnly boo
 			return
 		}
 		if err != nil {
-			http.Error(w, "upstream request failed", 502)
+			http.Error(w, "upstream request failed", http.StatusBadGateway)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(response)

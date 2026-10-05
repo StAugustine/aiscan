@@ -205,7 +205,7 @@ func (l *replacementLab) browser() *httptest.Server {
 		}
 		layout := r.URL.Query().Get("layout")
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `<!doctype html><title>Current catalogue</title><main><h1>Catalogue %s</h1><form onsubmit="event.preventDefault();fetch('/query?term='+encodeURIComponent(this.querySelector('input').value)).then(r=>r.json()).then(x=>document.querySelector('output').textContent='Receipt: '+x.receipt)"><label>Search term <input name="term"></label><button>Find</button></form><output>Waiting for a query</output></main>`, layout)
+		fmt.Fprintf(w, `<!doctype html><title>Current catalog</title><main><h1>Catalog %s</h1><form onsubmit="event.preventDefault();fetch('/query?term='+encodeURIComponent(this.querySelector('input').value)).then(r=>r.json()).then(x=>document.querySelector('output').textContent='Receipt: '+x.receipt)"><label>Search term <input name="term"></label><button>Find</button></form><output>Waiting for a query</output></main>`, layout)
 	}))
 }
 
@@ -244,12 +244,12 @@ func llmFiniteJudge(t *testing.T, meter *paidMeter, model string) *jevapi.Client
 		}
 		response, err := meter.ChatCompletion(r.Context(), &provider.ChatCompletionRequest{Purpose: "finite_judge", Model: model, JSONOutput: true, MaxTokens: 2048, Messages: []*aop.Message{provider.TextMessage("system", "Answer each finite question against the current constraints and actual evidence. Return this exact JSON ENVELOPE with actual choices: "+jsonText(map[string]any{"answers": format})+". The top-level key MUST be answers. Each nested choice is one existing criteria key. Do not return the schema, request, criteria, explanations or execution plans. Defer only when this check is not established."), provider.TextMessage("user", jsonText(map[string]any{"state": req.State, "questions": req.Questions}))}})
 		if err != nil || response == nil || len(response.Choices) != 1 {
-			http.Error(w, "finite LLM judgment unavailable", 503)
+			http.Error(w, "finite LLM judgment unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		var answer jevapi.Response
 		if json.Unmarshal([]byte(provider.MessageText(response.Choices[0].Message)), &answer) != nil || len(answer.Answers) != len(req.Questions) {
-			http.Error(w, "invalid finite answer", 502)
+			http.Error(w, "invalid finite answer", http.StatusBadGateway)
 			return
 		}
 		if response.Usage != nil {
