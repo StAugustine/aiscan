@@ -88,16 +88,18 @@ UI 测试同时回放 [profile 事件](../web/frontend/e2e/fixtures/jev-history/
 
 ## 真实模型实验
 
+以下保留逐轮结果摘要。原始实验报告、费用明细和机器可读验证记录仅保留在本地，不随源代码提交。
+
 LLM 使用 DeepSeek 官方端点 `https://api.deepseek.com` 的 `deepseek-flash`，JEV 使用 `jev-1.13.0`。冷启动实验独立空库，不预置或人工编辑 Reflex 源码；暖启动实验明确记录 library_origin，原样复用自主生成的库。三类任务分别是浏览器 UI 查询、异步结果未知后的同操作轮询、相同参数的有意重复副作用。每类最多 3 个冷启动训练任务；每个编译 Agent 内部持续修复，实验设置显式 10 分钟编译期限，生产默认没有这一期限。
 
 计划对比普通 LLM、同一冻结 Reflex + LLM 有限判断、同一冻结 Reflex + 真实 JEV。先运行 5 组配对任务，仅所有分组都通过才扩展到 30 组。独立服务器 oracle 检查实际目标、操作次数及当前 receipt；不能仅用自然语言答案自评。
 
 | 实验 | 冷启动成功（浏览器／异步／重复） | 普通 LLM 成功（每类 5 次） | 编译模型请求 | 合格 Reflex |
 | --- | --- | --- | ---: | ---: |
-| [第 1 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005/report.json) | 3/3 · 1/3 · 1/3 | 3/5 · 3/5 · 3/5 | 0 | 0 |
-| [第 2 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r2/report.json) | 3/3 · 0/3 · 2/3 | 5/5 · 2/5 · 3/5 | 8 | 0 |
-| [第 3 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r3/report.json) | 2/3 · 3/3 · 3/3 | 4/5 · 5/5 · 5/5 | 12 | 0 |
-| [第 4 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r4/report.json) | 3/3 · 3/3 · 3/3 | 3/5 · 5/5 · 5/5 | 13 | 0 |
+| 第 1 轮 | 3/3 · 1/3 · 1/3 | 3/5 · 3/5 · 3/5 | 0 | 0 |
+| 第 2 轮 | 3/3 · 0/3 · 2/3 | 5/5 · 2/5 · 3/5 | 8 | 0 |
+| 第 3 轮 | 2/3 · 3/3 · 3/3 | 4/5 · 5/5 · 5/5 | 12 | 0 |
+| 第 4 轮 | 3/3 · 3/3 · 3/3 | 3/5 · 5/5 · 5/5 | 13 | 0 |
 
 每轮有 30 条被资格门槛阻塞的 Reflex 分组记录（3 类 × 2 个 Reflex 分组 × 5 次）。它们没有实际执行，不能记成运行失败率，更不能记成零成本成功。四轮均未扩展到 30 组，也没有实际完成冻结 Reflex 的配对运行对比。
 
@@ -109,16 +111,16 @@ LLM 使用 DeepSeek 官方端点 `https://api.deepseek.com` 的 `deepseek-flash`
 
 | 实验 | 类型与实际结果 | 暴露的问题／解释 |
 | --- | --- | --- |
-| [第 5 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r5/report.json) | 三类冷启动，393 个编译请求，0 合格 | 持续交互已接通；证据引用不能遍历数组、反馈不够具体，异步修复耗尽上下文 |
-| [第 6 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r6-browser/report.json) | 浏览器冷启动，61 个编译请求，1 个自主合格产物 | 冻结后两组均 0/5；参数提取回显 schema 元数据 |
-| [第 7 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r7/report.json) | 三类冷启动，208 个编译请求，0 合格 | 当时二进制尚未包含后续运行时证据与参数修复 |
-| [第 8 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r8-browser-runtime/report.json) | 浏览器暖启动，真实 JEV 0/5 | 参数正确，但调用判断仍使用入口上下文，无法看到新会话 |
-| [第 9 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r9-browser-runtime/report.json) | 浏览器暖启动，真实 JEV 3/5 | 新会话可见；2 次点击后的确认读取被误拒绝 |
-| [第 10 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r10-browser-runtime/report.json) | 浏览器暖启动，普通 LLM 5/5，真实 JEV 5/5 | JEV 执行推理 LLM 调用为零；有限 LLM 对照因返回协议错误仍 0/5 |
-| [第 11 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r11-browser-runtime/report.json) | 浏览器暖启动，扩展到 30 组；普通 LLM 25/30、有限 LLM 16/30、真实 JEV 27/30 | 前 5 组全部通过后扩展；第 27—29 组都遇到 DeepSeek 402。余额可用期间真实 JEV 为 27/27，有限 LLM 为 16/27，普通 LLM 为 25/27 |
-| [第 12 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r12-async/report.json) | 异步冷启动，59 个编译请求，0 合格 | 具体分项可通过但整体 progress 拒绝未收敛；编译 Agent 缺失压缩 prompt，最终窗口耗尽 |
-| [第 13 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r13-repeat/report.json) | 重复操作冷启动，4 个编译请求，1 个旧规则合格产物；冻结两组均 0/5 | 同步函数完成两次 append 和 summary，却再扫描入口 history 并 defer；旧验收误把调用回放完成算作任务完成 |
-| [第 14 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r14-repeat/report.json)、[第 15 轮](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r15-async/report.json) | 使用 entry_report 与压缩修复重新冷启动；均未完成合格验收 | 训练模型仍生成复合 shell 调用；随后 DeepSeek 返回 402 Insufficient Balance，最新修复未完成付费准确率验证 |
+| 第 5 轮 | 三类冷启动，393 个编译请求，0 合格 | 持续交互已接通；证据引用不能遍历数组、反馈不够具体，异步修复耗尽上下文 |
+| 第 6 轮 | 浏览器冷启动，61 个编译请求，1 个自主合格产物 | 冻结后两组均 0/5；参数提取回显 schema 元数据 |
+| 第 7 轮 | 三类冷启动，208 个编译请求，0 合格 | 当时二进制尚未包含后续运行时证据与参数修复 |
+| 第 8 轮 | 浏览器暖启动，真实 JEV 0/5 | 参数正确，但调用判断仍使用入口上下文，无法看到新会话 |
+| 第 9 轮 | 浏览器暖启动，真实 JEV 3/5 | 新会话可见；2 次点击后的确认读取被误拒绝 |
+| 第 10 轮 | 浏览器暖启动，普通 LLM 5/5，真实 JEV 5/5 | JEV 执行推理 LLM 调用为零；有限 LLM 对照因返回协议错误仍 0/5 |
+| 第 11 轮 | 浏览器暖启动，扩展到 30 组；普通 LLM 25/30、有限 LLM 16/30、真实 JEV 27/30 | 前 5 组全部通过后扩展；第 27—29 组都遇到 DeepSeek 402。余额可用期间真实 JEV 为 27/27，有限 LLM 为 16/27，普通 LLM 为 25/27 |
+| 第 12 轮 | 异步冷启动，59 个编译请求，0 合格 | 具体分项可通过但整体 progress 拒绝未收敛；编译 Agent 缺失压缩 prompt，最终窗口耗尽 |
+| 第 13 轮 | 重复操作冷启动，4 个编译请求，1 个旧规则合格产物；冻结两组均 0/5 | 同步函数完成两次 append 和 summary，却再扫描入口 history 并 defer；旧验收误把调用回放完成算作任务完成 |
+| 第 14 轮、第 15 轮 | 使用 entry_report 与压缩修复重新冷启动；均未完成合格验收 | 训练模型仍生成复合 shell 调用；随后 DeepSeek 返回 402 Insufficient Balance，最新修复未完成付费准确率验证 |
 
 第 8—11 轮使用第 6 轮自主产物原样复制，未编辑源码／证明。第 11 轮全部 Reflex 运行组的普通 LLM 执行请求均为零。第 27—29 组仍需 LLM 参数提取，余额不足后无法执行，因而**完整实验记录是 27/30，不能改写为 30/30**。27/27 只描述服务可用期间的已完成任务。该实测早于最后新增的 entry_report 检查；当前旧库会保留为候选，需重新资格验证后才能接管，不能修改旧证明来继续试验。
 
@@ -128,16 +130,16 @@ LLM 使用 DeepSeek 官方端点 `https://api.deepseek.com` 的 `deepseek-flash`
 
 费用根据每轮返回用量和该轮保存的公开费率快照估算，**不是账单**。采用 DeepSeek 当日节假日优惠：输入未命中缓存 $0.15/M、缓存读取 $0.003/M、输出 $0.60/M；JEV 输入 $0.042/M、输出免费。来源为 [DeepSeek 定价](https://api-docs.deepseek.com/quick_start/pricing) 及 [TypeSafe JEV 介绍](https://typesafe.ai/blog/introducing-system-one-models-and-jev)，费率随每轮报告保留，原始网页快照位于本地 `output/deepseek-pricing.html`。将来复测需使用测试时实际适用费率。
 
-| 实验 | 全部实际尝试估算费用（USD） | 明细 |
-| --- | ---: | --- |
-| 第 1 轮 | 0.091388940 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005/cost-analysis.md) |
-| 第 2 轮 | 0.058776702 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r2/cost-analysis.md) |
-| 第 3 轮 | 0.075865956 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r3/cost-analysis.md) |
-| 第 4 轮 | 0.059855643 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r4/cost-analysis.md) |
-| 第 5 轮 | 0.446190855 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r5/cost-analysis.md) |
-| 第 6 轮 | 0.107492898 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r6-browser/cost-analysis.md) |
-| 第 7 轮 | 0.317590389 | [编译／运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r7/cost-analysis.md) |
-| 第 11 轮 | 已知 0.265944666；9 次请求用量缺失 | [暖启动运行分析](evidence/jev-reflex-20261005/reflex-replacement-live-20261005-r11-browser-runtime/cost-analysis.md) |
+| 实验 | 全部实际尝试估算费用（USD） |
+| --- | ---: |
+| 第 1 轮 | 0.091388940 |
+| 第 2 轮 | 0.058776702 |
+| 第 3 轮 | 0.075865956 |
+| 第 4 轮 | 0.059855643 |
+| 第 5 轮 | 0.446190855 |
+| 第 6 轮 | 0.107492898 |
+| 第 7 轮 | 0.317590389 |
+| 第 11 轮 | 已知 0.265944666；9 次请求用量缺失 |
 
 第 5 轮后沿用第 4 轮费率快照，未独立重核当前适用价格或账单；缺少用量的供应商失败请求显式列为缺失。第 8—11 轮只统计本轮暖启动运行，继承的编译成本未计入，因此不计算编译回本。各轮 cost-analysis 保留全部尝试，含供应商受阻计数，不能只选择成功任务估算节省。
 
@@ -145,7 +147,7 @@ Claim／编译 LLM 与后台 JEV 计入编译；执行、参数提取、答案�
 
 单任务费用以全部实际尝试成本除以成功执行任务数，包含失败开销；被阻塞的 Reflex 分组显示空值。仅配对分组全部实际通过、用量完整且有正运行节省时计算回本。本次不满足这些前提。
 
-[机器可读验证记录](evidence/jev-reflex-20261005/jev-reflex-final-validation.json) 保留本地检查与逐轮实测汇总。原始执行日志继续保存在本地 output 目录；仓库只保存报告和复现 UI 所需夹具。
+本页保留本地检查与逐轮实测摘要。原始报告、费用分析和执行日志保存在本地 `output` 目录；仓库保留复现脚本及 `web/frontend/e2e/fixtures/jev-history` 中供 UI 回归使用的事件夹具。
 
 ## 复现与后续验收
 

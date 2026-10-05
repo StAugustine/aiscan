@@ -76,5 +76,6 @@ aiscan.yaml
 # Local JEV experiments and browser replay output
 /output/
 /exts/jev/output/
+/docs/evidence/jev-reflex-20261005/
 /.runlogs/
 /exts/jev/.runlogs/
