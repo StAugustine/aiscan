@@ -16,7 +16,7 @@ cyber-harness 将模型、工具和运行环境组合为可以持续执行任务
 | 连续对话、压缩、记录和恢复 | [会话与上下文](user/sessions.md) |
 | 文件、命令、后台任务、代理与审批 | [工具](user/tools.md) |
 | 选择与编写 Skill | [Skills 与知识](user/knowledge.md) |
-| 执行扫描或审计 | [安全扫描](scan.md) · [cyber-audit](../audit/README.md) |
+| 执行扫描或审计 | [安全扫描](scan.md) · [cyber-audit](../cmd/audit/README.md) |
 | Web、执行节点、子 Agent 与 IOA 通信 | [Web 与协作](user/web.md) |
 
 ## 开发者指南
@@ -43,6 +43,6 @@ cyber-harness 将模型、工具和运行环境组合为可以持续执行任务
 
 [内嵌 Arsenal 工具](arsenal-bundles.md)说明工具包的构建、离线释放和更新；[原生录屏](record.md)说明平台依赖与捕获。参数、默认值和环境变量见[参考手册](reference.md)，protobuf 字段文档可按[接入教程](integration.md#23-生成字段文档)生成。
 
-测试说明分别见[仓库 harness](../cmd/harness/README.md)、[Web 前端](../web/frontend/e2e/README.md)和[审计测试](../audit/tests/README.md)。升级时阅读 [Changelog](changelog.md)；已发布版本的行为以对应 Git tag 为准。
+测试说明分别见[仓库 harness](../cmd/harness/README.md)、[Web 前端](../web/frontend/e2e/README.md)和[审计测试](../cmd/audit/tests/README.md)。升级时阅读 [Changelog](changelog.md)；已发布版本的行为以对应 Git tag 为准。
 
 文档正文以中文维护，[项目 README](../README.md)提供英文入口。参与维护请阅读[文档写作与验证](maintaining-docs.md)。

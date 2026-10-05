@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/chainreactors/cyber/audit/internal/app"
+	"github.com/chainreactors/cyber/cmd/audit/internal/app"
 	flags "github.com/jessevdk/go-flags"
 )
 

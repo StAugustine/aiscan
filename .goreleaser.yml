@@ -69,8 +69,8 @@ builds:
       - -s -w -X github.com/chainreactors/cyber/pkg/config.Version={{ .Version }}
 
   - id: cyber-audit
-    dir: audit
-    main: ./cmd/cyber-audit
+    dir: cmd/audit
+    main: .
     binary: cyber-audit
     env:
       - CGO_ENABLED=0

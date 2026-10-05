@@ -18,7 +18,7 @@ import (
 	"time"
 
 	crtm "github.com/chainreactors/crtm/pkg"
-	"github.com/chainreactors/cyber/tools/arsenal"
+	"github.com/chainreactors/cyber/exts/arsenal"
 )
 
 type Spec struct{ Name, Version string }
@@ -54,10 +54,11 @@ func New(dataDir string) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	manager, err := arsenal.NewManager(filepath.Join(dataDir, "arsenal"), ToolSpec.ManagerOption(bundle))
+	installed, err := arsenal.New(filepath.Join(dataDir, "arsenal"), ToolSpec.ManagerOption(bundle))
 	if err != nil {
 		return nil, err
 	}
+	manager := installed.Manager
 	return &Manager{Manager: manager, lookup: exec.LookPath, probe: Probe, install: manager.Install}, nil
 }
 

@@ -236,7 +236,7 @@ jobs:
               chmod 755 "${tmpdir}/${inner_name}"
             fi
             if [[ "$binary" == "cyber-audit" ]]; then
-              cp audit/README.md "${tmpdir}/README.md"
+              cp cmd/audit/README.md "${tmpdir}/README.md"
             else
               cp README.md "${tmpdir}/" 2>/dev/null || true
               cp -r docs "${tmpdir}/" 2>/dev/null || true
@@ -279,8 +279,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: audit/go.mod
-          cache-dependency-path: audit/go.sum
+          go-version-file: cmd/audit/go.mod
+          cache-dependency-path: cmd/audit/go.sum
 
       - name: Download release bundle
         uses: actions/download-artifact@v8
@@ -312,7 +312,7 @@ jobs:
           AUDIT_SINGLEFILE_BINARY: ${{ runner.temp }}/cyber-audit/cyber-audit
           GOWORK: "off"
           CGO_ENABLED: "0"
-        run: go -C audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
+        run: go -C cmd/audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
 
   # UPX can report a structurally valid PE that still crashes at process
   # startup. Run the exact packaged Windows binaries before publishing them.
@@ -328,8 +328,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version-file: audit/go.mod
-          cache-dependency-path: audit/go.sum
+          go-version-file: cmd/audit/go.mod
+          cache-dependency-path: cmd/audit/go.sum
 
       - name: Download release bundle
         uses: actions/download-artifact@v8
@@ -374,4 +374,4 @@ jobs:
           AUDIT_SINGLEFILE_BINARY: ${{ runner.temp }}/cyber-audit_windows_amd64/cyber-audit.exe
           GOWORK: "off"
           CGO_ENABLED: "0"
-        run: go -C audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
+        run: go -C cmd/audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m

@@ -70,7 +70,7 @@ endif
 # Tool payloads are independent of scanner template embedding.
 ARSENAL_EMBED ?= 0
 ARSENAL_CONFIG ?= cmd/aiscan/bundle.yaml
-AUDIT_ARSENAL_CONFIG ?= audit/cmd/cyber-audit/bundle.yaml
+AUDIT_ARSENAL_CONFIG ?= cmd/audit/bundle.yaml
 ARSENAL_GOOS := $(shell $(GO) env GOOS)
 ARSENAL_GOARCH := $(shell $(GO) env GOARCH)
 ifeq ($(ARSENAL_EMBED),1)
@@ -169,10 +169,10 @@ embed-arsenal arsenal-spec:
 
 .PHONY: audit embed-audit audit-arsenal-spec
 embed-audit audit-arsenal-spec:
-	GOOS=$(shell $(GO) env GOHOSTOS) GOARCH=$(shell $(GO) env GOHOSTARCH) $(GO) run github.com/chainreactors/crtm/cmd/crtm-bundle -config "$(AUDIT_ARSENAL_CONFIG)" -target "$(ARSENAL_GOOS)/$(ARSENAL_GOARCH)" -output audit/internal/toolchain -package toolchain $(if $(filter audit-arsenal-spec,$@),-metadata-only)
+	GOOS=$(shell $(GO) env GOHOSTOS) GOARCH=$(shell $(GO) env GOHOSTARCH) $(GO) run github.com/chainreactors/crtm/cmd/crtm-bundle -config "$(AUDIT_ARSENAL_CONFIG)" -target "$(ARSENAL_GOOS)/$(ARSENAL_GOARCH)" -output cmd/audit/internal/toolchain -package toolchain $(if $(filter audit-arsenal-spec,$@),-metadata-only)
 
 audit: $(AUDIT_PREREQ) prepare
-	CGO_ENABLED=0 GOWORK=off $(GO) -C audit build $(BUILD_FLAGS) -ldflags "$(GO_LDFLAGS)" -tags "$(AUDIT_TAGS)" -o "$(abspath $(AUDIT_BIN))" ./cmd/cyber-audit
+	CGO_ENABLED=0 GOWORK=off $(GO) -C cmd/audit build $(BUILD_FLAGS) -ldflags "$(GO_LDFLAGS)" -tags "$(AUDIT_TAGS)" -o "$(abspath $(AUDIT_BIN))" .
 	@echo "Built audit: $(AUDIT_BIN)"
 
 ldflags:

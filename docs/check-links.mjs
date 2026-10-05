@@ -11,7 +11,7 @@ const walk = dir => fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry =
   return entry.name.endsWith('.md') ? [full] : [];
 });
 const sources = [
-  'README.md', 'README_CN.md', 'audit/README.md', 'audit/tests/README.md',
+  'README.md', 'README_CN.md', 'cmd/audit/README.md', 'cmd/audit/tests/README.md',
   'cmd/harness/README.md', 'examples/acp/README.md', 'web/frontend/e2e/README.md',
 ].map(p => path.join(root, p))
   .concat(walk(path.join(root, 'docs')));

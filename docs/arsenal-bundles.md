@@ -18,15 +18,12 @@ Arsenal 在本仓库的 [arsenal.yaml](../tools/arsenal/arsenal.yaml) 统一维�
 
 空的平台条目使用 `asset_pattern`；特殊平台可以用 `asset` 指定文件名。声明了 `platforms` 的工具会在下载前拒绝未列出的平台。
 
-发行入口只选择工具名称：[aiscan](../cmd/aiscan/bundle.yaml) 选择 `rg`，[audit](../audit/cmd/cyber-audit/bundle.yaml) 按平台选择工具。audit 的完整清单为：
+发行入口只选择工具名称：[aiscan](../cmd/aiscan/bundle.yaml) 选择 `rg`，[audit](../cmd/audit/bundle.yaml) 选择三个源码审计工具：
 
 ```yaml
 id: cyber-audit
-catalog: ../../../tools/arsenal/arsenal.yaml
+catalog: ../../tools/arsenal/arsenal.yaml
 tools: [rg, ast-grep, osv-scanner]
-platforms:
-  windows/amd64: [radare2, capa, floss]
-  linux/amd64: [capa, floss]
 ```
 
 无需复制工具定义或维护另一份版本表。工具目录随 cyber-harness 版本维护，增删工具或更新版本无需修改 CRTM。生成器按名称取出默认版本与平台规则；`platforms` 是各平台在公共 `tools` 之上的增量选择。`id` 标识发行版，应跨应用版本保持不变。需要单独覆盖版本时，`tools` 也支持 `{rg: "15.2.0"}` 映射；未知名称在构建时失败。`catalog` 路径相对 bundle 清单。运行时由 `tools/arsenal` 嵌入同一份完整目录，所以未打包的工具仍可按需下载；生成元数据只保留选中工具定义。audit 的版本预检需要固定版本。
@@ -60,7 +57,7 @@ $env:CGO_ENABLED = "0"
 go build -tags "forceposix emptytemplates noembed osusergo netgo arsenal_embed" -o bin/aiscan-linux-arm64 ./cmd/aiscan
 ```
 
-Makefile 会自动为生成器使用宿主平台、为资源使用编译目标。aiscan 的生成文件位于 `cmd/aiscan`，audit 的位于 `audit/internal/toolchain`；共享命令包 `tools/arsenal` 只嵌入目录，不携带任何发行版的工具载荷。压缩资源位于生成目录的 `assets` 子目录，资源和平台嵌入声明均忽略 Git 跟踪。两种发行版统一使用 `arsenal_embed`，每个目标只编译自己的嵌入声明；未生成相应平台资源时，编译失败。
+Makefile 会自动为生成器使用宿主平台、为资源使用编译目标。aiscan 的生成文件位于 `cmd/aiscan`，audit 的位于 `cmd/audit/internal/toolchain`；共享命令包 `tools/arsenal` 只嵌入目录，不携带任何发行版的工具载荷。压缩资源位于生成目录的 `assets` 子目录，资源和平台嵌入声明均忽略 Git 跟踪。两种发行版统一使用 `arsenal_embed`，每个目标只编译自己的嵌入声明；未生成相应平台资源时，编译失败。
 
 资源包目录按清单摘要命名，生成器完成全部工具的下载与校验后才发布新目录和嵌入声明。失败不会覆盖之前的完整资源包。资源更新后会留下旧目录，可以在没有构建进行时清理整个 `assets` 目录和生成文件，再重新生成。
 

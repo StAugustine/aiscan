@@ -21,7 +21,8 @@ rc8 将任务经验积累为可复用的 Reflex，让学习、验证与执行过
 ### Architecture And Compatibility
 
 - 升级前备份 JEV 库。不符合当前验证契约的旧 Reflex 会退出可执行集合，保留备份；可验证的候选需重新通过验证后才能复用。任务复用效果取决于场景，当前不承诺所有任务都能加速或降低总费用。
-- 发布入口保持 `aiscan`、`aiscan-full` 和 `cyber-audit`，覆盖 Linux、macOS、Windows 的 amd64/arm64；最小 `agent` 与独立 `cyber-web` 可从源码构建。数据库格式与 rc7 一致，更早版本的升级步骤见下节。
+- 发布 `aiscan`、`aiscan-full` 和 `cyber-audit`，覆盖 Linux、macOS、Windows 的 amd64/arm64；最小 `agent` 与独立 `cyber-web` 可从源码构建。
+- 审计入口统一到独立模块 `cmd/audit`，保留外部工具内嵌构建。数据库格式与 rc7 一致；旧布局需先使用 rc7 源码中的迁移工具，rc8 已移除这两个一次性命令。
 
 ## v1.0.0-rc7 — 任务摘要、工具审批与运行稳定性
 
@@ -48,7 +49,7 @@ rc7 新增任务摘要和工具审批，完善 Web 与交互式 CLI 的消息展
 - Web 基于原始 AOP 事件增量维护视图，移除重复运行状态、扫描结果缓存和重连后的全量刷新机制。
 - 事件和扫描记录改用当前结构化存储。旧 `event_json`、`scan_json` 布局需要离线迁移，服务不会自动重建或丢弃已有数据。
 
-**升级前先停止 Web 服务并备份数据库。** 对使用旧布局的数据库分别执行适用的迁移命令，再启动新版；迁移失败时恢复备份：
+**升级前先停止 Web 服务并备份数据库。** 在 `v1.0.0-rc7` 源码检出目录中，对使用旧布局的数据库分别执行适用的迁移命令，再启动新版；迁移失败时恢复备份：
 
 ```bash
 go run ./cmd/migrate-events -db <database-path>

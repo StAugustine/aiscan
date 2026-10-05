@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/cmd/audit/internal/toolchain"
 	"github.com/chainreactors/cyber/pkg/console"
 	"github.com/chainreactors/cyber/tools/okf"
 )

@@ -18,7 +18,7 @@ flowchart TD
     Events --> Consumers[展示 / 记录 / 传输]
 ```
 
-`harness.BaseExtensions` 返回有序的基础扩展；`harness.New` 在此之上构造工具宿主或会话 Agent。`cmd/agent` 选择最小本地能力，`cmd/aiscan` 加入扫描器、代理与协作，`audit/` 组合审计工具，`cmd/cyber-web` 提供独立 Hub。产品功能由入口的导入和装配代码决定。
+`harness.BaseExtensions` 返回有序的基础扩展；`harness.New` 在此之上构造工具宿主或会话 Agent。`cmd/agent` 选择最小本地能力，`cmd/aiscan` 加入扫描器、代理与协作，`cmd/audit` 以独立 Go 模块组合审计工具，`cmd/cyber-web` 提供独立 Hub。产品功能由入口的导入和装配代码决定。
 
 ## 扩展装配与生命周期
 
@@ -198,10 +198,10 @@ Web 归档原始 Artifact、Loot 与 cursor，按事件 ID 去重，通过 opera
 | `tools/` | 文件、命令、扫描器等业务实现 |
 | `exts/` | 声明和安装能力，持有资源生命周期 |
 | `pkg/` | 公共配置、宿主契约、Console、节点与 Web |
-| `cmd/`、`audit/` | 产品组合与运行入口 |
+| `cmd/` | 产品组合与运行入口 |
 
 `core` 不依赖 `agent`、`pkg` 或 `tools`。从 [BaseExtensions](../pkg/harness/base.go)与 [aiscan Profile](../cmd/aiscan/profile.go)阅读装配，沿 [Session](../agent/session/session.go)进入 [StandardLoop](../agent/loop.go)，再跟进工具与事件。生命周期验证位于 [Extension](../core/extension)和 [Resource](../core/resource)，依赖边界由 `go test ./pkg/internal/architecture` 检查。
 
 JEV 实现入口为[编译 Agent](../exts/jev/compiler_agent.go)、[资格验证](../exts/jev/qualification.go)和[运行时](../exts/jev/runtime_judgment.go)；[原生机制测试](../exts/jev/native_mechanism_test.go)验证回放与完成语义，[修复测试](../exts/jev/compiler_repair_test.go)验证诊断、压缩和候选保留，[Profile 测试](../cmd/aiscan/jev_profile_flow_test.go)验证产品接线。fixture 测试与真实模型实验的范围不同，不能互相代替。
 
-运行条件、入口、产物和判定边界见[仓库 harness](../cmd/harness/README.md)、[Web 前端](../web/frontend/e2e/README.md)和[审计测试](../audit/tests/README.md)。
+运行条件、入口、产物和判定边界见[仓库 harness](../cmd/harness/README.md)、[Web 前端](../web/frontend/e2e/README.md)和[审计测试](../cmd/audit/tests/README.md)。

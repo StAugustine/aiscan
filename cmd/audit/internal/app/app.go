@@ -16,7 +16,7 @@ import (
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	"github.com/chainreactors/cyber/agent/skills"
 	"github.com/chainreactors/cyber/aop"
-	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/cmd/audit/internal/toolchain"
 	"github.com/chainreactors/cyber/core/telemetry"
 	"github.com/chainreactors/cyber/pkg/cli/configuration"
 	taskcli "github.com/chainreactors/cyber/pkg/cli/task"

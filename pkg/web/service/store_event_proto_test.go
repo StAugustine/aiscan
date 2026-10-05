@@ -21,7 +21,7 @@ func TestLegacyEventsRequireExplicitOfflineConversion(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.Close()
-	if _, err := NewSQLiteStore(path); err == nil || !strings.Contains(err.Error(), "migrate-events") {
+	if _, err := NewSQLiteStore(path); err == nil || !strings.Contains(err.Error(), "v1.0.0-rc7") {
 		t.Fatalf("legacy server open = %v", err)
 	}
 	db, err := sql.Open("sqlite", path)

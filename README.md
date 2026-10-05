@@ -25,7 +25,7 @@ Choose an entry point for your task:
 | Entry point | Use it for |
 | --- | --- |
 | `aiscan` / `aiscan-full` | Agent tasks, scanners, proxy routing and IOA; the full edition adds Web, browser automation, passive recon and crawling |
-| [`cyber-audit`](audit/README.md) | Model-led source-code and binary audits, evidence collection and reports |
+| [`cyber-audit`](cmd/audit/README.md) | Model-led source-code and binary audits, evidence collection and reports |
 | `cyber-web` (from source) | A profile-neutral Web Hub for sessions, events and artifacts from scan, audit or custom AOP nodes |
 | `agent` | A minimal local Agent built from source, with files, terminal, Skills and local subagents |
 
@@ -84,7 +84,7 @@ Start at the [documentation home](docs/README.md). The guides and references des
 | --- | --- |
 | Understand the harness, models, tools and sessions | [Concepts](docs/concepts.md) |
 | Install, configure and complete a first task | [Getting started](docs/getting-started.md) · [Model configuration](docs/configuration.md) |
-| Use sessions, tools, Skills, scanning and collaboration | [User guide](docs/README.md#使用者指南) · [Audit guide](audit/README.md) |
+| Use sessions, tools, Skills, scanning and collaboration | [User guide](docs/README.md#使用者指南) · [Audit guide](cmd/audit/README.md) |
 | Build a Go application or embed a session | [Developer guide](docs/development.md) |
 | Connect an external client or look up parameters | [Client integration](docs/integration.md) · [API](docs/api.md) · [Configuration and commands](docs/reference.md) |
 | Understand lifecycle, execution and data ownership | [Architecture](docs/architecture.md) |
@@ -111,7 +111,7 @@ Run these commands from the repository root. Outputs go to `bin/`; Windows binar
 | --- | --- | --- | --- |
 | `make` / `make standard` | `bin/aiscan` | Agent, core scanners, proxy, Skills and IOA | No |
 | `make full` / `make web-build` | `bin/aiscan-full` | Standard capabilities plus Web, browser, passive recon and crawling | Yes |
-| `make audit` | `bin/cyber-audit` | Source-code and binary audit; built from the independent `audit` module | No |
+| `make audit` | `bin/cyber-audit` | Source-code and binary audit; built from the independent `cmd/audit` module | No |
 | `make agent` | `bin/agent` | Local Agent, files, terminal, Skills and local subagents | No |
 | `make all` | `bin/aiscan` and `bin/aiscan-full` | Standard and full editions | Yes |
 
@@ -209,7 +209,7 @@ Extend it: [register tools](docs/developer/extensions.md) · [add a model and se
 
 ## Contributing
 
-Read the [development guide](docs/development.md) and [documentation standards](docs/maintaining-docs.md). Test instructions are available for the [repository harness](cmd/harness/README.md), [Web frontend](web/frontend/e2e/README.md) and [audit](audit/tests/README.md). Describe the behavior change, affected entry points and validation in your PR. Update the relevant guide or reference with behavior changes.
+Read the [development guide](docs/development.md) and [documentation standards](docs/maintaining-docs.md). Test instructions are available for the [repository harness](cmd/harness/README.md), [Web frontend](web/frontend/e2e/README.md) and [audit](cmd/audit/tests/README.md). Describe the behavior change, affected entry points and validation in your PR. Update the relevant guide or reference with behavior changes.
 
 ## Disclaimer
 

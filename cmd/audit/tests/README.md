@@ -1,7 +1,7 @@
 # Audit validation fixtures
 
 The ordinary suite is offline and uses a local scripted provider. To exercise
-installed CLIs, provision a temporary data directory, then run from audit/:
+installed CLIs, provision a temporary data directory, then run from `cmd/audit/`:
 
 ```sh
 cyber-audit tools install --data-dir /tmp/audit-tools
@@ -15,7 +15,7 @@ fixture expectation. Network errors must not be interpreted as a clean scan.
 ## Single-file release
 
 Build from the repository root with `make audit ARSENAL_EMBED=1`. Then run from
-`audit/`, supplying an absolute path to the resulting executable:
+`cmd/audit/`, supplying an absolute path to the resulting executable:
 
 ```sh
 AUDIT_SINGLEFILE_BINARY=/absolute/path/to/bin/cyber-audit go test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
@@ -24,7 +24,7 @@ AUDIT_SINGLEFILE_BINARY=/absolute/path/to/bin/cyber-audit go test ./internal/app
 PowerShell:
 
 ```powershell
-$env:AUDIT_SINGLEFILE_BINARY = (Resolve-Path ../bin/cyber-audit.exe).Path
+$env:AUDIT_SINGLEFILE_BINARY = (Resolve-Path ../../bin/cyber-audit.exe).Path
 go test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
 ```
 

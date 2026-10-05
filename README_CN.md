@@ -25,7 +25,7 @@ cyber-harness 是用于 cyber 场景的通用 Agent 运行框架。它把模型�
 | 入口 | 用途 |
 | --- | --- |
 | `aiscan` / `aiscan-full` | Agent、核心扫描器、代理和 IOA；full 增加 Web、浏览器、被动测绘和爬取 |
-| [`cyber-audit`](audit/README.md) | 模型驱动的源码与二进制审计、证据收集和报告 |
+| [`cyber-audit`](cmd/audit/README.md) | 模型驱动的源码与二进制审计、证据收集和报告 |
 | `cyber-web`（源码构建） | 通用 Web Hub，管理 scan、audit 或自定义 AOP 节点的会话、事件与产物 |
 | `agent` | 从源码构建的最小本地 Agent，包含文件、终端、Skills 和本地子 Agent |
 
@@ -84,7 +84,7 @@ llm:
 | --- | --- |
 | 理解 harness、模型、工具与会话 | [基本概念](docs/concepts.md) |
 | 安装、配置模型并完成第一次任务 | [快速上手](docs/getting-started.md) · [模型配置](docs/configuration.md) |
-| 使用会话、工具、Skills、扫描与协作 | [使用者指南](docs/README.md#使用者指南) · [审计指南](audit/README.md) |
+| 使用会话、工具、Skills、扫描与协作 | [使用者指南](docs/README.md#使用者指南) · [审计指南](cmd/audit/README.md) |
 | 构建 Go 应用或嵌入会话 | [开发者指南](docs/development.md) |
 | 接入外部客户端或查询参数 | [第三方语言集成](docs/integration.md) · [API](docs/api.md) · [配置与命令](docs/reference.md) |
 | 理解生命周期、执行与数据归属 | [架构](docs/architecture.md) |
@@ -111,7 +111,7 @@ git submodule update --init --recursive
 | --- | --- | --- | --- |
 | `make` / `make standard` | `bin/aiscan` | Agent、核心扫描器、代理、Skills 和 IOA | 否 |
 | `make full` / `make web-build` | `bin/aiscan-full` | 标准能力，加 Web、浏览器、被动测绘和爬取 | 是 |
-| `make audit` | `bin/cyber-audit` | 源码与二进制审计，从独立的 `audit` 模块构建 | 否 |
+| `make audit` | `bin/cyber-audit` | 源码与二进制审计，从独立的 `cmd/audit` 模块构建 | 否 |
 | `make agent` | `bin/agent` | 本地 Agent、文件、终端、Skills 和本地子 Agent | 否 |
 | `make all` | `bin/aiscan` 与 `bin/aiscan-full` | 标准与完整发行版 | 是 |
 
@@ -209,7 +209,7 @@ go build -o bin/my-agent.exe ./cmd/my-agent
 
 ## 贡献
 
-先阅读[开发者指南](docs/development.md)与[文档维护标准](docs/maintaining-docs.md)。测试运行说明分别见[仓库 harness](cmd/harness/README.md)、[Web 前端](web/frontend/e2e/README.md)与[审计测试](audit/tests/README.md)。提交 PR 时描述具体行为变化、影响的入口和验证结果；行为变化应同步更新对应教程或参考页。
+先阅读[开发者指南](docs/development.md)与[文档维护标准](docs/maintaining-docs.md)。测试运行说明分别见[仓库 harness](cmd/harness/README.md)、[Web 前端](web/frontend/e2e/README.md)与[审计测试](cmd/audit/tests/README.md)。提交 PR 时描述具体行为变化、影响的入口和验证结果；行为变化应同步更新对应教程或参考页。
 
 ## 免责声明
 

@@ -18,9 +18,9 @@ make audit ARSENAL_EMBED=1
 
 This produces `bin/cyber-audit` (`.exe` on Windows). Downloads happen during the
 build. On first use, audit extracts the tools before model startup, without
-network access. The harness [arsenal.yaml](../tools/arsenal/arsenal.yaml)
-owns tool definitions and default versions; [cmd/cyber-audit/bundle.yaml](cmd/cyber-audit/bundle.yaml)
-selects tools by name, with platform additions for reverse analysis. Tool updates
+network access. The harness [arsenal.yaml](../../tools/arsenal/arsenal.yaml)
+owns tool definitions and default versions; [bundle.yaml](bundle.yaml)
+selects the three source-audit tools by name. Tool updates
 require no CRTM change. Both runtime requirements and bundle metadata are generated
 from that selection. All distributions use the `arsenal_embed` tag, with separate
 payload directories so audit never includes aiscan's bundle.
@@ -30,32 +30,32 @@ executables in isolation, including Windows after UPX.
 To generate a bundle and build manually, from the repository root:
 
 ```sh
-go run github.com/chainreactors/crtm/cmd/crtm-bundle -config audit/cmd/cyber-audit/bundle.yaml -target linux/amd64 -output audit/internal/toolchain -package toolchain
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go -C audit build -tags arsenal_embed -o ../bin/cyber-audit-linux-amd64 ./cmd/cyber-audit
+go run github.com/chainreactors/crtm/cmd/crtm-bundle -config cmd/audit/bundle.yaml -target linux/amd64 -output cmd/audit/internal/toolchain -package toolchain
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go -C cmd/audit build -tags arsenal_embed -o ../../bin/cyber-audit-linux-amd64 .
 ```
 
 Run the generator on the host, with the same `-target` as the subsequent build.
 For a smaller executable that downloads tools at runtime instead:
 
 ```sh
-cd audit
+cd cmd/audit
 GOWORK=off go mod download
-GOWORK=off go build -o cyber-audit ./cmd/cyber-audit
+GOWORK=off go build -o cyber-audit .
 ```
 
 After editing the YAML files, run `make audit-arsenal-spec` from the root before
 a direct `go build`. `make audit` updates this metadata automatically, without
 downloading tools. Generated metadata is committed so a clean checkout builds.
 
-PowerShell: `$env:GOWORK = 'off'; go build -o cyber-audit.exe ./cmd/cyber-audit`.
-The nested module is `github.com/chainreactors/cyber/audit`. Relative replacements
+PowerShell: `$env:GOWORK = 'off'; go build -o cyber-audit.exe .`.
+The nested module is `github.com/chainreactors/cyber/cmd/audit`. Relative replacements
 use the root harness and AOP modules. Build from the repository; independent
 `go install ...@version` is not supported yet. Release builds include six binaries
 (Windows/Linux/macOS, amd64/arm64). Cross-compilation uses `CGO_ENABLED=0`.
 
 CRTM's installer and bundle generator are maintained in the upstream CRTM module.
 The root and audit modules pin the same revision. For local CRTM development,
-temporarily replace it with `../crtm` in the root module and `../../crtm` in audit,
+temporarily replace it with `../crtm` in the root module and `../../../crtm` in audit,
 then remove those replacements before publishing.
 
 ## Run
@@ -109,7 +109,7 @@ Clone with Git first if necessary. Git is optional for file auditing and require
 for history/diff operations; audit does not install Git or modify system PATH.
 Windows uses the harness shell (Git Bash recommended; cmd fallback is available).
 
-## Required tools
+## Tools
 
 | Capability | Tool | Pinned installation |
 | --- | --- | --- |
@@ -134,8 +134,9 @@ Tool maintenance does not require a valid model provider/profile. Global options
 may precede `doctor` or `tools install`; `doctor --json` reports tool statuses and
 an `is_error` flag, with a nonzero exit status if required tools are unavailable.
 
-The three source tools support all six platforms. Reverse tools are included
-only on the platforms listed above. Bundled builds prepare tools from embedded resources; smaller builds need GitHub access when a
+The three required source tools support all six platforms. Reverse tools are
+optional and can be installed from Arsenal on the platforms listed above.
+Bundled builds prepare source tools from embedded resources; smaller builds need GitHub access when a
 required tool is missing. Bundle-managed installations follow application
 versions, while user upgrades and edits are preserved. `doctor` remains read-only,
 even in bundled builds. SCA needs OSV connectivity or an explicitly provisioned

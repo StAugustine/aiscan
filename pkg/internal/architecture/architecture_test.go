@@ -323,8 +323,8 @@ func TestInstallationBoundaryRules(t *testing.T) {
 		{"unit test", "pkg/web/service/example_test.go", `package service_test; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.NewService`, false},
 		{"integration test", "exts/web/example_test.go", `package web_test; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.NewService`, true},
 		{"host manager construction", "cmd/aiscan/extensions.go", `package main; import arsenal "github.com/chainreactors/cyber/tools/arsenal"; var x = arsenal.NewManager`, true},
-		{"migration store construction", "cmd/migrate-scans/migration_test.go", `package main; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.NewSQLiteStore`, true},
-		{"migration schema installation", "cmd/migrate-scans/migration_test.go", `package main; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.ScanSchema`, true},
+		{"product store construction", "cmd/example/main_test.go", `package main; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.NewSQLiteStore`, true},
+		{"product schema installation", "cmd/example/main_test.go", `package main; import svc "github.com/chainreactors/cyber/pkg/web/service"; var x = svc.ScanSchema`, true},
 		{"cross extension browser construction", "exts/jev/browser_integration_test.go", `package jev; import browser "github.com/chainreactors/cyber/tools/playwright"; var x = browser.New`, true},
 		{"cross extension shell construction", "exts/jev/integration_test.go", `package jev; import shell "github.com/chainreactors/cyber/tools/terminal"; var x = shell.NewBashTool`, true},
 	} {

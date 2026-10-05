@@ -1,4 +1,4 @@
-module github.com/chainreactors/cyber/audit
+module github.com/chainreactors/cyber/cmd/audit
 
 go 1.26.0
 
@@ -132,8 +132,8 @@ require (
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
-replace github.com/chainreactors/cyber => ..
+replace github.com/chainreactors/cyber => ../..
 
-replace github.com/chainreactors/cyber/aop => ../aop
+replace github.com/chainreactors/cyber/aop => ../../aop
 
 replace github.com/wasilibs/go-re2 => github.com/chainreactors/native v1.11.1-native.1

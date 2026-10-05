@@ -13,7 +13,7 @@ import (
 )
 
 func TestToolMetadataCurrent(t *testing.T) {
-	spec, err := crtm.LoadBundleSpec("../../cmd/cyber-audit/bundle.yaml")
+	spec, err := crtm.LoadBundleSpec("../../bundle.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

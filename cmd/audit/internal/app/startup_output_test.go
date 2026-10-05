@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/chainreactors/cyber/aop"
-	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/cmd/audit/internal/toolchain"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 

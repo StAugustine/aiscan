@@ -17,7 +17,7 @@ import (
 	"time"
 
 	crtm "github.com/chainreactors/crtm/pkg"
-	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/cmd/audit/internal/toolchain"
 )
 
 // TestSingleFileRelease exercises an already-built release, not the test binary

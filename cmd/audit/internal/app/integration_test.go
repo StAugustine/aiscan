@@ -21,7 +21,7 @@ import (
 	"github.com/chainreactors/cyber/agent/provider"
 	agentsession "github.com/chainreactors/cyber/agent/session"
 	"github.com/chainreactors/cyber/aop"
-	"github.com/chainreactors/cyber/audit/internal/toolchain"
+	"github.com/chainreactors/cyber/cmd/audit/internal/toolchain"
 	"github.com/chainreactors/cyber/core/telemetry"
 	coretool "github.com/chainreactors/cyber/core/tool"
 	cfg "github.com/chainreactors/cyber/pkg/config"
@@ -273,7 +273,7 @@ func TestInteractiveProfileCommandsAndCancellation(t *testing.T) {
 	}
 }
 func TestAuditDependencyBoundary(t *testing.T) {
-	output, err := exec.Command("go", "list", "-deps", "../../cmd/cyber-audit").Output()
+	output, err := exec.Command("go", "list", "-deps", "../..").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
