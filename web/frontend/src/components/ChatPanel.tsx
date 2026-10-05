@@ -881,6 +881,9 @@ function timelineContent(
           result={item.toolCall.result}
           pending={item.toolCall.pending}
           error={item.toolCall.error}
+          toolResult={item.toolCall.toolResult}
+          resultEventId={item.toolCall.resultEventId}
+          observations={item.toolCall.observations}
         />
       )
 
@@ -1128,9 +1131,7 @@ function AssistantResponseEntry({
       timestamp={new Date(response.timestamp).toISOString()}
       streaming={response.streaming}
       thinking={hasThinking ? (
-        <div role="region" aria-label={t('thinkingLabel')} tabIndex={0} className="max-h-64 overflow-y-auto overscroll-contain">
-          <MarkdownContent content={trimDisplayContent(response.thinking || '')} compact muted />
-        </div>
+        <MarkdownContent content={trimDisplayContent(response.thinking || '')} compact muted />
       ) : undefined}
       thinkingExpanded={thinkingExpanded}
       onThinkingToggle={setThinkingExpanded}
@@ -1145,6 +1146,9 @@ function AssistantResponseEntry({
               result={tool.result}
               pending={tool.pending}
               error={tool.error}
+              toolResult={tool.toolResult}
+              resultEventId={tool.resultEventId}
+              observations={tool.observations}
             />
           ))}
         </div>

@@ -818,6 +818,31 @@
         "command": "go mod tidy (audit)",
         "result": "pass",
         "changes": "goja, sourcemap and pprof checksums synchronized"
+      },
+      {
+        "command": "corepack pnpm --filter @cyber/viewer test",
+        "result": "pass",
+        "passed": 22
+      },
+      {
+        "command": "go test -race -count=1 ./...; go vet ./... (audit)",
+        "result": "pass"
+      },
+      {
+        "command": "go run ./cmd/gen; git diff --exit-code (generated binding paths)",
+        "result": "pass",
+        "drift": false
+      },
+      {
+        "command": "npm run test:jev -- workflow.spec.ts jev-presentation.spec.ts",
+        "result": "pass",
+        "passed": 25
+      },
+      {
+        "command": "npx playwright test e2e/issue-regressions.spec.ts e2e/cyber-web.spec.ts e2e/rc6-issues.spec.ts e2e/recap-presentation.spec.ts e2e/user-journey.spec.ts",
+        "result": "pass",
+        "passed": 33,
+        "coverage": "production Hub/node streaming retry, reconnect, Goal round order, compact help, recap and full user journey"
       }
     ],
     "profile_boundary": "Production profile exercises native browser contract, namespace mux, streaming execution, compilation, publication and ProtoJSON event replay. SQLite durability/backpressure is tested in pkg/web/service; the profile does not construct the Web store.",
@@ -826,6 +851,11 @@
       "chat image input and draft lifecycle",
       "existing drawer desktop dimensions"
     ],
-    "limitations": "Browser warm real JEV: 27/30 overall, 27/27 before DeepSeek balance exhaustion, zero ordinary LLM execution calls. Run predates entry_report check. Latest async/repeat accuracy blocked by billing and unsupported compound native trajectories; generalized stable replacement not established."
+    "limitations": "Browser warm real JEV: 27/30 overall, 27/27 before DeepSeek balance exhaustion, zero ordinary LLM execution calls. Run predates entry_report check. Latest async/repeat accuracy blocked by billing and unsupported compound native trajectories; generalized stable replacement not established.",
+    "mainline_ui_fixes": [
+      "JEV workflow projection requires actual JEV activity so ordinary conversation cards keep their controls",
+      "shared viewer owns the single accessible Thinking region",
+      "typed native results and observation events reach the shared renderer"
+    ]
   }
 }
