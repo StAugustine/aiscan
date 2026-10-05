@@ -25,11 +25,11 @@ func TestReceiptCompactionPreservesOutcomesAndExactArguments(t *testing.T) {
 	if strings.Count(text, read) != 1 || strings.Count(text, effect) != 2 || strings.Count(text, failure) != 2 {
 		t.Fatal("receipt suppressed effects/errors or repeated identical read evidence")
 	}
-	result := receiptResult(`{"state":{"receipt":"current","id":9007199254740993},"candidates":[{"name":"native","arguments":{"source":"private_reader_code"},"read":true}]}`)
+	result := resultSummary(`{"state":{"receipt":"current","id":9007199254740993},"candidates":[{"name":"native","arguments":{"source":"private_reader_code"},"read":true}]}`)
 	if !strings.Contains(result, "current") || !strings.Contains(result, "9007199254740993") || !strings.Contains(result, "candidates") || !strings.Contains(result, "private_reader_code") {
 		t.Fatalf("receipt altered native result data: %s", result)
 	}
-	if got := receiptResult("tool failed: missing permission"); !strings.Contains(got, "missing permission") {
+	if got := resultSummary("tool failed: missing permission"); !strings.Contains(got, "missing permission") {
 		t.Fatal("failure evidence lost")
 	}
 }

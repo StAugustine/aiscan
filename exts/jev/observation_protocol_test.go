@@ -9,7 +9,7 @@ import (
 func TestExecutableBranchProbeDoesNotDispatch(t *testing.T) {
 	r := Reflex{When: "capability", Decide: "branch", Observe: `js:function(context,args){const c=jev({questions:{route:{type:"choice",instructions:"select",criteria:{left:"left",right:"right",defer:"unknown"}}}}).answers.route.choice;if(c==="defer")return {defer:"new reasoning"};execute(bind("opaque",{target:c},false));return {report:c};}`}
 	_ = r.validate()
-	_, calls, err := probeReflex(t.Context(), &r, observationCapabilities("opaque"), nil)
+	_, calls, err := probeReflexArguments(t.Context(), &r, observationCapabilities("opaque"), nil, nil, false)
 	if err != nil || len(calls) != 2 {
 		t.Fatalf("calls=%v err=%v", calls, err)
 	}
@@ -23,7 +23,7 @@ func TestRetiredSceneRemainsEligibleAfterRestart(t *testing.T) {
 	id := "r" + digest(r)[:16]
 	e.library.Claims[cid] = claimRecord{Claim: c}
 	e.library.Reflexes[id] = reflexRecord{Reflex: r, Claims: []string{cid}}
-	if !e.retireReflex(id, fmt.Errorf("invalid binding")) {
+	if !e.retireReflex(t.Context(), id, fmt.Errorf("invalid binding")) {
 		t.Fatal("not retired")
 	}
 	if err := e.loadLibrary(); err != nil {

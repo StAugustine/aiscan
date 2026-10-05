@@ -88,8 +88,6 @@ func receiptBinding(call *aop.ToolCall) string {
 	return string(data)
 }
 
-func receiptResult(text string) string { return resultSummary(text) }
-
 // canonical removes incidental call IDs and sorts JSON keys. Tool arguments
 // remain opaque: a field named command need not contain a shell command.
 func canonical(call *aop.ToolCall) string {
@@ -313,10 +311,7 @@ func (e *Extension) saveLibrary(lib library) error {
 // A failed generated program must not permanently own its declarations.
 // Preserve Claims and actual execution evidence; later ordinary boundaries can
 // regenerate the scene. Retirement never retries a native action.
-func (e *Extension) retireReflex(id string, reason error) bool {
-	return e.retireReflexTrace(context.Background(), id, reason)
-}
-func (e *Extension) retireReflexTrace(ctx context.Context, id string, reason error) bool {
+func (e *Extension) retireReflex(ctx context.Context, id string, reason error) bool {
 	var previous reflexRecord
 	changed, err := e.updateLibrary(func(lib *library) (bool, error) {
 		var exists bool

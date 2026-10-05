@@ -273,7 +273,7 @@ func (e *Extension) beforeModel(ctx context.Context, ev hooks.ContextEvent) ([]*
 		if result.IsError {
 			status = "Attempted (tool error; outcome requires review) "
 		}
-		facts = append(facts, status+receiptBinding(call)+"\n"+receiptResult(coretool.ResultText(result)))
+		facts = append(facts, status+receiptBinding(call)+"\n"+resultSummary(coretool.ResultText(result)))
 		private = append(private, &aop.Message{Role: "assistant", Name: "jev-step", Content: []*aop.Content{{Value: &aop.Content_ToolCall{ToolCall: call}}}}, &aop.Message{Role: "tool", Name: "jev-step", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: result}}}})
 		// Subsequent semantic checks must see the handle/result just returned by
 		// this task. Keeping the entry projection here incorrectly rejects the
@@ -357,7 +357,7 @@ func (e *Extension) beforeModel(ctx context.Context, ev hooks.ContextEvent) ([]*
 				e.updateTask(run, task, func(r *taskRecord) { r.Repair = id })
 			}
 			if output["defect"] == true {
-				e.retireReflexTrace(ctx, id, fmt.Errorf("generated program defect: %s", ending))
+				e.retireReflex(ctx, id, fmt.Errorf("generated program defect: %s", ending))
 			}
 		}
 	} else {
@@ -370,7 +370,7 @@ func (e *Extension) beforeModel(ctx context.Context, ev hooks.ContextEvent) ([]*
 			reason = Defer
 		} else {
 			reason = "program_failed"
-			e.retireReflexTrace(ctx, id, cause)
+			e.retireReflex(ctx, id, cause)
 			e.updateTask(run, task, func(r *taskRecord) { r.Repair = id })
 		}
 	}

@@ -59,7 +59,7 @@ func TestRecordedCompilerEvidence(t *testing.T) {
 			env["history"] = history[:boundary]
 			probe := map[string]any{"completed_results": boundary}
 			probes = append(probes, probe)
-			facts, candidates, err := probeReflex(t.Context(), &r, env, nil)
+			facts, candidates, err := probeReflexArguments(t.Context(), &r, env, nil, nil, false)
 			if err != nil {
 				probe["observation_error"] = err.Error()
 				continue

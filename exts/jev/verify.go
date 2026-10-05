@@ -71,14 +71,6 @@ var errProbeStop = errors.New("pure probe reached native dispatch")
 // Explore finite semantic branches, replaying only exact recorded call/result
 // pairs. No provider or native tool is invoked during publication checks.
 // The exact same program and bridges are used in foreground execution.
-func probeReflex(ctx context.Context, reflex *Reflex, input, args map[string]any) (json.RawMessage, map[string]binding, error) {
-	return probeReflexResults(ctx, reflex, input, args, nil)
-}
-
-func probeReflexResults(ctx context.Context, reflex *Reflex, input, args map[string]any, results []map[string]any) (json.RawMessage, map[string]binding, error) {
-	return probeReflexArguments(ctx, reflex, input, args, results, false)
-}
-
 func probeReflexArguments(ctx context.Context, reflex *Reflex, input, args map[string]any, results []map[string]any, allowMissing bool) (json.RawMessage, map[string]binding, error) {
 	candidates := map[string]binding{}
 	states := []any{}
@@ -275,7 +267,7 @@ func (r *observationReplay) evaluate(ctx context.Context, input json.RawMessage,
 	if err != nil {
 		return nil, nil, err
 	}
-	facts, candidates, err := probeReflexResults(ctx, r.reflex, env, r.reflex.arguments, results)
+	facts, candidates, err := probeReflexArguments(ctx, r.reflex, env, r.reflex.arguments, results, false)
 	if err == nil && cache {
 		r.cache[key] = replayResult{facts, candidates}
 	}

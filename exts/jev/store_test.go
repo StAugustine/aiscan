@@ -67,7 +67,7 @@ func TestLibraryDerivesCompiledFromPublishedScenes(t *testing.T) {
 	if err != nil || json.Unmarshal(data, &saved) != nil || !saved.Compiled[group] || !e.snapshot().Compiled[group] || e.library.Compiled != nil {
 		t.Fatalf("derived compatibility field lost: saved=%+v error=%v", saved, err)
 	}
-	if !e.retireReflex(rid, errors.New("retire test scene")) || len(e.snapshot().Compiled) != 0 {
+	if !e.retireReflex(t.Context(), rid, errors.New("retire test scene")) || len(e.snapshot().Compiled) != 0 {
 		t.Fatal("retired scene still marks its declarations compiled")
 	}
 }
