@@ -40,7 +40,7 @@ Session 持有对话状态和输入队列，一次外部提交形成一次 Turn�
 
 ## 执行环境
 
-模型调用经过 Tool Registry；其中 `bash` 将命令路由到 Command Registry 或外部 shell。内置函数、PTY 进程和管道进程统一纳入工作单元管理，但保留各自的能力差异。代理扩展发布共享出口，使内置工具和支持代理环境变量的外部程序使用相同的网络路由。
+模型调用经过 Tool Registry；其中 `bash` 将命令路由到 Command Registry 或外部程序。内置函数、PTY 进程和管道进程统一纳入工作单元管理，但保留各自的能力差异。代理扩展发布共享出口，使内置工具和支持代理环境变量的外部程序使用相同的网络路由。
 
 执行链上的 hooks 提供准入、结果处理与观察，operation 传递调用关联及取消信息。领域实现依赖这些明确的边界，不需要知道任务来自哪个界面。详细过程见[执行环境](architecture/execution.md)。
 
@@ -54,7 +54,7 @@ AOP Event 记录消息、工具调用、结果和生命周期等事实。终端�
 
 Go 宿主直接持有组合和 Session Runtime。跨进程宿主通过 AOP 发送请求、订阅事件和取消操作；Web 另有 ConnectRPC 管理面处理配置、历史及节点查询。IOA 则提供独立的消息协作空间。
 
-宿主拥有监听和连接，运行时拥有执行状态，协议适配负责传输与错误映射。这些边界使本地 CLI、Web 和远程节点能够复用既有执行机制。接入实现见[宿主集成](developer/hosting.md)，线协议与迁移状态见[协议架构](protocol-architecture.md)。
+宿主拥有监听和连接，运行时拥有执行状态，协议适配负责传输与错误映射。这些边界使本地 CLI、Web 和远程节点能够复用既有执行机制。接入实现见[宿主集成](developer/hosting.md)，协议类型与数据归属见[事件与数据](architecture/data.md#协议类型的归属)，线协议字段见 [API 参考](api.md)。
 
 ## 源码阅读
 
@@ -62,47 +62,16 @@ Go 宿主直接持有组合和 Session Runtime。跨进程宿主通过 AOP 发�
 
 ## 代码组织与依赖边界
 
-`core` 承担资源生命周期、执行与事件机制，不依赖 `agent`、`pkg` 或 `tools`。命令和模型工具在 `core/tool` 中分别由 `CommandRegistry`、`ToolRegistry` 管理，保留不同的执行接口与资源所有权；`core/proc` 提供进程会话管理和事件桥接。`core/tool/hooks` 使用 AOP 载荷表达执行边界，避免反向依赖工具注册表。
+| 位置 | 职责 |
+| --- | --- |
+| `core/` | 资源生命周期、注册表、hooks、operation、事件与进程机制 |
+| `agent/` | 模型协议适配、运行循环、会话、上下文与子任务业务 |
+| `tools/` | 文件、命令、扫描器和其他工具的业务实现 |
+| `exts/` | 安装业务能力、贡献资源并管理启动与关闭 |
+| `pkg/` | 公共配置、宿主契约、Console、节点与 Web 集成 |
+| `cmd/`、`audit/` | 产品组合、运行模式与发行入口 |
+| `proto/`、`aop/`、`web/frontend/` | 协议定义、生成类型与浏览器界面 |
 
-`pkg/config` 和 `pkg/output` 分别负责应用配置和输出。`pkg/harness` 提供默认组装；具体产品的配置转换、能力选择和运行模式位于 `cmd/aiscan`。需要控制扩展顺序的宿主使用 `harness.BaseExtensions` 和 `extension.New`；`harness.New` 提供固定顺序的默认组合。
+`core` 不依赖 `agent`、`pkg` 或 `tools`；业务依赖和能力选择由组合根决定。装配与安装约定集中在[扩展装配](architecture/composition.md)，会话和协议宿主的生命周期见[宿主集成](developer/hosting.md)。
 
-扫描命令自行保证命令输出不含颜色控制符，`core/tool` 不按业务命令名改写参数。扫描收集器的结果类型归 `tools/scan` 私有，Loot 直接使用 `parsers.Loot`；`core/events/jsonl` 提供共享事件文件读取与校验，`pkg/output` 负责渲染和格式化。Provider 规则和状态归 `agent/provider`，外部配置转换归 `pkg/config`。
-
-IOA client/server 的 CLI 声明与 Session、IOA client 的 Console 贡献和各自扩展放在同一包，以文件划分职责。`NewConsole` 仍是独立安装入口，合包不改变可选性或加载顺序。IOA client 和 server 保持独立，避免客户端引入服务端依赖。
-
-宿主契约 `pkg/profile`、启动声明 `pkg/cli` 和展示契约 `pkg/console/api` 保持独立。Profile 通过 Providers、Events、Progress、Processes 借出明确的能力，只有 Active 时可访问；不提供 App 聚合容器或通用资源查找。测试辅助实现在 `pkg/internal/testutil`，仓库各层测试通过 `pkg/testutil/hosttest` 与 `pkg/testutil/apptest` 访问，后者使用真实功能 Extension。
-
-## 唯一安装入口
-
-产品、宿主、示例和集成测试通过 `exts` 安装功能。`harness.New` 只组合现有 Extension，
-不重复初始化工具、Provider 或 Session。底层构造与资源方法服务于对应 Extension 和包内单元测试。
-`Declare` 声明配置，`NewConsole` 贡献展示；它们借用同一个已安装实例，不再创建业务资源。
-
-Session 只接收自身参数和实际使用的能力：Provider 状态、事件流、日志、Hooks、工具与命令执行器、
-Skills、PromptResolver、Shell 和 History。它不依赖应用配置、宿主、Extension Scope 或具体工具包。
-外部 Option 在装配侧通过 Session Extension 的 `ConfigFromOption` 转换。没有 Shell 或 History 时对应
-操作明确不可用；默认文件 History 由 Session Extension 安装，Resource 不自行选择实现。
-
-Provider Extension 拥有 Provider 状态及本地创建的客户端；Terminal Extension 拥有 BashTool 和进程
-Manager；Session Extension 拥有 Session Resource。事件流、Progress、Logger 和 Hooks 由基础组合
-各创建一份并共享。消费者排空之后才关闭依赖，Session 不关闭借用对象。Web 的能力借用始终位于
-Profile 租约内，退休实例在最后一个使用者释放后关闭。
-
-依赖及安装边界由 `go test ./pkg/internal/architecture` 检查，包括平台与构建标签下的源码。
-
-
-IOA client 的 `New` 唯一拥有连接，`NewCollaboration` 借用同一 Service 安装 Agent hooks、Skills 与消息订阅，
-`NewConsole` 借用 Service 贡献展示。CLI 查询与配置连接检查只加载连接 Extension，不创建 Agent，
-也不直接启动底层 Resource。协作消费者排空后才关闭连接。
-
-Web Extension 根据配置创建数据库、Service、AgentPool 与路由；初始及重载 Profile 的构建策略由产品传入。
-宿主只持有 Extension Set、HTTP Server、监听器及静态资源。关闭时停止准入、取消并排空连接和请求、
-关闭后台任务与 Profile，最后关闭数据库；排空超时保留依赖供重试。ACP 示例使用相同安装路径，
-整个 HTTP 服务期间 Set 保持存活。
-
-Session 的协议由 `sessionext.NewProtocol()` 贡献，宿主只通过 Namespace Registry 绑定连接。
-PTY Router 和 IOA Browser Handler 是扩展内部实现，不提供独立安装入口。
-
-架构检查覆盖内置功能的构造、Resource 创建和协议贡献引用，包括匿名 Extension 中的调用及函数别名。
-只有资源所有者可以安装对应功能；另一个 Extension、示例或集成测试都不能绕过它。
-底层包单元测试可直接构造被测实现；装配测试通过真实 Extension，不能维护第二套命令列表。
+依赖与安装边界通过 `go test ./pkg/internal/architecture` 检查，覆盖平台与构建标签下的源码。测试组合入口与运行条件见[仓库 harness](../cmd/harness/README.md)。

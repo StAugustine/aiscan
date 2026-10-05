@@ -29,7 +29,7 @@ platforms:
   linux/amd64: [capa, floss]
 ```
 
-无需复制工具定义或维护另一份版本表。工具目录随 cyber-harness 版本维护，增删工具或更新版本无需修改 CRTM。生成器按名称取出默认版本与平台规则；`platforms` 是各平台在公共 `tools` 之上的增量选择。`id` 标识发行版，应跨应用版本保持不变。需要单独覆盖版本时，`tools` 也支持 `{rg: "15.2.0"}` 映射；未知名称在构建时失败。`catalog` 路径相对 bundle 清单。运行时由 `tools/arsenal` 嵌入同一份完整目录，所以未打包的工具仍可按需下载；生成元数据只保留选中工具定义。显式目录是完整目录，不隐式混入 CRTM 默认工具；省略目录时 CRTM 才使用自己的默认值。audit 的版本预检需要固定版本。
+无需复制工具定义或维护另一份版本表。工具目录随 cyber-harness 版本维护，增删工具或更新版本无需修改 CRTM。生成器按名称取出默认版本与平台规则；`platforms` 是各平台在公共 `tools` 之上的增量选择。`id` 标识发行版，应跨应用版本保持不变。需要单独覆盖版本时，`tools` 也支持 `{rg: "15.2.0"}` 映射；未知名称在构建时失败。`catalog` 路径相对 bundle 清单。运行时由 `tools/arsenal` 嵌入同一份完整目录，所以未打包的工具仍可按需下载；生成元数据只保留选中工具定义。audit 的版本预检需要固定版本。
 
 ```sh
 make ARSENAL_EMBED=1
@@ -42,10 +42,11 @@ aiscan 默认只包含 ripgrep；audit 使用 `AUDIT_ARSENAL_CONFIG` 覆盖选�
 
 两个构建模式都从同一选择清单生成 `bundle_spec_generated.go`，供运行时预检与安装使用。该小文件纳入版本控制，普通 `go build` 无需先下载工具。修改 YAML 后，`make` 会自动更新；直接调用 `go build` 时，先运行 `make arsenal-spec audit-arsenal-spec`。无需在 Go 中重复维护工具版本或解析构建 YAML。
 
-构建分为资源准备和编译两步，也可以分别执行。在 PowerShell 中：
+构建分为资源准备和编译两步，也可以分别执行。下面的 aiscan 示例使用标准版标签，与 `make standard` 的能力组合一致，无需前端；完整构建入口见[构建说明](../README_CN.md#构建源码发行版)。在仓库根目录的 PowerShell 中执行：
 
 ```powershell
 go run github.com/chainreactors/crtm/cmd/crtm-bundle -config cmd/aiscan/bundle.yaml -target windows/amd64 -output cmd/aiscan -package main
+$env:CGO_ENABLED = "0"
 go build -tags "forceposix emptytemplates noembed osusergo netgo arsenal_embed" -o bin/aiscan.exe ./cmd/aiscan
 ```
 
@@ -75,37 +76,24 @@ Makefile 会自动为生成器使用宿主平台、为资源使用编译目标�
 
 内嵌的是 Registry 所选择的可执行文件，不包含工具自行下载的模板、数据库或额外运行库。例如 nuclei 的模板仍由 nuclei 自身管理。
 
-## 运行时结构
+## 在自定义应用中安装
 
-- `tools/arsenal/arsenal.yaml`：工具定义、默认版本、平台文件名和使用提示。
-- 发行入口的 `bundle.yaml`：公共选择、平台增量和可选版本覆盖。
-- `tools/arsenal.NewManager`：统一加载完整目录、发行定义和用户配置，打开同一份安装状态。
-- `exts/arsenal`：在扩展加载时调用 `Manager.Prepare(ctx)`，注册现有 `arsenal` 命令。
-- audit 的 toolchain：检查当前平台要求的版本和 CLI 能力，预检与会话复用同一个 Manager。
-
-CRTM 的 `Source.Resolve` 统一远程下载与内嵌来源，`Artifact` 表达单个可执行文件。安装器负责校验、暂存、原子替换、安装记录和文件锁。调用方不遍历来源、不猜测 bundle 在来源列表中的位置，也不重复维护安装状态。
+生成器提供 `EmbeddedBundle()` 和 `ToolSpec`。在生成文件所属的包中取得资源包，再构造 Arsenal 扩展：
 
 ```go
 bundle, err := EmbeddedBundle()
 if err != nil {
     return err
 }
-manager, err := arsenal.NewManager(directory, ToolSpec.ManagerOption(bundle))
+arsenalExtension, err := arsenalext.New(directory, ToolSpec.ManagerOption(bundle))
 if err != nil {
     return err
 }
-// 扩展只使用已经创建的 Manager。
-arsenalExtension := arsenalext.New(manager)
+// 将 arsenalExtension 加入应用的 Extension 列表。
 ```
 
-`NewManager` 只读取配置和状态，`Prepare` 才释放已配置来源中的 bundle，且不访问远程来源。因此 doctor 可以复用同一个构造入口而保持只读。安装和更新共用 `Manager.Install(ctx, name, version, validate)`：空版本使用来源默认值，具体版本安装该版本，`latest` 请求远程更新；取消信号传递到下载和安装。
+这里的 `arsenalext` 是 `github.com/chainreactors/cyber/exts/arsenal` 的导入别名，`directory` 必须为绝对路径。构造时只读取目录、配置和安装状态；扩展 Load 时才调用 `Manager.Prepare` 释放内嵌工具并注册命令，释放不访问网络。加载与关闭规则见[扩展装配](architecture/composition.md)。
 
-`ManagerOption.Catalog` 表达完整目录，nil 才表示 CRTM 默认目录。用户的 `custom_tools` 覆盖该目录；与内嵌二进制身份冲突时拒绝初始化。显式目录中不存在的工具在选择阶段失败，YAML 的未知字段和重复名称也会报错。
+扩展通过 `tools/arsenal.NewManager` 合并 harness 工具目录与传入定义，同名定义由传入值覆盖。启动预检需要同一 Manager 时，先创建并检查 Manager，再用 `&arsenalext.Extension{Manager: manager}` 安装扩展，避免维护两份安装状态。实现见[Arsenal 扩展](../exts/arsenal/extension.go)和[Manager 构造入口](../tools/arsenal/manager.go)。
 
-`BundleSpec.Definitions` 是生成器解析后的选中定义，供非内嵌构建和内嵌构建共用，不是另一份手写工具清单。新增工具或更新版本时修改统一 YAML，再运行生成命令即可。
-
-## 独立使用 CRTM
-
-`LoadBundleSpec` 解析目录与选择，`BuildBundle` 构建资源包，`OpenBundle` 接受 `fs.FS`。Bundle 本身实现 Source，磁盘目录和 `embed.FS` 使用相同安装流程。`ToolSpec.ManagerOption(bundle)` 生成选中目录和来源链；不需要 harness 的完整目录时可直接传给 `crtm.NewManager`。
-
-不需要 Go 嵌入声明时，省略生成器的 `-package`，即可得到由 `os.DirFS` 读取的资源包。仅配置 Bundle Source 即可构造离线安装器；默认来源是 GitHub。
+只需要 CRTM 工具管理时，可直接将 `ToolSpec.ManagerOption(bundle)` 传给 `crtm.NewManager`。不需要 Go 嵌入声明时，省略生成器的 `-package`，再用 `os.DirFS` 和 CRTM 的 `OpenBundle` 读取资源包；CRTM 的独立 API 见[项目文档](https://github.com/chainreactors/crtm)。

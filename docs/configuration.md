@@ -14,7 +14,9 @@ aiscan init --project
 
 `init --project` 在当前目录创建最小 `cyber.yaml`，不复制用户模型、个人凭据或运行时配置。未填写的示例保持注释，不会阻止 `OPENAI_*`、`ANTHROPIC_*` 补齐配置。
 
-已有文件默认保持不变。`--force` 创建独立备份后原子替换；失败保留旧文件。`-c <path> init` 创建指定文件，不能与 `--project` 同用。旧 `--init` 兼容当前目录、非交互初始化，并提示使用新命令；它也不再直接覆盖文件。
+已有文件默认保持不变。`--force` 创建独立备份后原子替换；失败保留旧文件。`-c <path> init` 创建指定文件，不能与 `--project` 同用。
+
+旧 `--init` 兼容到当前目录，提示使用 `init` 子命令。可选的执行检查见[工具审批配置](#工具审批配置)。
 
 ## 文件与优先级
 
@@ -54,6 +56,8 @@ aiscan config use work --project
 
 `config use` 默认保存用户级选择，`--project` 修改当前目录中已加载的配置，无当前目录配置则创建 `cyber.yaml`；`-c` 修改指定文件。用户级选择不能引用仅存在于项目的 profile。更高层覆盖保存结果时会提示。
 
+`model` 为必填字段，保存或激活 Profile 时校验。REPL `/provider` 查看当前配置，`/model` 仅选择当前会话下一次运行的模型；其他会话和已启动子任务保留各自快照。端点、凭据和 Provider 在文件或 Web 设置中修改。Web 模型列表使用当前编辑 Profile 的已保存凭据；端点不提供 `GET /models` 时保留手动模型输入。
+
 ## 查看与检查
 
 ```sh
@@ -67,6 +71,29 @@ aiscan doctor --online
 `show` 展示有效配置，密钥及 URL 凭据始终脱敏；`--sources` 辅助定位文件、环境变量或 CLI 覆盖。`validate` 离线检查字段、类型及 profile 引用。未知的基础字段报错；当前发行版未注册的扩展保留原文并提示不可用，已注册扩展严格校验。
 
 `doctor` 默认检查配置和目录条件，不访问网络、不启动扫描；`--online` 才执行模型及宿主提供的已配置连接检查。未配置可选模型会跳过连接测试。检查失败退出码为 1；成功为 0。命令支持 `--json`，提示信息写 stderr。
+
+## 协作连接配置
+
+IOA 客户端与服务端使用独立的扩展配置。在包含这些扩展的发行版中，可合并到 `cyber.yaml`：
+
+```yaml
+node:
+  name: worker
+extensions:
+  ioa.client:
+    url: http://127.0.0.1:8765
+    token: server-access-key
+    space: team
+  ioa.server:
+    url: http://127.0.0.1:8765
+    token: server-access-key
+```
+
+客户端 `url` 决定协作服务，`token` 是注册所用的服务凭据，`space` 默认为 `default`；未配置 URL 时，Web 节点从 `--server-url` 推导 `/ioa` 连接；没有 Web 地址时使用产品安装的进程内客户端。服务端配置独立 HTTP 服务的监听 URL 与 access key。Web 中的浏览器桥接由 Hub 宿主装配，操作见[Web 与协作](user/web.md#ioa-消息空间)。
+
+`--ioa-url`、`--server-token`、`--space` 覆盖对应命令作用域的配置，`ioa serve --addr/--token` 设置独立服务。旧 YAML `ioa:` 作为兼容输入，根据客户端或服务端命令映射到对应 section；新配置使用上述独立路径。服务端不使用客户端的 space 或节点名称。
+
+字段缺失与显式空字符串不同：客户端 `url: ""` 禁用自动推导的外部连接。别名与新路径的同一字段冲突时会报错。密钥与 URL 凭据在配置视图中脱敏，保存留空密钥保留已有值；连接或策略变更按候选 Profile 校验与替换，不迁移旧会话。IOA 地址和 Web 节点的 `--server-url` 分别配置。
 
 ## JEV / Reflex
 
@@ -89,6 +116,40 @@ extensions:
 每次 JEV 请求仍受 `timeout` 限制。编译失败返回具体诊断继续修复；取消或服务不可用
 保留候选，真实证据不足等待新的任务证据。验证范围与实测限制见
 [JEV / Reflex 验证说明](jev-reflex-v2-20261005.md)。
+
+## 工具审批配置
+
+在包含 Guardrail 的发行版中，将以下内容合并到 `cyber.yaml`，并通过 `TYPESAFE_API_KEY` 或 `extensions.jev.api_key` 提供凭据：
+
+```yaml
+extensions:
+  guardrail:
+    provider: jev
+    mode: auto
+    review_timeout: 5m
+    jev:
+      level: standard
+      on_error: block
+      # criteria:
+      #   review: "Require review for any active production probe."
+```
+
+`extensions.jev` 提供共享凭据、模型和请求超时，`jev.mode` 控制 Reflex 加速；Guardrail 独立选择策略，将 `jev.mode` 设为 `off` 后仍可执行工具检查。`guardrail.provider` 默认 `none`，仅配置凭据不会启用策略。
+
+| 配置项（`extensions.guardrail` 下） | 默认值 | 含义 |
+| --- | --- | --- |
+| `provider` | `none` | `jev` 启用 JEV 检查，`none` 关闭策略 |
+| `mode` | `auto` | 自动判断后果；`safe` 等待人工审批 |
+| `review_timeout` | `5m` | 人工审批最长等待时间，须为正的 duration |
+| `jev.level` | `standard` | 风险预设：`permissive`、`standard`、`strict` |
+| `jev.on_error` | `block` | 首次检查失败时使用 `review` 或 `block` 判断；后果判断失败始终拒绝 |
+| `jev.criteria` | 对应 level 的预设 | 按 `record`、`review`、`block` 覆盖首次检查标准，值须为非空文本 |
+
+`standard` 将本地分析和授权的低频探测归为 `record`，目标修改、高强度或未知影响归为 `review`，明确破坏、泄露或伤害归为 `block`；`strict` 对主动探测要求复核，对目标修改或未知影响使用 `block`。实际处理由 `mode` 决定，首次风险标准不会预先决定第二阶段的后果判断。
+
+JEV 接收可读工具参数及调用上下文，不发送完整对话历史。两阶段分别应用请求超时；首次失败按 `on_error` 处理，后果判断失败、调用取消或 Profile 关闭均不能放行。参数超过输入限制时也走失败策略。常见凭据做尽力脱敏，外部服务仍会接收其余工具数据。
+
+Web 保存模式可更新当前运行时，仅影响后续调用；首次启用、策略或凭据变更需要验证并替换 Profile。密钥留空保留已保存值，或使用服务端 `TYPESAFE_API_KEY`。日常审批操作见[工具指南](user/tools.md#工具准入与审批)。
 
 ## 数据与 Web
 

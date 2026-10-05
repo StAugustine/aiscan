@@ -22,7 +22,7 @@ Skill 提供描述、位置和正文。框架本身不内嵌任何知识；内�
 
 同名条目按来源优先级覆盖。Skill 库中“存在”不等于正文全部进入上下文；模型可以读取目录后按需读取引用，调用方也可以通过 `-s` 显式选择。当前参考发行版默认加入 `cyber` 基础 Skill，许多工具说明已组织为它下面的 OKF 参考文档，不能把所有文件名都当成可直接 `-s` 选择的 Skill 名。
 
-虚拟位置如 `cyber://skills/cyber/SKILL.md` 通过 Skill Store 的读取接口解析，不是可由网络下载的 URL。IOA 的 Bundle 只在安装客户端扩展时加入，见 [IOA Skills](../ioa.md#skills)。
+虚拟位置如 `cyber://skills/cyber/SKILL.md` 通过 Skill Store 的读取接口解析，不是可由网络下载的 URL。IOA 的知识随协作扩展安装，位置与用法见[内置知识](../user/knowledge.md#内置知识)。
 
 本地 Skill 的创建、选择和 Agent 类型定义见[知识与 Skills](../user/knowledge.md)。框架层负责统一发现与读取，正文是否进入请求仍由运行时的选择决定。
 
@@ -55,5 +55,7 @@ OKF（Open Knowledge Format）用于把知识组织为渐进阅读的 Markdown b
 `openai` 和 `anthropic` 表示线协议，服务商由端点和模型选择。`llm.providers` 可以保存多个配置，`active_profile` 选择当前项；没有自动跨 profile fallback。切换配置和对同一个请求重试是不同操作。
 
 标准循环对可重试网络/服务错误退避重试，支持带抖动的指数退避和有效的 `Retry-After` 秒数。鉴权/参数等不可重试错误直接返回；上下文溢出走压缩恢复路径。重试复用逻辑消息 ID，消费端应按 ID 合并流式片段和最终消息。
+
+JEV provider（`agent/provider/jev`）提供原生 `choice`、`score`、`noul` 请求与用量；结果如何解释由消费者决定。Reflex 的执行策略由 `exts/jev` 持有，Guardrail 独立调用 `choice` 做工具准入，边界见[工具准入](execution.md#工具准入)。
 
 实现：[Prompt](../../agent/prompt/prompt.go)、[贡献扩展](../../exts/prompt/extension.go)、[Skill Store](../../agent/skills/embed.go)、[压缩](../../agent/compact.go)、[重试](../../agent/retry.go)。验证入口：[Prompt 测试](../../agent/prompt/prompt_test.go)、[压缩测试](../../agent/compact_test.go)、[重试测试](../../agent/retry_test.go)。

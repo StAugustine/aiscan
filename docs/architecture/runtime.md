@@ -10,6 +10,8 @@ Session 保留对话和运行状态，使下一次输入可以继续使用历史
 
 宿主协议的 Turn 是外部提交与取消的单位，内部模型轮次是循环计数。启用 Goal Evaluation 时，一次任务可能执行多次 Run。统计或接入时不要把三者的计数混用。
 
+`exts/agent.New(loop)` 安装选定的循环，管理调用准入、取消与排空；`exts/session` 借用它及 Provider、工具、知识和事件流，创建 `agent/session.Runtime`。循环本身处理推理，会话运行时持有历史、队列和会话身份。各自关闭后才释放所借用的依赖。
+
 配置级变更整体替换 Profile。终端 `/model` 仅修改当前 Session 下一次 Run 的模型；已运行任务和已有子任务保留各自快照，清空、压缩与恢复当前会话继续沿用该模型。`/provider` 只查看配置，终端不再原地修改全局 Provider。
 
 取消受理不代表执行已经退出。正常取消的 `TurnEnded` 由 Runtime 在执行结束后发布，携带最终 usage 和错误；Web 只在派发失败、断连或自身停止等待时提供兜底终态。
@@ -25,8 +27,12 @@ subagent 是可选扩展，不属于 Agent 配置或 Session 内建工具。`sub
 
 具名定义可以在运行时增加与撤销。租约覆盖准备、执行和收尾，撤销取消关联任务并等待排空，
 之后才允许同名注册。Session 仅提供通用附属会话、单任务模式与关闭完成回调；
-subagent 在最终记录之后发送完成通知、释放父 inbox producer。完整职责与调用约定见
-[Subagent 扩展](../../exts/subagent/README.md)。
+subagent 在最终记录之后发送完成通知、释放父 inbox producer。扩展安装与贡献见
+[扩展开发](../developer/extensions.md#子-agent-贡献)，工具调用见[子 Agent 使用说明](../user/web.md#子-agent)。
+
+会话工具由 `exts/subagent.NewTools()` 安装，使用 Runtime 打开、运行与关闭子会话。子会话继承父任务的配置快照，拥有独立历史和 Inbox。sync 等待结果；async 从新对话开始；fork 截取父对话最后一个完整工具调用批次之前的历史。
+
+异步子任务向父 Inbox 注册 producer。完成时先结束会话并完成可选的 IOA 记录，再通知父任务并释放 producer。父会话关闭会取消并等待子会话；单次工具调用返回不会取消后台子任务。共享配置和工具不提供文件、网络或浏览器隔离，持续通信由已安装的 IOA 协作扩展提供。
 
 ## 标准循环
 
@@ -56,12 +62,6 @@ subagent 在最终记录之后发送完成通知、释放父 inbox producer。�
 持续运行的 `/loop` 调度也注册 producer。它按 interval 或五字段 cron 把任务提示投入 Inbox，由模型处理；这不是绕过模型的 OS 定时执行器。最小 interval 默认 10 秒，进程/会话结束后不承诺恢复计划。忘记停止一个周期任务可能使循环一直等待。
 
 主会话的 heartbeat 也通过调度器安装，提示模型检查当前上下文与活动工作。它与传输层的连接保活不同，会产生实际的 Agent 输入。
-
-## 子 Agent 的派生
-
-`agent/session` 的子代理工具由现有 Session 扩展安装，直接使用 `OpenSession → RunSession → CloseSession`。Session 拥有 Inbox、取消、生命周期事件和最终记录；工具没有独立的运行表或关闭流程。本地子 Agent 也通过这套循环执行。派生时沿用父配置中的 Provider、工具等能力，但拥有自己的对话与 Inbox。`sync` 在当前调用中等待；`async` 从新对话开始，`fork` 则截取父对话的完整消息边界作为起点。Agent 类型可以补充指令、模型等配置。
-
-异步子任务向父 Inbox 注册 producer。关闭 Session 时先完成 IOA 最终记录，再向父 Inbox 投递一次结果并释放 producer。父 Session 关闭会取消并等待子 Session；单次工具调用返回不会取消后台子任务。父循环由此知道仍有工作可能返回，而不是只根据当前模型有没有输出判断结束。子任务的进程内配置继承不提供文件、网络或浏览器隔离；它和跨进程 IOA 消息投递也属于不同生命周期。操作方式见[子 Agent](../user/web.md#子-agent)。
 
 ## 停止条件
 

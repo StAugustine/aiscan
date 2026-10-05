@@ -15,6 +15,8 @@
 
 这些机制不互相替代：AOP 事件不能承担准入，扫描调度事件不等于外部会话协议，操作取消也不能通过修改历史记录实现。
 
+`core/eventbus` 提供类型化发布、同步观察和有界异步消费；载荷、序号与序列化由使用它的领域决定。消费者使用 `Subscription.Flush` 等待已排队通知，使用 `Subscription.Close` 停止并排空订阅。AOP 对外事件使用 `core/events.Stream`，调用关联由 operation 提供。
+
 `--observe=tools,commands,processes,files,http` 选择安装的观测处理器；`-o` 负责保存运行时实际发出的 canonical 事件。保存事件不意味着未安装的观测项也会自动产生数据。
 
 ## 从实时执行到保存
@@ -32,6 +34,8 @@ flowchart LR
 ```
 
 同一个工具结果可以包含给模型的文本和独立的原生产物。模型可读文本可能被截断，资产提取应使用声明了类型/格式的产物，不应从一段自然语言总结反推扫描事实。
+
+可选 recap 扩展把任务完成摘要作为 `types.Recap` 放入 AOP extension，并保留原 session/turn 身份。该记录属于展示数据，保存在事件历史中，不进入恢复后的模型上下文。用户可见行为见[完成摘要](../user/sessions.md#完成摘要)。
 
 ## CLI 的三类输出
 
@@ -63,6 +67,18 @@ AOP 是 Agent 交互协议。跨连接传输使用 `Envelope`，payload 是 prot
 `Envelope.id` 标识操作，响应的 `reply_to` 指向请求；取消 operation 也指向该操作 ID。`Event.seq` 表示 Session 内的语义顺序；`delivery_cursor` 表示持久化投递位置，用于重连续读，两者不能互换。
 
 WebSocket 使用 protobuf 二进制 Envelope，stdio 使用逐行 ProtoJSON Envelope；CLI 历史文件则是逐行 Event，不能拿来直接喂给 stdio transport。接入流程见 [教程](../integration.md)，字段契约见 [API](../api.md)。
+
+### 协议类型的归属
+
+| 类型来源 | 负责的语义 |
+| --- | --- |
+| AOP schema（`web/frontend/cyber-ui/packages/aop/proto/aop`） | Agent 注册、Session/Turn、事件，以及 file、tool、PTY 等通用协议 |
+| Cyber schema（`proto/types`、`proto/rpc`） | 产品命令、scan、reload、管理数据与 `cyber.rpc.*` 服务 |
+| 功能扩展的 protobuf namespace | 该扩展自己的请求、事件和数据，如 `cyber.guardrail` |
+
+跨进程数据使用生成的 protobuf 类型；`Any.type_url` 标识 payload 类型，应用不再维护同构的 JSON wire DTO。Cyber 远程命令通过 `aop.tool` 调用 bash，不注册上游的 `aop.exec`。节点注册的 `AgentHello.node_id` 是 Web 范围内的执行身份，Session 和 PTY 路由沿用它；IOA 身份独立。
+
+Go 中 AOP 类型位于 `aop/`，Cyber message 位于 `core/types/`，ConnectRPC client/handler 位于 `pkg/rpc/`。`cmd/gen` 是统一生成入口，可用 `go run ./cmd/gen` 或 `make proto-gen`；前端与第三方语言生成步骤见[接入教程](../integration.md#2-protobuf-代码生成)。宿主的连接和 namespace 安装见[宿主集成](../developer/hosting.md#连接与协议处理)。
 
 ## 产物归档与资产视图
 

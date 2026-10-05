@@ -1,6 +1,6 @@
 # Skills 与知识
 
-[使用者指南](README.md) · 前一篇：[工具](tools.md) · 下一篇：[安全扫描](../scan.md)
+[使用者指南](../README.md#使用者指南) · 前一篇：[工具](tools.md) · 下一篇：[安全扫描](../scan.md)
 
 Skill 将一项工作的经验整理为模型可读取的说明。它可以规定报告结构、解释工具用法，或把相关知识连接起来。工具决定 Agent 能执行什么，Skill 帮助 Agent 理解何时执行、怎样组织结果。
 
@@ -11,6 +11,8 @@ aiscan 默认使用 `cyber` 基础 Skill，工具说明和安全工作方法通�
 许多工具说明是 `cyber` 下的参考文档，不是独立 Skill。因此，工具名存在并不保证可以直接用 `-s <工具名>` 选择。IOA 等扩展还会贡献自己的知识，在未安装对应扩展时不加载。
 
 Agent 可能看到 `cyber://skills/...` 这样的虚拟路径。这些资源由安装它们的扩展以 Bundle 或虚拟文件挂载提供，不是 HTTP 下载地址。使用者通常不需要手工解压这些文件。
+
+IOA 协作组合提供 `cyber://skills/ioa/SKILL.md`，以及 `ioa://skills/<checkpoint|handoff|swarm|team>/SKILL.md` 和相邻 schema。前者说明消息操作，后者说明类型化协作协议；按任务读取，不安装协作能力时不加载这些知识。通信操作见[发送、回复与等待](web.md#发送回复与等待)。
 
 ## 自定义 Skill
 

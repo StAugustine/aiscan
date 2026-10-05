@@ -18,7 +18,9 @@ flowchart LR
     B -.再关闭.-> A
 ```
 
-`harness.BaseExtensions` 按顺序提供 hooks、events、commands、toolset、skills、prompt、egress、文件与终端、tmux、app 和 provider。基础组合不包括 Agent 循环与 Session。参考发行版再加入领域能力、观察器、协议与宿主；具体组成以 [base](../../pkg/harness/base.go) 和 [aiscan profile](../../cmd/aiscan/profile.go) 为准。
+`harness.BaseExtensions` 提供注册表、事件、知识、文件与终端、出口和 Provider 状态等基础能力；Agent 循环与 Session 由后续扩展安装。参考发行版再加入领域能力、观察器、协议与宿主，具体顺序见 [base](../../pkg/harness/base.go) 和 [aiscan profile](../../cmd/aiscan/profile.go)。
+
+产品、宿主、示例和装配测试通过对应 Extension 安装功能。工具构造和 Resource 启动方法由所属 Extension 或底层单元测试使用；宿主通过 `harness.New` 或显式 Extension 列表复用这条安装路径。业务对象暴露调用接口，启动与关闭由其资源所有者负责。
 
 ## 贡献与借用
 
@@ -42,6 +44,8 @@ flowchart LR
 因此，Load 成功后取消初始化 context，并不会自动关闭应用。宿主必须持有 Set 并明确调用 Close；扩展则把长期 goroutine、订阅和资源停止安排在自己的生命周期内。
 
 部分 Load 失败时，Set 从失败的扩展开始逆序回滚，包含它已经注册的资源。Load 必须允许 Close 面对部分初始化的状态，不能假设每一个字段都已经建立。
+
+只有持有资源或后台工作的扩展需要实现 `Close(context.Context) error`，静态贡献不需要空的 Close。构造拒绝带类型的 nil Extension，Load/Close panic 转为错误，由 Set 执行回滚或关闭。
 
 ## 关闭与重试
 

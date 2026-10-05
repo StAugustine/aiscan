@@ -4,11 +4,9 @@
 版本，启动真实应用子进程，通过公开 HTTP / Connect JSON / stdio 接口操作，验证实际配置文件、
 进程重启与资源释放。场景测试不导入业务实现包，不注入 fake store、Provider 或 Host。
 
-包测试需要的进程内 extension host 不在这里：低层构造器（`Set`、`Load`、`Commands`、
-`Tools`、`ToolsWithHooks`）通过 `pkg/testutil/hosttest`，App 级的（`Entries`、`Load`）通过
-`pkg/testutil/apptest` 访问；实现在 `pkg/internal/testutil`。两者分开是因为 `pkg/app` 依赖 `agent`，合在一个包里会让 `agent` 自己的
-测试用不了低层构造器。生产代码必须构造显式 Profile，`pkg/internal/testutil/hosttest` 的守卫测试会在任何
-非测试文件引用这两个包时失败。
+包测试需要的进程内 Extension 宿主通过 `pkg/testutil/hosttest` 访问；包含 Provider、
+Skills 和终端等应用能力的夹具通过 `pkg/testutil/apptest` 访问。实现在 `pkg/internal/testutil`，
+用于测试装配与资源清理。生产代码构造显式 Profile，守卫测试会拒绝非测试文件引用这两个辅助包。
 
 协议回显测试位于 `pkg/host/process_test.go`，不计入用户场景验收。
 
@@ -20,7 +18,7 @@ go test -count=1 -v -timeout 5m ./cmd/harness/...
 make harness
 ```
 
-需要 Go 与完整应用构建、运行所需的原生依赖；缺失时直接失败，不跳过或替换实现。
+需要 Go、已初始化的子模块及各场景所用的程序；默认 full 构建使用纯 Go，不需要录屏 SDK。前端场景另需 Node.js/npm、前端依赖和 Playwright Chromium。依赖缺失时直接失败，不跳过或替换实现。
 Web 服务以 `--no-agent` 启动，绑定 `127.0.0.1:0`；IOA 场景额外启动两个独立的
 `aiscan agent --transport stdio` 进程，扫描场景启动独立的 Web Agent 和本地 HTTP 目标。每个场景有独立的配置、数据库与
 数据目录。无 LLM 场景仅继承操作系统及动态库加载所需环境变量。真实 LLM 场景
@@ -123,21 +121,19 @@ IOA 场景中，每个 AI 保有独立模型历史，调用真实模型的 funct
 go test -tags live_llm -run '^TestLiveLLMParentDelegatesIOASiblings' -count=1 -v -timeout 6m ./cmd/harness
 ```
 
-## 尚待补齐的任务
+## 五子棋协作任务
 
-当前主场景改为 [两个 Agent 通过 IOA 下五子棋](gomoku-task.md)。任务由自然语言定义，直接启动 black、white 两个独立 Session，没有协调者或子任务。双方自主选点，经 IOA 自动投递交替落子；各自交付棋谱，黑方交付 HTML 回放。运行入口仅启动通用扩展宿主、外部 IOA、限制模型预算并保存日志；测试入口退出成功不等于棋局正确，仍需复盘真实 IOA 记录。通用宿主复用现有 Agent/Session/IOA 扩展，不加载扫描技能。
+任务定义见 [两个 Agent 通过 IOA 下五子棋](gomoku-task.md)。任务由自然语言定义，直接启动 black、white 两个独立 Session，没有协调者或子任务。双方自主选点，经 IOA 自动投递交替落子；各自交付棋谱，黑方交付 HTML 回放。运行入口仅启动通用扩展宿主、外部 IOA、限制模型预算并保存日志；测试入口退出成功不等于棋局正确，仍需复盘真实 IOA 记录。通用宿主复用现有 Agent/Session/IOA 扩展，不加载扫描技能。
 
-2026-09-20 复测完成 11 手合法落子，全部经 Inbox 自动送达；历史读取 2 次，无 IOA 命令错误。模型反复推理、调试棋步搜索，最终耗尽输出预算，没有终局或网页交付，整局验收仍未通过。
+验收需要完整合法的棋局、实际 IOA 消息与交付产物；未到终局或输出预算耗尽时，保留未完成状态，不能以消息投递成功代替整局验收。
 
 ```sh
 go test -tags live_llm -run '^TestLiveLLMIOAGomoku$' -count=1 -v -timeout 35m ./cmd/harness
 ```
 
-[数据报表方案](ioa-neutral-task-plan.md)已暂停，其首次模型运行按用户要求中止，新增数据夹具已撤下；下面的安全审计场景保留为历史尝试，完整模型流程未通过。
+## 多租户订单长任务
 
-下一项真实协作任务见 [订单 API 越权回归审计与交接](ioa-task-plan.md)：真实模型分工发现接口、验证访问权限，再由全新上下文从 IOA 历史恢复证据。该文档是待实现的测试设计，不属于已经通过的验收。
-
-长流程方案见 [多租户订单系统的审计、修复、回归与交接](ioa-long-task-plan.md)：实际代码修复、途中需求变化、一次工具故障及新负责人接续。首版入口为 `TestLiveLLMIOALongTask`，模型闭环尚未验收。独立业务环境及实际应用接线分别由 `TestUserOrderLabFixtureContract`、`TestUserIOALongTaskRuntimeSmoke` 验证，两者不包含模型回答。
+`TestLiveLLMIOALongTask` 运行多租户订单系统的审计、修复、回归与交接，包含实际代码修复、途中需求变化、一次工具故障及新负责人接续。独立业务环境及实际应用接线分别由 `TestUserOrderLabFixtureContract`、`TestUserIOALongTaskRuntimeSmoke` 验证，两者不包含模型回答；完整模型流程需要另行运行并核对业务证据。
 
 显式配置 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER` 后运行一轮长任务（默认外部 IOA；设置 `CYBER_HARNESS_LONG_BACKEND=memory` 使用进程内 IOA）：
 
@@ -165,17 +161,28 @@ go test -tags live_llm -run '^TestLiveLLMIOALongTask$' -count=1 -v -timeout 65m 
 前者不能宣称覆盖后者。每个场景使用临时目录和回环地址，对可执行动作、模型请求数、
 输出 tokens、总时长和资源收尾设置硬限制；`--tools` 是可选工具组设置，并非执行白名单。
 
+## JEV 机制与真实验证
+
+当前 JEV / Reflex 的控制流、验证范围和实测限制见 [JEV / Reflex 验证说明](../../docs/jev-reflex-v2-20261005.md)。机制测试位于 [exts/jev](../../exts/jev)，从仓库根目录运行：
+
+```sh
+go test -count=1 ./exts/jev
+```
+
+真实模型验证需要显式设置各测试的 opt-in 开关及 `CYBER_API_KEY`、`CYBER_MODEL`、`CYBER_BASE_URL`、`TYPESAFE_API_KEY`，并准备测试使用的浏览器等依赖。具体运行入口以测试源码为准；普通离线通过不能称为真实模型接管通过。
+
+业务完成、实际 Reflex 参与及加速分别检查。主模型完成任务不证明 JEV 参与；后台请求不代表前台函数执行；后台用量未结算时不能按零费用计算。耗时或 token 比较必须保留失败和负收益，少量样本不能证明稳定加速。
+
 ## 手动执行与真实 LLM 配置
 
 Harness 不属于 GitHub CI 或 release gate，只在需要验证真实应用进程时手动运行。
 普通 CI 单元测试显式排除 `cmd/harness`，避免隐式启动应用进程或调用模型。
-race 检查覆盖测试驱动；应用子进程仍由普通 `go build -tags full` 构建，
-`full` 组合会直接引入 CSTX Extension。
+race 检查覆盖测试驱动；应用子进程按 [editions.env](../../editions.env) 中的 `FULL_CAPS_TAGS` 和 `FULL_CGO` 构建，不继承测试驱动的 race 设置。当前 full 组合不加载 native CSTX 或录屏扩展。
 
 运行 live suite 前设置以下本地环境变量：
 
 | 配置 | 要求 |
-| --- | --- | --- |
+| --- | --- |
 | `CYBER_API_KEY` | 必填，与 Cyber 各二进制共用模型密钥 |
 | `CYBER_BASE_URL` | 必填，HTTP(S) API 根地址，不含 URL 凭据或查询参数 |
 | `CYBER_MODEL` | 必填，支持 function calling 的模型；应使用当前账户可用模型，长任务实测使用 `deepseek-v4-pro` |
@@ -189,9 +196,9 @@ go test -tags live_llm -run '^TestLiveLLM' -count=1 -v -timeout 8m ./cmd/harness
 make harness-llm-ioa
 ```
 
-`live_llm` 是显式测试选择，不以 `t.Skip` 隐藏缺少模型配置。默认无 LLM 测试不编入
-live 场景，即使机器存在个人模型密钥也不会自动调用。HTTP 客户端模拟用户操作接口；
-当前尚未验证浏览器渲染、Agent 会话任务的推理质量或整仓库所有功能。新增场景应明确
+`live_llm` 是显式测试选择，`TestLiveLLM*` 缺少模型配置时直接失败；JEV 的真实验证还需按对应测试设置运行开关。
+默认无 LLM 测试不编入 live 场景，即使机器存在个人模型密钥也不会自动调用。普通 HTTP 场景
+不覆盖浏览器渲染；前端套件覆盖所选生产前端场景，不能代表整仓库所有功能。新增场景应明确
 实际入口、前置条件、可观察结果与退出条件，避免用固定快照数量代替覆盖范围。
 
 模型配置优先使用共享 `CYBER_*`；原 `CYBER_HARNESS_LLM_*` 作为低优先级兼容别名保留。普通离线测试不继承这些凭据，仅显式 live 场景注入，日志同时脱敏新旧变量。

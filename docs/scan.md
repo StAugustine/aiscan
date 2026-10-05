@@ -1,6 +1,6 @@
 # 安全扫描
 
-[使用者指南](user/README.md) · 前一篇：[Skills 与知识](user/knowledge.md) · 下一篇：[Web 与协作](user/web.md)
+[使用者指南](README.md#使用者指南) · 前一篇：[Skills 与知识](user/knowledge.md) · 下一篇：[Web 与协作](user/web.md)
 
 `scan` 将多个扫描引擎连接成规则驱动的流水线。从输入目标开始，发现的服务、Web 资产和指纹决定后续工作。规则扫描无需模型；需要 AI 时，可以对发现做后续验证或搜索补充情报。
 

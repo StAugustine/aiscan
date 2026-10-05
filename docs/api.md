@@ -1,6 +1,6 @@
 # cyber 外部接入 API
 
-[文档首页](README.md) · 教程：[外部接入](integration.md) · 架构：[协议边界](protocol-architecture.md)
+[文档首页](README.md) · 教程：[外部接入](integration.md) · 架构：[协议与数据](architecture/data.md#协议类型的归属)
 
 本文档描述外部程序集成 cyber 时使用的两组 API。
 
@@ -9,7 +9,7 @@
 | Application WebSocket | 双向、长连接、二进制 protobuf | Session/Turn 生命周期和实时事件流 |
 | ConnectRPC | unary 请求/响应 | 会话历史、扫描、配置、Agent、系统状态和原始 Artifact 归档同步 |
 
-第三方语言的 protobuf 生成和接入流程见 [integration.md](integration.md)。Go 可运行示例见 [`examples/acp/README.md`](../examples/acp/README.md)。字段级参考以 proto 源码为准，需要时按 [api/README.md](api/README.md) 的步骤生成文档。
+第三方语言的 protobuf 生成和接入流程见 [integration.md](integration.md)。Go 可运行示例见 [`examples/acp/README.md`](../examples/acp/README.md)。字段级参考以 proto 源码为准，需要时按[生成字段文档](integration.md#23-生成字段文档)的步骤生成。
 
 ## 功能边界
 
@@ -49,7 +49,7 @@ Upgrade: websocket
 - 外部 client 使用 Bearer token。
 - 浏览器登录后也可以使用 `cyber_session` cookie。
 - 鉴权失败时 upgrade 返回 HTTP 401。
-- `aiscan web` 未指定 `--token` 时会自动生成 access key，而不是关闭鉴权。
+- `cyber-web` 未指定 `--token` 时会自动生成 access key。
 - Application Endpoint 不需要握手消息。首个 envelope 如果包含 `AgentHello`，会返回 `WRONG_ENDPOINT`。
 
 每个 WebSocket message 必须是 BinaryMessage，内容为一个序列化的 `aop.Envelope`。文本 JSON frame 不属于 cyber Application WebSocket wire format。
@@ -80,6 +80,8 @@ message, err := aop.Unwrap(envelope)
 ```
 
 其他语言使用 protobuf `Any.pack` / `unpack`。不要自行添加 namespace 字段；消息类型由 `Any.type_url` 决定。
+
+protobuf JSON 中 bytes 使用 base64，enum 使用符号名称，oneof 使用生成的 JSON 字段名。未知 `Any.type_url` 应保留，不能按 JSON shape 猜测类型；ConnectRPC 使用生成的客户端进行编码。
 
 ### 3. 请求关联和并发
 
@@ -355,36 +357,9 @@ Envelope `id` 同时是幂等 ID：
 - 网络超时后重试原请求：复用原 `id`。
 - 新的用户操作：生成新的 `id`。
 
-### 12. Go WebSocket 示例的真实调用链
+### 12. Go WebSocket 示例
 
-[`examples/acp/client/main.go`](../examples/acp/client/main.go) 的核心调用顺序：
-
-```go
-client, err := Dial(ctx, serverURL, "", token)
-session, err := client.OpenSession(ctx, nodeID, title)
-events, err := client.Watch(session.GetId(), "")
-receipt, err := client.RunTurn(ctx, session.GetId(), prompt)
-
-for event := range events {
-    if printEvent(event) {
-        break
-    }
-}
-```
-
-其中：
-
-- `Dial` 默认路径为 `/api/aop/application/ws`
-- `OpenSession` 检查 accepted/rejected outcome
-- `Watch` 使用独立 envelope ID 注册订阅 channel
-- `RunTurn` 返回 `TurnReceipt`，但不返回回答
-- `printEvent` 在 `turn_ended` 或 `session_ended` 时结束
-
-运行：
-
-```bash
-go run ./examples/acp/client --server http://127.0.0.1:8080 --token demo --node local -p "列出当前目录"
-```
+[Go 接入示例](../examples/acp/README.md#实时对话)提供服务准备与运行命令；[client.go](../examples/acp/client/client.go)实现请求关联和事件分发。客户端按 OpenSession → WatchEvents → RunTurn 发起对话，以 `turn_ended` 判断本轮完成。
 
 ## ConnectRPC API
 
@@ -522,118 +497,6 @@ HTTP procedure 示例：
 
 ### 6. Go ConnectRPC 示例
 
-[`examples/acp/connectrpc/main.go`](../examples/acp/connectrpc/main.go) 使用真实生成 client：
+[历史查询示例](../examples/acp/README.md#查询历史)提供 ListSessions、ListEvents 的运行命令；[完整实现](../examples/acp/connectrpc/main.go)使用生成的 client，以标准 protobuf JSON 输出响应。示例的本地验证入口见[测试说明](../examples/acp/README.md#验证)。
 
-```go
-client := rpc.NewSessionServiceClient(http.DefaultClient, serverURL)
-
-request := connect.NewRequest(&types.ListSessionsRequest{
-    Limit:         100,
-    IncludeClosed: true,
-})
-request.Header().Set("Authorization", "Bearer "+token)
-
-response, err := client.ListSessions(ctx, request)
-```
-
-查询 session 列表：
-
-```bash
-go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo
-```
-
-查询指定 session 的持久化事件：
-
-```bash
-go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo --session <session-id>
-```
-
-示例以标准 protobuf JSON 输出 response，方便直接检查字段。
-
-## Protobuf 代码生成
-
-### 1. Schema 位置
-
-Application/AOP schema：
-
-```text
-web/frontend/cyber-ui/packages/aop/proto/aop/*.proto
-```
-
-ConnectRPC service 和 Cyber 类型：
-
-```text
-proto/rpc/*.proto
-proto/types/*.proto
-```
-
-字段参考来源：
-
-- Application WebSocket：`web/frontend/cyber-ui/packages/aop/proto/aop/**`
-- 管理平面：`proto/rpc/*.proto`、`proto/types/*.proto`
-
-### 2. 只生成 Application WebSocket 消息
-
-Application WebSocket 不需要生成 service client，只需要 protobuf messages：
-
-```bash
-protoc \
-  -I web/frontend/cyber-ui/packages/aop/proto \
-  --java_out=lite:<out-dir> \
-  web/frontend/cyber-ui/packages/aop/proto/aop/*.proto
-```
-
-Android Gradle 示例：
-
-```kotlin
-plugins { id("com.google.protobuf") version "0.9.4" }
-
-protobuf {
-    protoc { artifact = "com.google.protobuf:protoc:4.31.0" }
-    generateProtoTasks {
-        all().forEach { task ->
-            task.builtins { create("java") { option("lite") } }
-        }
-    }
-}
-
-dependencies {
-    implementation("com.google.protobuf:protobuf-javalite:4.31.0")
-}
-```
-
-proto 当前没有设置 `java_package` 和 `java_multiple_files`。直接生成时 Java 类默认按 proto 文件嵌套；vendor 到自己的 SDK 时可以添加符合项目规范的 Java options。
-
-### 3. 生成 ConnectRPC client
-
-ConnectRPC 除 protobuf message generator 外，还需要对应语言的 Connect client generator。生成时同时提供两个 include root：
-
-```text
--I web/frontend/cyber-ui/packages/aop/proto
--I proto
-```
-
-需要编译的入口是 `proto/rpc/*.proto`，其 imports 会引用 `proto/types` 和 AOP schema。
-
-仓库内 Go 代码统一通过：
-
-```bash
-go run ./cmd/gen
-```
-
-生成的 Go clients 位于 `pkg/rpc/*connect.go`。
-
-### 4. 编码注意事项
-
-- WebSocket 使用 binary protobuf Envelope。
-- ConnectRPC 默认使用 binary protobuf，也可以协商标准 protobuf JSON。
-- protobuf JSON 中 `bytes` 是 base64 字符串。
-- enum 使用符号名称。
-- oneof 使用生成的 JSON 字段名。
-- 未知 `Any.type_url` 应保留，不应按 JSON shape 猜测类型。
-
-## 验证
-
-```bash
-go test ./examples/acp/client ./examples/acp/connectrpc
-```
+protobuf 生成、语言运行库及字段文档生成步骤统一见[接入教程](integration.md#2-protobuf-代码生成)。

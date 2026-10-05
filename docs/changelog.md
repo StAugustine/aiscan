@@ -1,5 +1,7 @@
 # Changelog
 
+本页保留各版本的用户可见变化与兼容信息，旧命令、配置和包路径仅表示当时的行为。当前操作见[使用者指南](README.md#使用者指南)，构建见[构建与嵌入](../README_CN.md#构建与嵌入)，历史实现请查阅对应 Git tag。
+
 ## v1.0.0-rc7 — 任务摘要、工具审批与运行稳定性
 
 rc7 新增任务摘要和工具审批，完善 Web 与交互式 CLI 的消息展示、会话恢复和附件提交，并在保留整体架构的基础上清理冗余中转与序列化机制。此版本整合 #159、#163，以及 rc6 标签之后的 #156。
@@ -39,54 +41,14 @@ go run ./cmd/migrate-scans -db <database-path>
 - 发布 `aiscan`、`aiscan-full` 和 `cyber-audit`，覆盖 Linux、macOS、Windows 的 amd64/arm64，共 18 个 ZIP 与 `aiscan_checksums.txt`。
 - 发布门禁覆盖 Go 竞态与覆盖率、静态检查、扫描器与真实浏览器 E2E、前端构建和消息回放验收。Linux amd64/arm64 与 Windows amd64 会运行实际发布包，验证启动、版本、Web 入口和审计单文件工具执行；Windows amd64 产物在 UPX 压缩后再次验收。
 
-## v1.0.0-rc6 — 独立审计、扫描证据与中立宿主
+## v1.0.0-rc6
 
-rc6 新增独立的 `cyber-audit` 发行版，完善扫描证据与 Web 任务流程，并将扫描器专属能力从共享宿主中拆出。此版本包含 #152、#153、#154 和 #155，标签指向合并提交 `e9271e66`。
+- 修复 Web 中 `!spray -h` 输出大量空段落的问题；帮助内容现在按选项分组并控制行宽。
+- 修复非安全 HTTP 环境下快速接入 Agent 的复制按钮无反应；复制失败时显示明确提示。
+- Goal 模式直接使用当前消息输入框，入口收敛为带悬停说明的图标按钮。
+- 继续收敛 Arsenal、扫描器、节点配置与运行时的职责，并完善单文件审计和扫描证据链路。
 
-### New Features
-
-- 新增 `cyber-audit`，支持对源码、业务逻辑和单个二进制文件开展模型辅助审计；提供内置审计流程、报告、会话恢复及 JSON 输出。Linux、macOS 和 Windows 的 amd64/arm64 均提供独立归档。
-- Arsenal 使用仓库内统一的工具目录和各发行版的 `bundle.yaml` 选择工具。内嵌工具在首次使用时离线释放；审计发行版携带 `rg`、`ast-grep`、`osv-scanner`，逆向分析工具可按需通过 Arsenal 安装，未内嵌在 rc6 归档中。
-- Web 扫描归档完整的原始 `Artifact` 与发现、验证结果 `Loot`，按 operation 和 `result_id` 关联证据。失败或取消后仍可查看已收集的证据；资产视图支持按任务查看历史观测与比较结果。
-- Web 将会话作为持续任务，支持标题、归档、搜索和按扫描目标分组；Goal 使用当前消息输入框，扫描结果、资产与发现视图的交互同步更新。
-- 代理入口新增可选的授权回调，可在 HTTP 转发或 CONNECT 建立前校验调用凭据。
-
-### Bug Fixes
-
-- 远端节点注册时不再依赖本地模型配置；连接后使用服务端当前生效的 LLM 配置，并在重连及配置更新时同步。节点本地参数、环境变量和默认值不再覆盖服务端模型设置。
-- Web 中 `!spray -h` 的帮助内容按选项分组并限制行宽；非安全 HTTP 环境下的 Agent 接入复制失败会显示明确提示。
-- 命令结果和续接会话使用跨重启唯一的持久 ID，避免 Web 历史记录覆盖旧消息；浏览器回放与终端测试同步适配新的任务入口。
-- Shell 适配器子进程使用 `TERM=dumb`，避免启动时的终端能力探测阻塞，同时保留调用方 Shell 的环境和退出状态。
-
-### Architecture And Compatibility
-
-- 扫描器提示词、Skill、配置段、状态和扫描协议归属扫描扩展及可选 Web 扫描模块。嵌入方需要显式声明这些模块；不兼容的 Web 数据库结构不会自动迁移。
-- `scan --verify` 仅接受 `on` 或 `off`；未指定时由执行节点按模型可用性决定。验证失败保留原始发现并标注未得出结论；旧的严重性阈值、`auto` 和无执行阶段的 `--deep` 已移除。
-- 配置发现优先使用工作目录的 `cyber.yaml` 或 `.cyber/cyber.yaml`，再使用用户配置；不再搜索父目录和可执行文件目录。显式 `--config` 仍单独生效。
-- Shell 脚本通过进程内命令注册表执行内置命令，保留管道、重定向、条件执行与退出状态，不再依赖辅助 Cyber 进程。旧版 Windows 可按需在可执行文件旁提供 WinPTY 文件，否则回退到管道。
-- 审计节点能力复用共享节点扩展；aiscan CLI、扫描器、配置、Web 存储和会话邮箱移除了无独立语义的中转类型及转发层。
-
-### Distribution
-
-- 发布包含 `aiscan`、`aiscan-full` 和 `cyber-audit` 在六种系统/架构组合下的 18 个 ZIP，以及 `aiscan_checksums.txt`。CI 验证完整构建、归档校验和，并对 Linux 与 Windows 的代表性产物执行运行检查。
-
-## v1.0.0-rc5 — 跨平台命令、Goal 时间线与模型容错修复
-
-rc5 修复内置 Skill 文件读取、Shell 组合命令和 Goal 模式的流式展示，并收敛运行时与应用包的职责。
-
-### Bug Fixes
-
-- 补齐 `skills.EmbeddedFS()`，在默认 Harness 中挂载 `cyber://skills/`，修复内置知识读取报错及 rc4 后续提交的测试编译失败。
-- 文件工具统一处理两种路径分隔符、`.` 和重复分隔符；先解析 Shell 语法再分发命令，保留引号、空参数、管道、重定向及条件组合的语义。Windows 优先使用 Git/MSYS bash，并在取消时回收子进程。
-- Goal 模式按消息 ID 保留各步骤的正文与思考，在评估和压缩处拆分响应卡片，避免后续轮次覆盖前面的内容或插入到错误位置；压缩计数支持 protobuf bigint。
-- 同一 OpenAI 流式帧中的思考和正文均保留；重试前清除失败尝试的临时内容，避免重复拼接。思考和流式正文在各自的滚动区内展示。
-- 重连后只以 `turnEnded` 确认运行结束，重复事件不再重复改变运行状态；切换会话时隔离迟到的发送、取消和附件读取结果。
-- 识别 `is not a multimodal model` 错误并自动去除图片重试，保留文字上下文，后续对话继续使用文字模式。
-- 识别 DeepSeek V4.1 Flash 及官方别名的视觉能力，并从官方 `/anthropic` URL 推断 Anthropic 协议；V4 Pro 保留纯文本默认值，显式 `images` 配置仍优先。
-- Web 附件现在将图片字节加入模型输入，支持仅图片消息；普通上传文件附带可读取路径，附件读取失败明确显示错误。
-- 远端节点收到与当前运行配置相同的初始同步时保持连接，避免刚上线就重连导致创建会话失败。
-
-### Architecture
+## Unreleased
 
 - 合并 `pkg/base` 到 `pkg/harness`，以 `BaseConfig` 和 `BaseExtensions` 提供默认能力。
 - 将 `pkg/commands` 与 `pkg/toolset` 归入 `core/tool`，保留独立的命令和工具注册表；进程会话桥接从 `agent/proc` 移至 `core/proc`。
@@ -192,10 +154,6 @@ Go 服务不再解析 CSTX、生成 SCO 报告 DTO，或维护一套与原始扫
 | `aiscan-full` | amd64、arm64 | amd64、arm64 | amd64、arm64 | 6 |
 | `aiscan_checksums.txt` | - | - | - | 1 |
 
-发布门禁覆盖 Go 单元测试与竞态测试、架构和依赖检查、`go vet`、lint、Web 前端构建、Playwright E2E、scanner 功能测试、headless record/replay、Windows CGO/非 CGO 编译、两套 GoReleaser 矩阵，以及 Windows、Linux amd64、Linux arm64 发布包的 checksum 与启动验证。
-
-最终 Release 包含 12 个 ZIP 和 1 个 checksum 文件。发布后重新下载并验证了 Windows amd64 的 `aiscan` 与 `aiscan-full`：普通版 CLI、严格 JSONL、curl 重定向变量和真实本地扫描均通过；full 版的 `/health`、登录认证、HttpOnly 会话、ConnectRPC、快速接入和浏览器存储边界均通过真实浏览器测试。
-
 ## v1.0.0-rc3 — 有界流量存储、会话稳定性与发布验证
 
 本次候选版本汇总 rc2 之后的改动，重点改善流量数据的存储边界、Web 会话的稳定性以及发布产物验证。
@@ -234,25 +192,11 @@ v1.0.0-rc2 重点重构了 Cyber 的流量出口：所有工具共用常驻代�
 - AOP traffic namespace 可动态切换 capture/relay、修改上游代理、查询状态，并按任务返回 Flow；切换过程无需重启监听器，也不会打断正在执行的命令。
 - 每条连接携带任务调用标识，并发扫描产生的流量可以准确归因，不再依赖容易重叠的时间窗口。
 
-开启捕获后，可直接查看和分析工具产生的流量：
-
-```bash
-mitm flows --host example.com --last 20
-mitm flow <id>
-mitm analyze --host example.com
-```
-
 HTTPS 捕获会向 curl、Git、Node.js、Python requests 等常用客户端注入当前 Hub CA。严格校验证书的工具访问裸 IP 时可能因证书没有 IP SAN 而失败，此时应优先使用主机名，或关闭 MITM 仅保留代理路由。
 
 **动态代理路由**
 
 代理节点、订阅和单命令代理现在共用同一条实时出口链。切换节点后，新连接立即使用新出口，运行中的连接保持不受影响。
-
-```bash
-proxy auto <subscription-url> --country HK,JP --strategy adaptive
-proxy switch 3
-proxy socks5://127.0.0.1:1080 gogo -i 10.0.0.1 -p top2
-```
 
 支持 socks5、trojan、vless、anytls、hysteria2、shadowsocks 和 Clash 订阅；`proxy current`、`proxy test`、`proxy clear` 可用于检查和恢复出口。
 
@@ -346,12 +290,6 @@ Playwright、nuclei headless 和 Katana 现在共享同一套 Chromium 发现逻
 
 Cyber 注册的 scan、spray、proton 等进程内命令现在可以像普通可执行文件一样参与 shell 管道和重定向。适配层按需创建，不启动额外常驻服务，并完整传递工作目录、stdin/stdout/stderr、退出码、调用上下文与取消信号。
 
-```bash
-scan -i target -j | proton
-proton -i . | grep critical
-scan -i target -j > scan.jsonl
-```
-
 Unix 使用本地 socket，Windows 使用 named pipe；进程退出或异常中断后会回收遗留 runtime，避免无效桥接进程和临时目录累积。
 
 ### Improvements
@@ -399,7 +337,7 @@ Unix 使用本地 socket，Windows 使用 named pipe；进程退出或异常中�
 | `aiscan-full` | amd64、arm64 | amd64、arm64（Linux 交叉编译） | amd64 |
 | 可选原生 `record` SDK 构建 | X11 amd64/arm64 | 不支持 | amd64 |
 
-迁移细节、兼容承诺和发布门禁见 [v1.0.0 发布与迁移](v1.0.0.md)。
+当前命令与配置见[参考手册](reference.md)，Go 嵌入入口与集成步骤见[开发者指南](development.md)。使用历史发行版时查阅对应 Git tag 的文档。
 
 ## v0.4.0 — Web 控制台升级 + Agent 上下文管理 + SCO 标准化输出 + 统一接入 API
 
@@ -414,15 +352,9 @@ v0.4.0 是 Web 工作台的首个正式版本。它不是单独的扫描结果�
 - 会话、扫描、配置和资产通过 SQLite 持久化
 - 默认启动内嵌本地 Agent，并自动生成 access key
 
-Full 版默认同时启动 Web 服务和一个本地 Agent，并自动生成 access key。最小启动命令只有一条：
-
-```bash
-aiscan-full web
-```
-
 **远程 Node 接入**
 
-当扫描需要在其他主机、网络区域或专用执行环境中运行时，Web 可以作为统一 Hub 接收远程 Node。Node 上线后会向 Web 注册自己的 scanner、runtime command 和 skill，用户可在页面中选择执行节点；工具输出、PTY 终端、上传文件和扫描结果仍回到当前会话。下面是一个最小的远程接入示例：
+当扫描需要在其他主机、网络区域或专用执行环境中运行时，Web 可以作为统一 Hub 接收远程 Node。Node 上线后会向 Web 注册自己的 scanner、runtime command 和 skill，用户可在页面中选择执行节点；工具输出、PTY 终端、上传文件和扫描结果仍回到当前会话。该版本提供以下远程接入能力：
 
 - 自动发现远程 Node，并展示名称、版本、在线状态和忙闲状态
 - 动态同步 Node 可用的 scanner、runtime command 和 skill
@@ -430,14 +362,6 @@ aiscan-full web
 - 自动挂载远程 Runtime REPL 和 PTY 终端
 - QuickConnect 可生成不同系统、架构和下载线路的安装接入命令
 - `--no-agent` 可让 Web 只作为 Hub 运行，不启动本地 Agent
-
-```bash
-# Web 所在主机
-aiscan-full web --addr 0.0.0.0:8080 --token demo
-
-# Node 所在主机
-aiscan-full agent --server-url http://demo@server.example:8080 --node-name worker-01
-```
 
 **Agent 会话与执行过程**
 
@@ -482,24 +406,6 @@ Web 配置中心用于管理多个 LLM profile，并显式选择当前模型。P
 - `-p/--prompt` 现在可直接传入已有文件路径并读取文件内容
 - 新增 `output` 配置，可分别控制 reasoning、工具参数、工具结果、实时状态和 token 用量的展示；继续兼容 `-q`、`-v`、`-vv` 与 `Ctrl+O`
 
-```bash
-# 从文件读取任务描述
-aiscan agent -p ./assessment.md -i https://target.example
-
-# 交互模式中压缩上下文，并指定摘要重点
-/compact 保留已确认漏洞、凭据和待验证目标
-```
-
-```yaml
-llm:
-  context_window: 128000
-  max_tokens: 16384
-
-output:
-  preset: verbose       # default、verbose、full
-  tool_results: preview # hidden、preview、full
-```
-
 **标准化扫描结果**
 
 SCO 标准化输出用于解决不同 scanner 各自返回独立格式、结果难以关联和复用的问题。无论结果来自完整 scan 流水线还是单独执行某个 scanner，Cyber 都会把主机、端口、应用、URL 和漏洞转换为统一资产节点，供 Web 展示、报告生成、外部查询和后续 Agent 分析共同使用。
@@ -518,37 +424,6 @@ OKF 风格文档用于组织 Agent 的工具知识和最终交付物。工具说
 - 安全报告改为 OKF 风格目录：`index.md` 提供摘要，每个确认漏洞或重要线索写入独立的 `findings/<id>.md`
 - Finding frontmatter 记录 `status`、`severity`、`verified`、`sources` 和 `tags`，确认漏洞优先引用 MITM 请求/响应与实际执行过的 nuclei/neutron PoC
 
-```text
-skills/cyber/
-├── SKILL.md
-├── okf/
-│   ├── index.md
-│   ├── easm/
-│   │   ├── index.md
-│   │   ├── scan.md
-│   │   ├── gogo.md
-│   │   ├── spray.md
-│   │   └── neutron.md
-│   └── runtime/
-│       ├── index.md
-│       ├── tmux.md
-│       ├── proxy.md
-│       ├── mitm.md
-│       └── search.md
-└── reference/
-    └── report.md
-```
-
-生成的报告目录示例：
-
-```text
-report/
-├── index.md
-└── findings/
-    ├── shiro-rce.md
-    └── exposed-credential.md
-```
-
 **外部接入 API**
 
 外部接入 API 面向需要把 cyber 嵌入其他平台、桌面客户端或自动化系统的开发者。实时对话和工具事件使用长连接 Application WebSocket，管理查询使用 ConnectRPC，两者共享 protobuf 类型和 access key，避免第三方系统依赖 Web 页面或解析终端文本。
@@ -556,17 +431,6 @@ report/
 - 实时 Agent 会话统一提供基于 protobuf 的 Application WebSocket，支持 Session/Turn、流式消息、工具调用、文件、PTY、取消与断线续传
 - 会话历史、扫描、配置、Agent、系统状态和 SCO 管理统一提供 ConnectRPC API
 - 新增 protobuf 字段文档、跨语言代码生成说明，以及 ACP client/server、ConnectRPC 和 RMCP 工具节点示例
-
-```bash
-# 启动带内嵌 Agent 的服务
-aiscan-full web --addr 127.0.0.1:8080 --token demo
-
-# Application WebSocket：创建会话、发送消息并消费流式事件
-go run ./examples/acp/client --server http://127.0.0.1:8080 --token demo --node local -p "检查当前可用工具"
-
-# ConnectRPC：查询会话与持久化事件
-go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo
-```
 
 ### Improvements
 
@@ -623,23 +487,11 @@ go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo
 
 - Tavily web search 现在可通过 CLI flag 配置，不再仅限 config 文件和环境变量
 
-```bash
-aiscan agent --tavily-key tvly-xxx -p "search CVE-2024-1234"
-```
-
 ### Improvements
 
 **外部 API 工具错误治理**
 
 未配置 API key 时，`passive`、`web_search`、`search cyberhub` 等工具之前要么不注册（agent 看不到），要么返回模糊错误导致 agent 反复重试。现在统一为：始终注册，缺 key 时返回一次性明确错误，列出所有配置方式（flag / env / config），agent 不会再重复调用。
-
-```
-passive: no recon credentials configured.
-  Set via flags (--fofa-key, --hunter-api-key),
-  env (FOFA_KEY, HUNTER_API_KEY),
-  or config file (recon.fofa_key, recon.hunter_api_key).
-  Do not retry until credentials are provided
-```
 
 **Agent 工具调用准确率提升**
 
@@ -675,32 +527,11 @@ MITM 透明流量拦截（`proxy mitm` 子命令族）；Proton 敏感信息扫�
 - 对齐 neutron CLI 模式：`-l/--list` 多目标输入、`--stats/--silent` 输出控制、`--template-list` 模板列表
 - 支持代理（`WithProxy()`/`SetProxy()`），自动接入 `deps.ScannerProxy`
 
-```bash
-# 扫描目录
-proton -i /path/to/project
-
-# 管道组合 — shell 输出 → proton
-curl http://target/api/config | proton
-cat .env.production | proton
-
-# 管道组合 — proton 输出 → shell
-proton -i . | grep critical
-
-# 指定模板标签
-spray -u http://target | proton --tags spray
-```
-
 **双向管道支持**
 
 - Pseudo-command → Shell：伪命令输出通过 buffer 管道到 `sh -c` 执行的 shell pipeline
 - Shell → Pseudo-command：shell 输出经临时文件通过 `StdinReceiver` 接口传递给伪命令
 - 安全约束：仅支持单管道 `|`，拒绝 `||`、`>`、`&&`、`;` 防止沙箱逃逸
-
-```bash
-# 双向管道示例
-scan -i target -j | head -20       # pseudo → shell
-cat targets.txt | spray -u stdin   # shell → pseudo
-```
 
 **/loop — 循环任务调度（cron 表达式）**
 
@@ -709,25 +540,6 @@ cat targets.txt | spray -u stdin   # shell → pseudo
 - `/loop` REPL 快捷命令直接执行，不经 LLM 中转
 - 内置 cron 解析器，支持 `*`/`*/step`/`range`/`range/step`/`list` 全部语法
 - name 自动生成，无需手动命名
-
-```bash
-# cron 表达式
-/loop */5 * * * * check scan progress         # 每 5 分钟
-/loop 0 */2 * * * review findings             # 每 2 小时
-/loop 30 9 * * 1-5 daily standup check        # 工作日 9:30
-
-# duration 简写
-/loop 30s check status
-/loop 5m monitor targets
-
-# 管理
-/loop list
-/loop stop loop-a1b2c3d4
-
-# agent 通过 bash 调用
-bash(command="loop */5 * * * * check scan progress")
-bash(command="loop list")
-```
 
 **MITM 流量捕获**
 
@@ -740,24 +552,6 @@ bash(command="loop list")
 - `proxy mitm flow <id>`：查看单个 flow 详情
 - `proxy mitm clear`：清空 flow 存储
 - `proxy mitm analyze [--host/--last]`：结构化输出供 AI 分析
-
-```bash
-# 启动 MITM 拦截
-proxy mitm start --addr 127.0.0.1:8888
-
-# 正常执行扫描（流量自动经过 MITM）
-scan -i target
-
-# 查看捕获的流量
-proxy mitm flows --last 20
-proxy mitm flow 42
-
-# AI 分析捕获的请求
-proxy mitm analyze --host target.com
-
-# 停止并恢复
-proxy mitm stop
-```
 
 ### Improvements
 
@@ -782,28 +576,11 @@ proxy mitm stop
 - 向后兼容：单 provider 字段（provider/api_key/model）仍可使用，优先级高于列表
 - 两种格式可混用：单字段 + 列表 = 单字段为主，列表为降级备选
 
-```yaml
-# 新格式 — 多 provider 列表
-llm:
-  providers:
-    - provider: deepseek
-      api_key: sk-...
-      model: deepseek-chat
-    - provider: openai
-      api_key: sk-...
-      model: gpt-4o
-```
-
 ### Refactoring
 
 **配置文件重命名**
 
 - `config.yaml` → `cyber.yaml`，避免与其他项目的通用 config.yaml 冲突
-
-**Scanner 工具基础设施精简**
-
-- **Resources 统一**：4 套独立 config map（gogo/spray/zombie/proton）合并为单一 `configs map[string]map[string][]byte` + `Config(engine, name)` 方法
-- **toolargs 共享工具包**：提取 `ResolveRelativePaths` 和 `NormalizeFlags` 到 `toolargs/`，6 个工具共用（proton/neutron/scan/spray/zombie/katana）
 
 ### Bug Fixes
 
@@ -839,17 +616,6 @@ Session 会话持久化（`--resume`/`--save-session`）；非视觉模型图片
 - `--resume`：恢复最近一次保存的 session
 - `--resume <path>`：从指定 session 文件恢复
 - 反射驱动的 config 生成，自动同步 CLI flag 与配置文件字段
-
-```bash
-# 自动保存对话
-aiscan agent -p "scan target" --save-session
-
-# 恢复最近 session 继续
-aiscan agent --resume -p "now check the results"
-
-# 从指定文件恢复
-aiscan agent --resume .cyber/sessions/2026-06-22_scan.json
-```
 
 **Config 路径 Fallback 链**
 
@@ -901,40 +667,10 @@ aiscan agent --resume .cyber/sessions/2026-06-22_scan.json
 - 从 AgentTool 重构为 bash pseudo-command，统一执行模型
 - 自动注入 `$PATH`，安装后的工具立即可通过 bash 调用
 
-```bash
-# 在 REPL 或 agent 对话中使用（通过 bash pseudo-command）
-
-# 查看所有可用工具及安装状态
-!arsenal list
-
-# 搜索关键词
-!arsenal search subdomain
-
-# 安装工具（自动下载 + 注入 PATH）
-!arsenal install httpx
-!arsenal install nuclei --version v3.3.0
-
-# 安装后立即可用
-!httpx -l targets.txt -silent
-
-# 更新 / 卸载
-!arsenal update httpx
-!arsenal remove nuclei
-
-# 添加第三方仓库
-!arsenal add projectdiscovery/subfinder
-```
-
 **Playwright — `-s` 全局 session flag**
 
 - 所有子命令支持 `-s=<name>` / `-s <name>` 指定目标 session，对齐 playwright-cli 习惯
 - 环境变量 `PLAYWRIGHT_CLI_SESSION=<name>` 设置默认 session
-
-```bash
-# -s flag 替代位置参数指定 session
-playwright -s=mySession click "button"
-playwright -s=s1 goto
-```
 
 **TUI — verbose 渲染重设计**
 
@@ -947,25 +683,6 @@ playwright -s=s1 goto
 - eval 渲染增强（verdict + feedback 结构化展示）
 - result preview 行数限制优化
 - `-vv` 模式禁用输出截断，显示完整 tool result
-
-### Architecture — 代码精简
-
-**命令接口统一**
-
-- Command 执行统一使用 invocation 级输入输出流，避免跨会话共享全局 writer
-- 每次伪命令调用持有独立的输入输出流和执行状态，Registry 不再切换进程级输出对象
-- `FetchTool` wrapper 移除：`fetch` 从 `RegisterTool` 转为直接 `Register` 的 Command
-- `SetExecHooks` 注入 tmux.Manager，打破 commands ↔ output 的循环依赖
-
-**PTY 平台整合**
-
-- 4 个平台特定 PTY 文件（`pty_darwin.go`/`pty_linux.go`/`pty_unix.go`/`pty_other.go`）替换为单一 `go-pty` wrapper
-- `tmux.Manager` 提取 `finishSession()` 去重 supervise 逻辑
-- IOA 函数从 8 个导出简化为 4 个（统一 writer 参数）
-
-**其他精简**
-
-- 删除死代码 `CommandNames()` stub、`captureStdoutForTest`、`canHyperlink`/`hyperlinkSummary`
 
 ### Robustness
 

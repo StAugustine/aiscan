@@ -1,6 +1,6 @@
 # 参考手册
 
-[文档首页](README.md) · 使用：[使用者指南](user/README.md) · 本页用于查询参数，完整操作流程见对应主题。
+[文档首页](README.md) · 使用：[使用者指南](README.md#使用者指南) · 本页用于查询参数，完整操作流程见对应主题。
 
 本文档是 cyber 的完整参考，涵盖命令结构、配置、LLM Provider、各扫描器用法、资源查询和常见问题。
 
@@ -34,30 +34,7 @@ aiscan [全局参数] <subcommand> [子命令参数]
 
 ## 配置
 
-### 配置优先级
-
-```
-CLI 参数 > Cyber/集成环境变量 > 项目配置 > 用户配置 > 协议环境变量 > 编译时默认值
-```
-
-`CYBER_*`、FOFA、Hunter、Tavily 等明确属于 Cyber 的环境变量会覆盖配置文件。`OPENAI_*`、`ANTHROPIC_*` 只用于填补配置文件中的空值。
-
-### 配置文件
-
-```bash
-aiscan init           # 用户配置 ~/.cyber/cyber.yaml；终端中引导配置模型
-aiscan init --project # 当前目录的最小 cyber.yaml，不复制个人凭据
-aiscan config show --sources # 脱敏查看有效配置及来源
-aiscan config validate      # 离线校验
-aiscan doctor --online      # 可选连接检查
-aiscan -c /path/to/cyber.yaml scan -i 192.168.1.0/24   # 指定配置文件
-```
-
-配置属于 **cyber-harness 公共能力**，`aiscan` 与通用 `agent` CLI 共用相同的 `init`、`config`、`doctor` 命令。完整规则见 [配置与初始化](configuration.md)。
-
-自动加载 `~/.cyber/cyber.yaml`，再叠加当前目录的 `cyber.yaml`（不存在时使用 `.cyber/cyber.yaml`）；同名配置项以当前目录为准。不向父目录或可执行文件目录查找配置。显式 `-c` 只加载指定文件，不继承用户配置。
-
-node 模式（`aiscan agent --server-url ...`，自动或 `web` transport）的 LLM 配置由远端 server 下发；node 本地文件、模型参数和环境变量不覆盖它。收到远端配置前不初始化模型，远端未配置模型时不回退到本地模型。
+配置文件发现、优先级、初始化、profile 选择和 Web 保存规则统一见[配置与初始化](configuration.md)。下列结构用于查阅字段；具体发行版只加载其已声明的扩展。
 
 ### 配置文件结构
 
@@ -201,8 +178,9 @@ misc:
 | 参数 | 说明 |
 | --- | --- |
 | `--ioa-url` | IOA server URL |
-| `--ioa-node-id` | 已有 IOA 节点 ID |
-| `--ioa-node-name` | 注册时使用的节点名（默认自动生成） |
+| `--server-token` | 当前 IOA 命令作用域的服务凭据 |
+| `--node-id` | 通用节点 ID |
+| `--node-name` | 通用节点名称，供注册使用 |
 | `--space` | IOA 空间名（默认 `default`） |
 | `--json` | IOA 查询结果以 JSON 输出 |
 
@@ -231,13 +209,9 @@ misc:
 
 除 Anthropic 协议外，其余模型服务统一使用 `openai`，通过 `base_url`、`model` 和 `api_key` 指定实际服务。其他 provider 名称会直接报错。
 
-### 多 LLM Profile 配置
+### 多 LLM Profile 字段
 
-配置文件可通过 `llm.providers` 保存多个 LLM profile，并用 `--profile` 或 `llm.active_profile` 明确选择当前项；未指定时使用列表第一项；显式指定不存在的 ID 会报错。CLI 的 `--model` 等参数仅覆盖对应字段，不丢失所选 profile 的端点和凭据。使用 `config profiles` 查看，使用 `config use <id>` 保存用户级选择，或加 `--project` 保存项目级选择。每个 entry 支持 `id`、`name`、`provider`、`base_url`、`api_key`、`model`、`proxy`、`timeout`、`max_tokens` 和 `context_window`。`model` 必填，保存配置或激活 Profile 时都会拒绝空模型。Web 设置页可以选择当前 profile，REPL 的 `/provider` 只查看 Profile 配置；`/model` 只选择当前会话的模型，不修改 Profile、其他会话或已有子任务。Provider、端点和密钥通过配置文件或 Web 设置修改。
-
-Web 设置页拉取模型列表时使用当前编辑 Profile 的已保存密钥。若端点不提供 `GET /models`（返回 404），页面会保留手动模型输入，不把它显示为连接故障。
-
-Agent 只会重试当前 provider。重试耗尽后直接返回错误，不会自动切换到其他 profile，也不会把同一 turn 发给另一模型。
+`llm.providers` 的每项支持 `id`、`name`、`provider`、`base_url`、`api_key`、`model`、`proxy`、`timeout`、`max_tokens` 和 `context_window`。选择、合并与保存规则见[模型 profiles](configuration.md#模型-profiles)，当前会话模型的操作见[Agent 指南](agent.md#任务推进与控制)。
 
 ### Provider 配置示例
 
@@ -515,71 +489,6 @@ scan:
 
 ---
 
-## 场景选择建议
+## 信号处理
 
-| 场景 | 推荐命令 |
-| --- | --- |
-| 快速资产发现和风险初筛 | `aiscan scan -i <target>` |
-| 完整扫描（含路径爆破） | `aiscan scan -i <target> --mode full` |
-| 搜索已知漏洞情报 | `aiscan scan -i <target> --sniper` |
-| AI 主动验证 + 漏洞搜索 | `aiscan scan -i <target> --verify=on --sniper` |
-| 自动解释结果和生成结论 | `aiscan agent -p "<任务>" -i <target>` |
-| 目标驱动 + 自动评估 | `aiscan agent -e "<标准>" -p "<任务>" -i <target>` |
-| 由 Agent 调用扫描器并分析 | `aiscan --ai -p "<意图>" <scanner> ...` |
-| 查询指纹和 POC | `aiscan cyberhub search --finger <name>` |
-| gogo/spray 原生结果 | `aiscan scan -i <target> -j` |
-| 已保存事件的 Markdown 回放 | `aiscan -F result.jsonl --view-format markdown -f report.md` |
-| 回看历史扫描记录 | `aiscan -F result.jsonl` |
-| 多 worker 协作 | `aiscan ioa serve` + `aiscan agent --ioa-url http://127.0.0.1:8765 --space case-1` |
-| 交互式探索 | `aiscan agent` |
-
----
-
-## 常见问题
-
-### agent 报 provider 未配置
-
-设置对应环境变量或通过 `--api-key` 传入：
-
-```bash
-export CYBER_API_KEY="sk-..."
-aiscan agent -p "检查目标" -i http://target.example
-```
-
-### scan --verify 没有产生 AI 验证
-
-1. 检查是否配置了 LLM provider
-2. 确认发现的风险优先级达到了 `--verify` 阈值
-3. 查看验证错误与原始证据；`auto` 和严重性阈值已移除，明确启用请传 `--verify=on`。
-
-### 输出太多或包含颜色
-
-```bash
-aiscan scan -i 127.0.0.1 --no-color > result.txt # 保存终端文本
-aiscan scan -i 127.0.0.1 --no-color              # 禁用颜色
-```
-
-### 扫描太慢
-
-```bash
-aiscan scan -i 192.168.1.0/24 --ports top3       # 缩小端口范围
-aiscan scan -i 192.168.1.0/24 --thread 500        # 降低并发
-```
-
-### --ai 需要 LLM 但 scan 不需要
-
-单扫描器的顶层 `--ai` 将命令和意图交给 Agent，由模型调用工具并分析，需要配置 LLM。`scan` 核心流水线不依赖 LLM；显式验证级别和 `--sniper` 需要模型，`auto` 的当前限制见[扫描指南](scan.md#ai-增强扫描)。
-
-### cyberhub 没有结果
-
-检查 `--cyberhub-url`/`--cyberhub-key` 是否正确。本地缓存在 `~/.cyber/cache/`（TTL 24h），删除缓存可强制刷新。
-
-### 信号处理
-
-| 操作 | 行为 |
-| --- | --- |
-| 第一次 Ctrl+C | 停止当前任务 |
-| 第二次 Ctrl+C | 取消上下文，退出 |
-| 第三次 Ctrl+C | 强制退出进程 |
-
-连续按键间隔超过 5 秒时计数器重置。
+有可停止的工作时，Ctrl+C 提交停止请求；没有可停止工作时，CLI 提示再次按键退出，随后 5 秒内再次按 Ctrl+C 以退出码 130 结束进程。交互任务控制见[Agent 指南](agent.md#任务推进与控制)，该退出路径不保证业务资源已完成清理。

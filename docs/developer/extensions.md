@@ -10,15 +10,40 @@
 
 描述和 schema 应使模型能判断何时调用、需要提供什么输入；它们不替代业务校验。涉及网络或长时间计算的实现必须响应 context。结果中给模型的文本应足以推进下一步；需要保留完整数据时使用结构化产物，避免把大量原始输出全部塞入对话。
 
+使用 `tool.TextResult` 返回文本，`tool.Result.Details` 返回结构化数据；执行失败返回 Go error。构造参数显式传入工具所需的目录、客户端或业务服务，避免运行时查找全局注册表。
+
 工具可以并行调用，因此共享字段需要自己的同步策略。扩展关闭时，注册表会处理该贡献的撤销与在途调用；工具背后的共享连接、缓存或后台线程仍由它们的所有者关闭。
 
 ## 复用命令能力
 
-当功能本来就是一个带参数的命令，贡献 `tool.Command` 可以复用现有 CLI 知识。Agent 通过 bash 工具调用它，终端路由把已注册命令交给进程内实现，其余命令交给宿主 shell。
+当功能本来就是一个带参数的命令，贡献 `tool.Command` 可以复用现有 CLI 知识。Agent 通过 bash 工具调用它，解释器把已注册命令交给进程内实现，其余命令按调用环境启动外部程序；组合语义见[执行链](../architecture/execution.md#工具与命令的执行链)。
 
 这种接入适合扫描器、查询和格式校验。它不需要额外生成同名可执行文件，也不必为每个 flag 再定义一个模型工具。若应用需要专门的结构化交互，再增加 Tool 表面，并让两种入口调用同一业务实现。
 
 [OKF 扩展](../../exts/okf/extension.go)是一个小而完整的参考：Load 同时贡献命令、说明文档与提示词策略。阅读它时，可以沿着 `tools/okf` 的命令实现确认业务逻辑并没有依赖 Scope。
+
+## 子 Agent 贡献
+
+子任务定义使用 `agent/subagent.Subagent`，在组合根按依赖顺序安装：
+
+```go
+subagentext.New()       // 定义唯一的 Subagent 贡献点和执行接口
+scannerext.New(...)    // 可选，贡献 verify / sniper
+sessionext.New(...)    // 需要会话时安装
+subagentext.NewTools() // 借用贡献点和 Runtime，提供模型调用工具
+```
+
+上面的包别名对应 `exts/subagent`、`exts/scanner` 和 `exts/session`。直接同步执行扫描子任务不需要 Session 或 NewTools；普通 Session 也可以不安装子 Agent。扩展通过 Scope 贡献定义：
+
+```go
+extension.Add(scope, subagent.Subagent{
+    Name: "verify", Description: "Verify a finding",
+    DefaultMode: subagent.Sync,
+    Prepare: prepareVerify,
+})
+```
+
+`Prepare` 返回本次配置快照与非空任务文本，不执行任务或创建需要另行关闭的资源；匿名调用跳过名称解析和 Prepare。消费者借用 `Executor`，同步 Execute 使用 `agent.RunTask`，会话工具使用 Start 接入 Session。运行时 Add 返回的 Handle 由贡献者关闭；重复名称拒绝，撤销隐藏定义、取消任务并排空准备、执行及通知，之后才允许同名注册。接口见 [agent/subagent](../../agent/subagent)，状态与租约见[运行机制](../architecture/runtime.md#subagent-委派)，模型调用方式见[子 Agent 使用说明](../user/web.md#子-agent)。
 
 ## 知识与提示词
 

@@ -1,6 +1,6 @@
 # 快速上手
 
-[使用者指南](user/README.md) · 前置：[基本概念](concepts.md) · 下一篇：[Agent](agent.md)
+[使用者指南](README.md#使用者指南) · 前置：[基本概念](concepts.md) · 下一篇：[Agent](agent.md)
 
 目标是完成一次可观察、可保存的运行。先验证本地 Agent，再按需进入扫描和 Web。扫描示例只用于你有权测试的本地靶场。
 
@@ -33,7 +33,7 @@ make
 # 可选：make agent / make full
 ```
 
-`make full` 还需要 Node.js/npm，先构建前端再嵌入；standard 与 full 均使用 CGO_ENABLED=0，原生录屏构建才需要 CGO 工具链。构建标签统一由 [editions.env](../editions.env) 管理；模板资源的内嵌策略见 [Makefile](../Makefile)，不要把“单二进制”理解为所有模型、浏览器和资源都无需外部依赖。
+`make` 默认构建标准发行版，无需前端。`make full` 与 `make web-build` 需要 Node.js/npm（CI 使用 Node.js 22）；先执行 `npm --prefix web/frontend ci` 安装依赖，再构建。`make agent` 与 `make audit` 无需前端。产物位于 `bin/`，Windows 下追加 `.exe`；这些目标使用 `CGO_ENABLED=0`，原生录屏构建才需要 CGO 工具链。完整构建入口和[自定义最小应用](../README_CN.md#自定义最小应用)见 [README](../README_CN.md#构建与嵌入)。构建标签由 [editions.env](../editions.env) 管理，资源内嵌策略见 [Makefile](../Makefile)。
 
 ## 2. 配置模型
 
@@ -70,7 +70,7 @@ PowerShell：
 $env:CYBER_API_KEY = "你的密钥"
 ```
 
-OpenAI-compatible 服务使用 `provider: openai`；Anthropic-compatible 服务使用 `anthropic` 和对应凭据。配置文件与环境变量的优先级见 [参考手册](reference.md#配置优先级)。
+OpenAI-compatible 服务使用 `provider: openai`；Anthropic-compatible 服务使用 `anthropic` 和对应凭据。配置文件与环境变量的优先级见 [参考手册](configuration.md#文件与优先级)。
 
 ## 3. 完成一个本地任务
 

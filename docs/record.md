@@ -56,35 +56,12 @@ general-purpose FFmpeg build.
 
 ## Build tags and CGO
 
-Editions are defined by tags, not by which files happen to be imported. Three
-editions exist; the build manifest also records the release default for CGO:
-
-| Edition | Tags | Release CGO_ENABLED |
-| --- | --- | --- |
-| standard | `forceposix emptytemplates noembed osusergo netgo` | `0` |
-| full | standard + `full sqlite` | `0` |
-| record | full + `record` | `1` |
-
-`editions.env` at the repository root is the source of truth for this table:
-the Makefile includes it, the workflows append it to `$GITHUB_ENV`, and
-`TestBuildManifestIsConsistent` and the manifest tag tests in `cmd/aiscan` fail
-when a set here drifts from the file. It is a data file, not a shell script —
-the values hold spaces, so sourcing it would truncate every one of them.
-
-- **CSTX** normalization runs in the browser through `@cyber/cstx` and its
-  version-matched WASM ABI. `exts/cstx` remains available as an uncomposed
-  native extension, but no aiscan edition imports or starts it.
-- **`record`** composes `exts/record`. That Extension owns its native
-  runtime and contributes the record Tool through the typed resource scope.
-- **RE2** uses the dependency's pure-Go backend. The same standard or full
-  source tree builds and works with `CGO_ENABLED=0` or `CGO_ENABLED=1`; enabling
-  cgo no longer selects a different RE2 implementation.
-- `sqlite` is a dependency-supplied tag; the sqlite driver itself is pure Go.
-
-CI checks that the aiscan dependency graph does not reach `libcstx` and compiles
-the full edition with both cgo settings. Official standard and full releases use
-`CGO_ENABLED=0` so they require no C toolchain. Record is the only edition whose
-feature set requires `CGO_ENABLED=1`.
+The record build adds the `record` tag to the full feature set and requires
+`CGO_ENABLED=1`. It composes `exts/record`, which owns the native runtime and
+registers the capture Tool. Build tags and the CGO setting come from
+[editions.env](../editions.env); use `make record` to apply the complete set.
+Other distribution builds and custom minimal entry points are documented in
+the [build guide](../README.md#build-and-embed).
 
 ## Native SDKs
 
@@ -123,21 +100,27 @@ link the MSVC-incompatible static archive.
 `RECORD_ARCH` picks the SDK architecture, `CYBER_RECORD_PREFIX` overrides the
 cache directory, and `CYBER_NATIVE_URL` points downloads at a mirror.
 
-### Publishing
-
-The SDK is built and published by `chainreactors/native`'s
-`record-native-sdk.yml` workflow. It runs on a matching native runner and
-publishes with that repository's own `GITHUB_TOKEN`, so no cross-repository
-credential is involved on this side.
-
-The recorder build verifies an exact FFmpeg component allowlist, and packaging
-rejects static libraries above a 16 MiB budget unless `CYBER_RECORD_MAX_LIB_BYTES`
-explicitly overrides it. This prevents an FFmpeg upgrade or configure change from
-silently restoring all default codecs and adding tens of megabytes to
-record-enabled binaries.
+## Validation
 
 Native smoke tests are opt-in because they require an interactive desktop/X11 session:
 
 ```bash
 go test -tags "record record_integration" ./exts/record
 ```
+
+## WebUI results
+
+The conversation displays `record` tool results: screenshot previews with an
+original-image download, completed MP4 playback/download, recording status,
+and capture errors. History replay uses the same typed AOP results. The WebUI
+does not add capture controls.
+
+URI resources are served through
+`GET /api/sessions/{sessionID}/media/{eventID}/{outputIndex}`. The server resolves
+the persisted result and its assigned node, then reads the resource using
+bounded `aop.file` requests. HTTP Range supports video seeking; `?download=1`
+downloads the original file. Remote files require the assigned node to remain
+connected.
+
+Frontend setup, record/media browser checks and related Go transport checks are
+documented in the [Web frontend test guide](../web/frontend/e2e/README.md).

@@ -1,29 +1,47 @@
 # cyber-harness 文档
 
-cyber-harness 将模型、工具和运行环境组合为可以持续执行任务的 Agent。`aiscan` 是它的安全领域发行版，可以直接使用；开发者也可以复用框架，构建自己的应用。
+cyber-harness 将模型、工具和运行环境组合为可以持续执行任务的 Agent。`cyber-scan` 提供扫描能力，`cyber-audit` 提供审计能力，`cyber-web` 管理执行节点与会话；开发者可以选择所需扩展构建自己的应用。
 
-## 基本概念
-
-[基本概念](concepts.md)介绍 harness 的定位，以及模型、工具、会话、知识和扩展之间的关系。它是使用者与开发者的共同起点，不要求先了解 Go 或内部实现。
+本目录描述当前实现，按使用方法、集成契约和机制组织。每项行为由一个主章节维护，其他页面按需要链接。
 
 ## 使用者指南
 
-[使用者指南](user/README.md)介绍 aiscan 的日常使用。从安装与模型配置开始，逐步进入 Agent、会话、工具与知识、安全扫描，以及 Web 和协作。正文解释各项能力的行为，完整参数单独放在参考页。
+从[基本概念](concepts.md)了解模型、工具、会话和发行版的关系，再按任务进入相应指南：
 
-首次使用可以直接进入[快速开始](getting-started.md)。已经运行过 aiscan 的读者可以从 [Agent](agent.md)或[会话与上下文](user/sessions.md)继续。
+| 需要做什么 | 指南 |
+| --- | --- |
+| 安装并完成第一次运行 | [快速开始](getting-started.md) |
+| 初始化模型、项目配置和协作连接 | [配置与初始化](configuration.md) |
+| 提交任务、控制运行与评估结果 | [Agent](agent.md) |
+| 连续对话、压缩、记录和恢复 | [会话与上下文](user/sessions.md) |
+| 文件、命令、后台任务、代理与审批 | [工具](user/tools.md) |
+| 选择与编写 Skill | [Skills 与知识](user/knowledge.md) |
+| 执行扫描或审计 | [安全扫描](scan.md) · [cyber-audit](../audit/README.md) |
+| Web、执行节点、子 Agent 与 IOA 通信 | [Web 与协作](user/web.md) |
 
 ## 开发者指南
 
-[开发者指南](development.md)面向基于 harness 构建应用的开发者。从一个可运行的 Go 组合开始，介绍扩展、工具、配置、知识、会话与宿主集成，再进入构建和分发。无需先阅读所有内部架构文档。
+[开发者指南](development.md)从可运行的 Go 工具组合推进到会话应用；[扩展开发](developer/extensions.md)说明工具、命令、知识与共享服务的贡献方式；[宿主集成](developer/hosting.md)说明生命周期及终端、Web、协议和协作接入。
+
+构建入口、产物和依赖见[源码构建](../README_CN.md#构建与嵌入)，选择所需能力见[自定义最小应用](../README_CN.md#自定义最小应用)。非 Go 客户端见[第三方语言集成](integration.md)，字段与错误语义见[API 参考](api.md)。
 
 ## 架构
 
-[架构概览](architecture.md)解释系统如何组合和运行。随后按扩展装配、Agent 运行时、执行环境、上下文和数据流深入，说明各层的状态归属与生命周期。它为实现和修改提供依据，也为使用指南中的行为提供内部解释。
+[架构概览](architecture.md)介绍系统结构。各机制的主章节如下：
 
-## 参考与维护
+| 机制 | 主章节 |
+| --- | --- |
+| Extension、资源贡献与借用、回滚和关闭 | [扩展装配](architecture/composition.md) |
+| Agent 循环、Session、Inbox、子任务与取消 | [运行时](architecture/runtime.md) |
+| Tool、Command、进程、出口与工具准入 | [执行环境](architecture/execution.md) |
+| Provider、Prompt、Skills、压缩与预算 | [上下文与知识](architecture/context.md) |
+| AOP 事件、记录、Artifact 与资产投影 | [事件与数据](architecture/data.md) |
+| 宿主连接、namespace 与 Web 能力挂载 | [宿主集成](developer/hosting.md) |
 
-[配置与命令](reference.md)、[外部 API](api.md)及其[生成式字段参考](api/README.md)用于查阅；[协议架构](protocol-architecture.md)、[IOA](ioa.md)和[原生录屏](record.md)提供专题细节。
+## 构建、参考与维护
 
-正文描述当前源码。使用 release 时选择对应 Git tag；升级时阅读 [v1 迁移](v1.0.0.md)与 [Changelog](changelog.md)。[Composition RFC](rfc-composition.md)保留设计历史，不作为当前开发教程。
+[内嵌 Arsenal 工具](arsenal-bundles.md)说明工具包的构建、离线释放和更新；[原生录屏](record.md)说明平台依赖与捕获。参数、默认值和环境变量见[参考手册](reference.md)，protobuf 字段文档可按[接入教程](integration.md#23-生成字段文档)生成。
+
+测试说明分别见[仓库 harness](../cmd/harness/README.md)、[Web 前端](../web/frontend/e2e/README.md)和[审计测试](../audit/tests/README.md)。升级时阅读 [Changelog](changelog.md)；已发布版本的行为以对应 Git tag 为准。
 
 文档正文以中文维护，[项目 README](../README.md)提供英文入口。参与维护请阅读[文档写作与验证](maintaining-docs.md)。

@@ -1,6 +1,6 @@
 # Agent 使用指南
 
-[使用者指南](user/README.md) · 前一篇：[快速开始](getting-started.md) · 下一篇：[会话与上下文](user/sessions.md)
+[使用者指南](README.md#使用者指南) · 前一篇：[快速开始](getting-started.md) · 下一篇：[会话与上下文](user/sessions.md)
 
 Agent 接受任务，向模型提供当前上下文与工具，然后根据模型的选择执行、读取结果并继续。这使它能处理事先无法写成固定步骤的工作。一次任务可能包含多次模型请求和工具调用，最后一段回答只是这个过程的结果。
 

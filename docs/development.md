@@ -62,7 +62,7 @@ runtime, err := h.Runtime()
 
 aiscan 的完整安全工具组合由 [cmd/aiscan](../cmd/aiscan/profile.go) 内部构造，不再提供独立的公开发行版构造包。嵌入方可使用 [pkg/harness](../pkg/harness) 构造通用宿主，或从 `harness.BaseExtensions` 取得基础扩展后显式组合自己的能力；这不等价于完整 aiscan 发行版。产品入口先完成配置声明与解析，再构造运行时。最小 Agent 宿主的完整实现可读 [cmd/agent](../cmd/agent)。
 
-构建源码发行版时，`make agent` 生成最小本地 Agent，`make` 生成标准版，`make full` 生成包含前端的完整版。标签来自 [editions.env](../editions.env)，实际步骤来自 [Makefile](../Makefile)。full 需要前端工具链；standard 与 full 均使用 CGO_ENABLED=0。原生录屏需要 CGO 工具链，另见 [record](record.md)。
+构建源码发行版时，`make agent` 生成最小本地 Agent，`make` / `make scan` 生成含前端与完整扫描能力的 `cyber-scan`，`make web-build` 生成 Web Hub，`make audit` 构建独立审计模块。前端目标需先安装 Node.js/npm 并执行 `npm --prefix web/frontend ci`；上述目标均使用 `CGO_ENABLED=0`。各入口、产物和依赖见 [README 构建说明](../README_CN.md#构建源码发行版)，复制示例并选择扩展见[自定义最小应用](../README_CN.md#自定义最小应用)。标签来自 [editions.env](../editions.env)，实际步骤来自 [Makefile](../Makefile)。原生录屏需要 CGO 工具链，另见 [record](record.md)。
 
 自定义应用应明确分发哪些模型配置、知识文件和外部运行依赖。二进制中注册了浏览器或外部命令入口，并不意味着目标机器已经安装对应程序。固定源码版本后验证实际部署平台上的启动、一个完整任务和关闭；按 AGPL-3.0 的要求处理分发与源代码提供。
 
