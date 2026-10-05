@@ -144,36 +144,68 @@ go build -trimpath -buildvcs=false -ldflags "-s -w" -o bin/agent.exe ./cmd/agent
 
 ### 自定义最小应用
 
-通过自己的 Go 入口选择能力。可以从完整的[工具宿主示例](examples/custom/main.go)开始；它注册并调用一个 `hello` 工具，无需模型：
+最小工具宿主，无需模型。保存为 `cmd/my-agent/main.go`：
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/chainreactors/cyber/agent/provider"
+    "github.com/chainreactors/cyber/core/tool"
+    "github.com/chainreactors/cyber/pkg/harness"
+)
+
+func main() {
+    dir, err := os.Getwd()
+    check(err)
+    ctx := context.Background()
+    app, err := harness.New(harness.Config{Base: harness.BaseConfig{
+        Directory: dir,
+        Provider: provider.StartupConfig{Mode: provider.StartupDisabled},
+    }})
+    check(err)
+    defer func() { check(app.Close(ctx)) }()
+    check(app.Load(ctx))
+
+    bash, err := app.Bash()
+    check(err)
+    result, err := bash.Execute(ctx, `{"command":"echo Hello, Cyber!"}`)
+    check(err)
+    fmt.Println(tool.ResultText(result))
+}
+
+func check(err error) {
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+在仓库根目录编译并运行：
 
 ```sh
-mkdir -p cmd/my-agent
-cp examples/custom/main.go cmd/my-agent/main.go
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o bin/my-agent ./cmd/my-agent
+CGO_ENABLED=0 go build -o bin/my-agent ./cmd/my-agent
 ./bin/my-agent
 # Hello, Cyber!
 ```
 
-PowerShell 下使用 `New-Item -ItemType Directory -Force cmd/my-agent` 和 `Copy-Item examples/custom/main.go cmd/my-agent/main.go`，设置 `$env:CGO_ENABLED = "0"`，再执行相同的 `go build` 命令，将输出改为 `-o bin/my-agent.exe`。
+PowerShell:
 
-将 `helloTool` 替换为业务工具，使用 `extension.Add[coretool.Tool]` 注册。示例先调用 `harness.BaseExtensions(harness.BaseConfig{...})`，再按依赖顺序追加工具扩展与消费者，最后创建 `extension.Set`。宿主在使用能力前调用 `Load`，即使加载失败也调用 `Close`。基础能力包括文件、终端、Skills、提示词、guardrail 和 Provider 状态；可选的产品扩展由入口的 import 与装配代码决定。
-
-需要模型对话时，从 [examples/session/main.go](examples/session/main.go) 开始。它使用 `harness.New(harness.Config{Base: ..., Extensions: ..., Session: ...})`：`Session` 留空时是工具宿主，提供 `Session` 时增加 Agent 循环与会话运行时。接入真实模型时，移除注册 `demoProvider` 的扩展，将 `Base.Provider.Mode` 改为 `provider.StartupRequired`，并在 `Base.Provider.Config` 中提供 `Provider`、`BaseURL`、`Model` 和 `APIKey`。[CLI 扩展组合](cmd/agent/profile.go)展示了如何从公共配置取得这些值。需要保留 CLI 与配置命令时，以 [cmd/agent](cmd/agent) 为入口模板。
-
-Go 按入口的导入依赖图链接代码。只导入需要的扩展包；关闭运行时选项不会移除已导入的依赖。`full` 标签启用使用该标签的包内能力，不能逐个选择扩展。自定义入口默认可用 `CGO_ENABLED=0` 构建，选用原生扩展时按其要求启用 CGO。工具注册与会话嵌入详见[开发者指南](docs/development.md)。
-
-### 内嵌资源与外部工具
-
-扫描资源与外部工具可执行文件使用独立开关：
-
-```sh
-make standard EMBED=1                  # 生成并嵌入扫描资源
-make standard ARSENAL_EMBED=1          # 下载并嵌入所选工具可执行文件
-make standard EMBED=1 ARSENAL_EMBED=1   # 同时内嵌两类资源
-make audit ARSENAL_EMBED=1         # 内嵌审计工具包
+```powershell
+$env:CGO_ENABLED = "0"
+go build -o bin/my-agent.exe ./cmd/my-agent
+.\bin\my-agent.exe
 ```
 
-工具定义与默认版本统一维护在 [arsenal.yaml](tools/arsenal/arsenal.yaml)，发行版分别通过 [cmd/aiscan/bundle.yaml](cmd/aiscan/bundle.yaml) 和 [audit/cmd/cyber-audit/bundle.yaml](audit/cmd/cyber-audit/bundle.yaml)选择工具名称；可用 `ARSENAL_CONFIG` 或 `AUDIT_ARSENAL_CONFIG` 覆盖清单。内嵌工具在启动时自动释放，释放过程无需联网。最小 `agent` 不包含 Arsenal 扩展。交叉编译、离线分发与工具升级见[内嵌 Arsenal 工具](docs/arsenal-bundles.md)。
+扩展用法：[注册工具](docs/developer/extensions.md) · [接入模型与会话](docs/developer/hosting.md#嵌入一个会话) · [保留 CLI](cmd/agent)。
+
+### 高级构建
+
+[资源内嵌开关](Makefile) · [外部工具与离线分发](docs/arsenal-bundles.md) · [原生录屏](docs/record.md)。
 
 ## 贡献
 

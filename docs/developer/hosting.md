@@ -1,6 +1,6 @@
 # 会话与宿主集成
 
-[开发者指南](../development.md) · 前一篇：[扩展开发](extensions.md) · 深入：[Agent 运行时](../architecture/runtime.md)
+[开发者指南](../development.md) · 前一篇：[扩展开发](extensions.md) · 深入：[Agent 运行时](../architecture.md#agent-运行时)
 
 宿主把使用者输入交给会话，并把运行结果呈现给使用者。它可以是终端、Web 服务或你的 Go 应用。无论界面形式如何，都需要明确持有应用生命周期、会话身份、请求取消和事件订阅。
 
@@ -30,7 +30,7 @@ result, err := turn.Wait()
 
 演示程序将启动 Provider 设为 Disabled，再通过扩展借用 `*provider.State`，调用其 `Set` 注入本地实现。实际应用通常在 `harness.BaseConfig.Provider` 中选择 `StartupRequired`，提供 `ProviderConfig` 的协议、端点、密钥和模型；删除演示 Provider 的注入，让基础扩展完成初始化。
 
-也可以实现 `provider.Provider` 接入自己的后端；支持流式返回时再实现 `StreamingProvider`。框架上层使用统一的 AOP 消息，供应商的 wire format 留在适配器中。模型配置与重试语义见[上下文与知识](../architecture/context.md#provider-选择与容错)。
+也可以实现 `provider.Provider` 接入自己的后端；支持流式返回时再实现 `StreamingProvider`。框架上层使用统一的 AOP 消息，供应商的 wire format 留在适配器中。模型配置与重试语义见[上下文与知识](../architecture.md#provider-选择与容错)。
 
 ## 结果、事件与取消
 
@@ -46,7 +46,7 @@ Wait 返回最终结果与错误，结果还包含 Stop、用量和消息。自�
 
 打开多个会话不需要重新加载同一套扩展。会话拥有对话和运行状态，工具环境可能由多个会话共享；并行会话写同一个文件或控制同一个浏览器时，隔离和冲突策略由应用决定。
 
-对话结束时用 Runtime.CloseSession 释放会话；应用退出时关闭整个 Set，取消剩余工作并释放底层资源。需要重启后续接任务，应保存事件或历史，再重建会话；这不会恢复操作系统进程和已有网络连接。持久化边界见[事件与数据](../architecture/data.md)。
+对话结束时用 Runtime.CloseSession 释放会话；应用退出时关闭整个 Set，取消剩余工作并释放底层资源。需要重启后续接任务，应保存事件或历史，再重建会话；这不会恢复操作系统进程和已有网络连接。持久化边界见[事件与数据](../architecture.md#事件与数据)。
 
 ## 跨进程宿主
 

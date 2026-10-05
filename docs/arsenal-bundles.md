@@ -92,7 +92,7 @@ if err != nil {
 // 将 arsenalExtension 加入应用的 Extension 列表。
 ```
 
-这里的 `arsenalext` 是 `github.com/chainreactors/cyber/exts/arsenal` 的导入别名，`directory` 必须为绝对路径。构造时只读取目录、配置和安装状态；扩展 Load 时才调用 `Manager.Prepare` 释放内嵌工具并注册命令，释放不访问网络。加载与关闭规则见[扩展装配](architecture/composition.md)。
+这里的 `arsenalext` 是 `github.com/chainreactors/cyber/exts/arsenal` 的导入别名，`directory` 必须为绝对路径。构造时只读取目录、配置和安装状态；扩展 Load 时才调用 `Manager.Prepare` 释放内嵌工具并注册命令，释放不访问网络。加载与关闭规则见[扩展装配](architecture.md#扩展装配与生命周期)。
 
 扩展通过 `tools/arsenal.NewManager` 合并 harness 工具目录与传入定义，同名定义由传入值覆盖。启动预检需要同一 Manager 时，先创建并检查 Manager，再用 `&arsenalext.Extension{Manager: manager}` 安装扩展，避免维护两份安装状态。实现见[Arsenal 扩展](../exts/arsenal/extension.go)和[Manager 构造入口](../tools/arsenal/manager.go)。
 

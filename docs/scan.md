@@ -92,7 +92,7 @@ aiscan -F lab-scan.jsonl
 aiscan -F lab-scan.jsonl --view-format markdown -f lab-scan.md
 ```
 
-`-f` 是回放的渲染文件。当前 scan 参数解析器没有 `--report`，需要 Markdown 时使用上述回放渲染入口；得到的是事件记录的可读版本，不是额外一次模型审计报告。事件、原生产物与 Web 资产的关系见[事件与数据](architecture/data.md)。
+`-f` 是回放的渲染文件。当前 scan 参数解析器没有 `--report`，需要 Markdown 时使用上述回放渲染入口；得到的是事件记录的可读版本，不是额外一次模型审计报告。事件、原生产物与 Web 资产的关系见[事件与数据](architecture.md#事件与数据)。
 
 ## 与 Agent 配合
 

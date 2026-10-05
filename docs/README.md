@@ -1,6 +1,6 @@
 # cyber-harness 文档
 
-cyber-harness 将模型、工具和运行环境组合为可以持续执行任务的 Agent。`cyber-scan` 提供扫描能力，`cyber-audit` 提供审计能力，`cyber-web` 管理执行节点与会话；开发者可以选择所需扩展构建自己的应用。
+cyber-harness 将模型、工具和运行环境组合为可以持续执行任务的 Agent。`aiscan` 提供扫描能力，`cyber-audit` 提供审计能力，完整发行版和独立 Web Hub 管理执行节点与会话；开发者可以选择所需扩展构建自己的应用。
 
 本目录描述当前实现，按使用方法、集成契约和机制组织。每项行为由一个主章节维护，其他页面按需要链接。
 
@@ -27,15 +27,16 @@ cyber-harness 将模型、工具和运行环境组合为可以持续执行任务
 
 ## 架构
 
-[架构概览](architecture.md)介绍系统结构。各机制的主章节如下：
+[架构](architecture.md)沿应用结构介绍内部机制，各章节可直接索引：
 
 | 机制 | 主章节 |
 | --- | --- |
-| Extension、资源贡献与借用、回滚和关闭 | [扩展装配](architecture/composition.md) |
-| Agent 循环、Session、Inbox、子任务与取消 | [运行时](architecture/runtime.md) |
-| Tool、Command、进程、出口与工具准入 | [执行环境](architecture/execution.md) |
-| Provider、Prompt、Skills、压缩与预算 | [上下文与知识](architecture/context.md) |
-| AOP 事件、记录、Artifact 与资产投影 | [事件与数据](architecture/data.md) |
+| Extension、资源贡献与借用、回滚和关闭 | [扩展装配](architecture.md#扩展装配与生命周期) |
+| Agent 循环、Session、Inbox、子任务与取消 | [运行时](architecture.md#agent-运行时) |
+| JEV 学习、编译、验证、复用与交接 | [JEV 与 Reflex](architecture.md#jev-与-reflex) |
+| Tool、Command、进程、出口与工具准入 | [执行环境](architecture.md#执行环境) |
+| Provider、Prompt、Skills、压缩与预算 | [上下文与知识](architecture.md#上下文与知识) |
+| AOP 事件、记录、Artifact 与资产投影 | [事件与数据](architecture.md#事件与数据) |
 | 宿主连接、namespace 与 Web 能力挂载 | [宿主集成](developer/hosting.md) |
 
 ## 构建、参考与维护

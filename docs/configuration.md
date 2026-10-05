@@ -114,8 +114,8 @@ extensions:
 `jev.learning` 可选 `auto`（学习及持续编译）或 `frozen`（只复用已有合格 Reflex）。
 `jev.compilation_timeout` 默认 `0`，后台编译不设总时间限制；可显式设置正 duration。
 每次 JEV 请求仍受 `timeout` 限制。编译失败返回具体诊断继续修复；取消或服务不可用
-保留候选，真实证据不足等待新的任务证据。验证范围与实测限制见
-[JEV / Reflex 验证说明](jev-reflex-v2-20261005.md)。
+保留候选，真实证据不足等待新的任务证据。验证流程与复用边界见
+[JEV / Reflex 机制](architecture.md#jev-与-reflex)。
 
 ## 工具审批配置
 

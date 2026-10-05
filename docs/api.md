@@ -1,6 +1,6 @@
 # cyber 外部接入 API
 
-[文档首页](README.md) · 教程：[外部接入](integration.md) · 架构：[协议与数据](architecture/data.md#协议类型的归属)
+[文档首页](README.md) · 教程：[外部接入](integration.md) · 架构：[协议与数据](architecture.md#协议类型的归属)
 
 本文档描述外部程序集成 cyber 时使用的两组 API。
 

@@ -144,36 +144,68 @@ go build -trimpath -buildvcs=false -ldflags "-s -w" -o bin/agent.exe ./cmd/agent
 
 ### Customize a minimal application
 
-Select capabilities in your own Go entry point. Start with the complete [tool-host example](examples/custom/main.go), which registers and calls a `hello` tool without a model:
+A minimal tool host, without a model. Save as `cmd/my-agent/main.go`:
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/chainreactors/cyber/agent/provider"
+    "github.com/chainreactors/cyber/core/tool"
+    "github.com/chainreactors/cyber/pkg/harness"
+)
+
+func main() {
+    dir, err := os.Getwd()
+    check(err)
+    ctx := context.Background()
+    app, err := harness.New(harness.Config{Base: harness.BaseConfig{
+        Directory: dir,
+        Provider: provider.StartupConfig{Mode: provider.StartupDisabled},
+    }})
+    check(err)
+    defer func() { check(app.Close(ctx)) }()
+    check(app.Load(ctx))
+
+    bash, err := app.Bash()
+    check(err)
+    result, err := bash.Execute(ctx, `{"command":"echo Hello, Cyber!"}`)
+    check(err)
+    fmt.Println(tool.ResultText(result))
+}
+
+func check(err error) {
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+Build and run from the repository root:
 
 ```sh
-mkdir -p cmd/my-agent
-cp examples/custom/main.go cmd/my-agent/main.go
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags "-s -w" -o bin/my-agent ./cmd/my-agent
+CGO_ENABLED=0 go build -o bin/my-agent ./cmd/my-agent
 ./bin/my-agent
 # Hello, Cyber!
 ```
 
-In PowerShell, use `New-Item -ItemType Directory -Force cmd/my-agent` and `Copy-Item examples/custom/main.go cmd/my-agent/main.go`, set `$env:CGO_ENABLED = "0"`, then run the same `go build` command with `-o bin/my-agent.exe`.
+PowerShell:
 
-Replace `helloTool` with your tool and register it using `extension.Add[coretool.Tool]`. The example calls `harness.BaseExtensions(harness.BaseConfig{...})`, appends the tool extension and its consumer in dependency order, then creates an `extension.Set`. The host calls `Load` before using capabilities and `Close` even if loading fails. Base capabilities include files, terminal, Skills, prompts, guardrail and provider state; optional product extensions are selected by your imports and composition code.
-
-For model conversations, start from [examples/session/main.go](examples/session/main.go). It uses `harness.New(harness.Config{Base: ..., Extensions: ..., Session: ...})`: leaving `Session` nil creates a tool host; providing it adds the Agent loop and session runtime. For a real model, remove the extension that registers `demoProvider` and set `Base.Provider.Mode` to `provider.StartupRequired`, with your `Provider`, `BaseURL`, `Model` and `APIKey` in `Base.Provider.Config`. The [CLI composition](cmd/agent/profile.go) shows how to populate these settings from shared configuration. To retain the CLI and configuration commands, use [cmd/agent](cmd/agent) as the entry-point template.
-
-Go links the dependencies reached from your entry point. Add only the extension packages you need; disabling a runtime option does not remove its imported dependencies. The `full` tag enables capabilities in packages that use it; it does not select individual extensions. Build the custom entry point with `CGO_ENABLED=0` unless a selected extension requires CGO. See the [developer guide](docs/development.md) for tool registration and embedded sessions.
-
-### Embed resources and external tools
-
-Scanner resources and external tool executables have separate switches:
-
-```sh
-make standard EMBED=1                  # Generate and embed scanner resources
-make standard ARSENAL_EMBED=1          # Download and embed selected tool executables
-make standard EMBED=1 ARSENAL_EMBED=1   # Include both
-make audit ARSENAL_EMBED=1         # Embed the audit tool bundle
+```powershell
+$env:CGO_ENABLED = "0"
+go build -o bin/my-agent.exe ./cmd/my-agent
+.\bin\my-agent.exe
 ```
 
-Arsenal maintains tool definitions and default versions in [arsenal.yaml](tools/arsenal/arsenal.yaml). Each distribution selects names in [cmd/aiscan/bundle.yaml](cmd/aiscan/bundle.yaml) or [audit/cmd/cyber-audit/bundle.yaml](audit/cmd/cyber-audit/bundle.yaml); override them with `ARSENAL_CONFIG` or `AUDIT_ARSENAL_CONFIG`. Embedded tools are extracted at startup without network access. The minimal `agent` has no Arsenal extension. See [Arsenal bundles](docs/arsenal-bundles.md) for cross compilation, offline distribution and tool upgrades.
+Extend it: [register tools](docs/developer/extensions.md) · [add a model and session](docs/developer/hosting.md#嵌入一个会话) · [retain the CLI](cmd/agent).
+
+### Advanced builds
+
+[Resource embedding switches](Makefile) · [External tools and offline distribution](docs/arsenal-bundles.md) · [Native recording](docs/record.md).
 
 ## Contributing
 

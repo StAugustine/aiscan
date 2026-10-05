@@ -16,7 +16,7 @@
 
 ## 复用命令能力
 
-当功能本来就是一个带参数的命令，贡献 `tool.Command` 可以复用现有 CLI 知识。Agent 通过 bash 工具调用它，解释器把已注册命令交给进程内实现，其余命令按调用环境启动外部程序；组合语义见[执行链](../architecture/execution.md#工具与命令的执行链)。
+当功能本来就是一个带参数的命令，贡献 `tool.Command` 可以复用现有 CLI 知识。Agent 通过 bash 工具调用它，解释器把已注册命令交给进程内实现，其余命令按调用环境启动外部程序；组合语义见[执行链](../architecture.md#工具与命令的执行链)。
 
 这种接入适合扫描器、查询和格式校验。它不需要额外生成同名可执行文件，也不必为每个 flag 再定义一个模型工具。若应用需要专门的结构化交互，再增加 Tool 表面，并让两种入口调用同一业务实现。
 
@@ -43,7 +43,7 @@ extension.Add(scope, subagent.Subagent{
 })
 ```
 
-`Prepare` 返回本次配置快照与非空任务文本，不执行任务或创建需要另行关闭的资源；匿名调用跳过名称解析和 Prepare。消费者借用 `Executor`，同步 Execute 使用 `agent.RunTask`，会话工具使用 Start 接入 Session。运行时 Add 返回的 Handle 由贡献者关闭；重复名称拒绝，撤销隐藏定义、取消任务并排空准备、执行及通知，之后才允许同名注册。接口见 [agent/subagent](../../agent/subagent)，状态与租约见[运行机制](../architecture/runtime.md#subagent-委派)，模型调用方式见[子 Agent 使用说明](../user/web.md#子-agent)。
+`Prepare` 返回本次配置快照与非空任务文本，不执行任务或创建需要另行关闭的资源；匿名调用跳过名称解析和 Prepare。消费者借用 `Executor`，同步 Execute 使用 `agent.RunTask`，会话工具使用 Start 接入 Session。运行时 Add 返回的 Handle 由贡献者关闭；重复名称拒绝，撤销隐藏定义、取消任务并排空准备、执行及通知，之后才允许同名注册。接口见 [agent/subagent](../../agent/subagent)，状态与租约见[运行机制](../architecture.md#subagent-委派)，模型调用方式见[子 Agent 使用说明](../user/web.md#子-agent)。
 
 ## 知识与提示词
 
@@ -51,7 +51,7 @@ extension.Add(scope, subagent.Subagent{
 
 需要调整系统行为时贡献 `prompt.Contribution`：为它指定稳定名称与目标，再在 Apply 中操作具名 section。例如 OKF 只向主 Agent 和扫描 Agent 加入 Markdown 产出策略。指定 target 能避免把同一要求无差别加入压缩器和评估器。
 
-Prompt 在一次 Run 开始时解析。运行中改变贡献不会追溯修改已经发给模型的请求；一次 Apply 失败也不会提交半份修改。执行准入应由工具或 hooks 控制，提示词只提供行为指导。组装细节见[上下文与知识](../architecture/context.md)。
+Prompt 在一次 Run 开始时解析。运行中改变贡献不会追溯修改已经发给模型的请求；一次 Apply 失败也不会提交半份修改。执行准入应由工具或 hooks 控制，提示词只提供行为指导。组装细节见[上下文与知识](../architecture.md#上下文与知识)。
 
 ## 共享服务与借用
 
@@ -69,7 +69,7 @@ Prompt 在一次 Run 开始时解析。运行中改变贡献不会追溯修改�
 
 Load 中的初始化使用 `scope.Init()`，持续后台工作使用 `scope.Lifetime()`。扩展若持有 goroutine、订阅或连接，还应实现 `Close(context.Context) error`：停止接收新工作，结束已有工作并释放资源。只贡献静态条目的 hello 扩展不需要空的 Close。
 
-关闭 deadline 到达而资源仍在工作时，返回 `extension.ErrCloseIncomplete` 或可识别的 context 错误，以便 Set 保留依赖并重试。完整的撤销顺序和失败回滚见[扩展装配](../architecture/composition.md)。
+关闭 deadline 到达而资源仍在工作时，返回 `extension.ErrCloseIncomplete` 或可识别的 context 错误，以便 Set 保留依赖并重试。完整的撤销顺序和失败回滚见[扩展装配](../architecture.md#扩展装配与生命周期)。
 
 ## 验证扩展
 

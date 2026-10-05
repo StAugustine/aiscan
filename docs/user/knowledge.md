@@ -51,4 +51,4 @@ OKF（Open Knowledge Format）把较大的知识集合组织为索引、概念�
 
 aiscan 的 OKF 扩展还向 Agent 提供 Markdown 产出策略和校验命令。`okf validate <path>` 检查格式，`okf test <path>` 检查更严格的生产要求，均不执行文档中声明的计算程序。具体格式见[内置 OKF 说明](../../exts/okf/assets/okf.md)。
 
-开发者可通过 Bundle 或 Prompt contribution 接入知识与指令，见[扩展开发](../developer/extensions.md)。应用自己的系统提示词、Skill 正文和当前对话各有不同作用，架构层面的组合过程见[上下文](../architecture/context.md)。
+开发者可通过 Bundle 或 Prompt contribution 接入知识与指令，见[扩展开发](../developer/extensions.md)。应用自己的系统提示词、Skill 正文和当前对话各有不同作用，架构层面的组合过程见[上下文](../architecture.md#上下文与知识)。

@@ -9,7 +9,7 @@
 | Application WebSocket | 二进制 protobuf 长连接 | 创建会话、发送自然语言、接收流式回答、取消 Turn |
 | ConnectRPC | protobuf unary RPC | 查询会话历史、扫描、配置、Agent、系统状态及同步原始 Artifact |
 
-详细字段与错误语义见 [api.md](api.md)。Go 进程内嵌入从[会话示例](../examples/session/main.go)开始；AOP 连接示例见 [examples/acp](../examples/acp/README.md)。协议类型与数据归属见[事件与数据](architecture/data.md#协议类型的归属)，宿主实现见[连接与协议处理](developer/hosting.md#连接与协议处理)。
+详细字段与错误语义见 [api.md](api.md)。Go 进程内嵌入从[会话示例](../examples/session/main.go)开始；AOP 连接示例见 [examples/acp](../examples/acp/README.md)。协议类型与数据归属见[事件与数据](architecture.md#协议类型的归属)，宿主实现见[连接与协议处理](developer/hosting.md#连接与协议处理)。
 
 ## 1. 获取 protobuf schema
 

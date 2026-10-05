@@ -163,7 +163,7 @@ go test -tags live_llm -run '^TestLiveLLMIOALongTask$' -count=1 -v -timeout 65m 
 
 ## JEV 机制与真实验证
 
-当前 JEV / Reflex 的控制流、验证范围和实测限制见 [JEV / Reflex 验证说明](../../docs/jev-reflex-v2-20261005.md)。机制测试位于 [exts/jev](../../exts/jev)，从仓库根目录运行：
+当前 JEV / Reflex 的控制流、验证范围和复用边界见 [JEV / Reflex 机制](../../docs/architecture.md#jev-与-reflex)。机制测试位于 [exts/jev](../../exts/jev)，从仓库根目录运行：
 
 ```sh
 go test -count=1 ./exts/jev
