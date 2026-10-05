@@ -503,7 +503,12 @@ func (c *Command) execSnapshot(ctx context.Context, args []string) (string, erro
 	}
 
 	depth := 0
+	structured := false
 	for i := 1; i < len(args); i++ {
+		if args[i] == "--json" {
+			structured = true
+			continue
+		}
 		if args[i] == "--depth" && i+1 < len(args) {
 			i++
 			d, parseErr := strconv.Atoi(args[i])
@@ -515,6 +520,9 @@ func (c *Command) execSnapshot(ctx context.Context, args []string) (string, erro
 	}
 
 	return sess.withPage(ctx, func(page *rod.Page) (string, error) {
+		if structured {
+			return structuredSnapshot(page, sess.Name)
+		}
 		req := proto.AccessibilityGetFullAXTree{}
 		if depth > 0 {
 			req.Depth = &depth

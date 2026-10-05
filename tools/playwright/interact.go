@@ -984,6 +984,9 @@ func (c *Command) execType(ctx context.Context, args []string) (string, error) {
 // ---------------------------------------------------------------------------
 
 func findElement(page *rod.Page, selector string) (*rod.Element, error) {
+	if strings.HasPrefix(selector, "shadow=") {
+		return shadowElement(page, selector)
+	}
 	return headless.FindElement(page, selector, 0)
 }
 

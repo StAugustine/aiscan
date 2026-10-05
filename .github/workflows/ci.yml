@@ -331,6 +331,11 @@ jobs:
             -run '^Test(Parse|Execute_|ResolvePath_|NameAndUsage|WithDefaultSession|Format)' \
             ./tools/playwright
 
+      - name: Run JEV compilation and profile regressions
+        run: |
+          go test -race -tags "$FULL_CAPS_TAGS" -count=1 -timeout 5m \
+            -run '^Test(ReflexV2|JEVProfile)' ./exts/jev ./cmd/aiscan
+
       - name: Compile browser-backed full-tag suites
         run: |
           go test -c -tags "$FULL_CAPS_TAGS" \
@@ -436,11 +441,15 @@ jobs:
         run: |
           # Untracked output is drift too: a new proto yields a new binding file,
           # which `git diff` never reports.
-          test -z "$(git status --porcelain -- pkg/rpc core/types exts/guardrail/guardrail.pb.go web/frontend/src/gen)"
+          test -z "$(git status --porcelain -- pkg/rpc core/types exts/guardrail/guardrail.pb.go exts/jev/jev.pb.go web/frontend/src/gen)"
           # The AOP bindings are generated into the cyber-ui submodule, where the
           # superproject tracks only the gitlink, so a regeneration inside it is
           # invisible from here and the check has to run in the submodule.
           test -z "$(git -C web/frontend/cyber-ui status --porcelain -- packages/aop/src/gen/aop)"
+
+      - name: Install cyber-ui workspace dependencies
+        working-directory: web/frontend/cyber-ui
+        run: corepack pnpm install --frozen-lockfile
 
       - name: Build embedded frontend
         run: |
@@ -470,9 +479,7 @@ jobs:
 
       - name: Run cyber-ui viewer tests
         working-directory: web/frontend/cyber-ui
-        run: |
-          corepack pnpm install --frozen-lockfile
-          corepack pnpm --filter @cyber/viewer test
+        run: corepack pnpm --filter @cyber/viewer test
 
       - name: Run backend E2E tests
         run: |

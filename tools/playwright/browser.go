@@ -33,9 +33,11 @@ const (
 
 // Command implements command.Command for headless browser operations.
 type Command struct {
-	mu      sync.Mutex
-	browser *rod.Browser
-	workDir string
+	nativeMu  sync.Mutex
+	nativeOps map[string]nativeOperation
+	mu        sync.Mutex
+	browser   *rod.Browser
+	workDir   string
 
 	// Session management for multi-step interactive workflows.
 	openMu     sync.Mutex
@@ -202,7 +204,8 @@ Session Subcommands (multi-step interactive workflows):
 
   DevTools:
     console <session> [--clear]                 Show/clear captured console messages
-    snapshot <session> [--depth N]              Capture accessibility tree snapshot
+    snapshot <session> [--depth N] [--json]     Capture current structured DOM or accessibility tree
+    operation-status <host-call-id>            Read a native operation receipt
     requests <session>                          List all captured network requests
     request <session> <index>                   Show full detail for a specific request
     route-list <session>                        List active route interception rules
@@ -289,8 +292,12 @@ func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any
 	}
 
 	var result string
+	finishNative := c.beginNative(ctx, sub, subArgs)
+	defer func() { finishNative(err) }()
 
 	switch sub {
+	case "operation-status":
+		result, err = c.execOperationStatus(subArgs)
 	// --- Unified URL/session commands (Playwright-aligned) ---
 	case "goto":
 		if c.firstArgIsSession(subArgs) {
@@ -1370,7 +1377,7 @@ func (c *Command) injectGlobalSession(sub string, subArgs []string, globalSessio
 		}
 		return append(subArgs, "--session", globalSession)
 
-	case "sessions", "list", "close-all", "kill-all", "pdf":
+	case "sessions", "list", "close-all", "kill-all", "pdf", "operation-status":
 		return subArgs
 
 	case "goto", "screenshot", "content", "evaluate", "network":

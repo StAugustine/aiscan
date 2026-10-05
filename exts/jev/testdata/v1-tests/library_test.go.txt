@@ -1,0 +1,48 @@
+Historical v1 fixtures superseded by v2_mechanism_test.go and v2_runtime_test.go.
+These are preserved as evidence, not executable current-ABI tests.
+
+package jev
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestLibraryHasOneExecutableShapeAndPreservesUnsupportedSource(t *testing.T) {
+	directory := t.TempDir()
+	current := Reflex{When: "Current capability", Decide: "Use current input", Observe: `js:function(context,args){return {report:args};}`}
+	old := Reflex{When: "Old expression", Decide: "Use old observer", Observe: `js:({state:{},candidates:{}})`}
+	raw, _ := json.Marshal(map[string]any{"version": 999, "claims": map[string]any{}, "reflexes": map[string]reflexRecord{"r" + digest(current)[:16]: {Reflex: current}, "r" + digest(old)[:16]: {Reflex: old}}, "compiled": map[string]bool{}})
+	path := filepath.Join(directory, "library.json")
+	_ = os.WriteFile(path, raw, 0600)
+	e := New(Config{Directory: directory})
+	if err := e.loadLibrary(); err != nil {
+		t.Fatal(err)
+	}
+	if len(e.snapshot().Reflexes) != 1 {
+		t.Fatal("unsupported source remained executable")
+	}
+	backup, _ := filepath.Glob(filepath.Join(directory, "library-backup-*.json"))
+	if len(backup) != 1 {
+		t.Fatal("missing original archive")
+	}
+	original, _ := os.ReadFile(backup[0])
+	if !bytes.Equal(raw, original) {
+		t.Fatal("archive changed")
+	}
+	saved, _ := os.ReadFile(path)
+	if strings.Contains(string(saved), "\"version\"") {
+		t.Fatal("version mechanism survived")
+	}
+	if err := e.loadLibrary(); err != nil {
+		t.Fatal(err)
+	}
+	backup, _ = filepath.Glob(filepath.Join(directory, "library-backup-*.json"))
+	if len(backup) != 1 {
+		t.Fatal("unnecessary repeated archive")
+	}
+}

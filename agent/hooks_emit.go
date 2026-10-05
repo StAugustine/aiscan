@@ -10,6 +10,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func cloneModelMessages(messages []*aop.Message) []*aop.Message {
+	snapshot := make([]*aop.Message, len(messages))
+	for i, m := range messages {
+		snapshot[i] = proto.CloneOf(m)
+	}
+	return snapshot
+}
+
 func afterModelHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) {
 	if !hooks.AfterModel.Has(cfg.Hooks) {
 		return

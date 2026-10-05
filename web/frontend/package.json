@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:bootstrap": "node --experimental-strip-types --test e2e/node-bootstrap.test.mjs",
-    "test:e2e": "playwright test",
+    "test:e2e": "playwright test && playwright test -c e2e/jev.config.ts",
+    "test:jev": "playwright test -c e2e/jev.config.ts",
     "test:e2e:headed": "playwright test --headed"
   },
   "dependencies": {

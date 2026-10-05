@@ -1,0 +1,297 @@
+Historical v1 fixtures superseded by v2_mechanism_test.go and v2_runtime_test.go.
+These are preserved as evidence, not executable current-ABI tests.
+
+package jev
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/provider"
+	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
+	"github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/operation"
+	coretool "github.com/chainreactors/cyber/core/tool"
+)
+
+func TestRuntimeTracePreservesNativeEffectsAndDecisionEvidence(t *testing.T) {
+	var position, foreground atomic.Int64
+	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
+		if !runtimeRequest(req) {
+			return runtimeAnswers(req, Defer)
+		}
+		choice := "advance/go"
+		if position.Load() == 4 {
+			choice = report
+		}
+		out := runtimeAnswers(req, choice)
+		for id, a := range out {
+			a.Confidence = .91
+			a.Probabilities = map[string]float64{a.Choice: .91}
+			out[id] = a
+		}
+		return out
+	})
+	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "advance", Run: func(ctx context.Context, ex *coretool.Execution) (any, error) {
+		inv := operation.InvocationFromContext(ctx)
+		if inv.CallID == "" || inv.SessionID == "" || inv.TurnID == "" || inv.Emitter != "jev" {
+			t.Error("native correlation lost")
+		}
+		if len(ex.Args) != 1 || ex.Args[0] != fmt.Sprint(position.Load()) {
+			t.Error("wrong dynamic binding")
+		}
+		_, err := fmt.Fprintf(ex.Stdout, "step=%d", position.Add(1))
+		return nil, err
+	}})
+	r := installObserve(e, stepObserve("advance", true))
+	var mu sync.Mutex
+	var events []*aop.Event
+	sub := e.stream.Observe(func(event *aop.Event) { mu.Lock(); events = append(events, event); mu.Unlock() })
+	defer sub.Close(t.Context())
+	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
+		foreground.Add(1)
+		if provider.MessageText(req.Messages[0]) == claimPrompt || provider.MessageText(req.Messages[0]) == compilePrompt {
+			t.Error("takeover invoked a candidate generator")
+		}
+		if position.Load() != 4 {
+			t.Error("model called before reusable execution finished")
+		}
+		return reply(provider.TextMessage("assistant", "done")), nil
+	})
+	for i := 0; i < 2; i++ {
+		position.Store(0)
+		cfg.SessionID = fmt.Sprintf("session-%d", i)
+		result, err := agent.NewAgent(cfg).Run(t.Context(), agent.TextInput(fmt.Sprintf("Advance four steps for task %d.", i)))
+		if err != nil || result.Output != "done" || result.Turns != 1 {
+			t.Fatalf("result=%v err=%v", result, err)
+		}
+	}
+	settle(t, e)
+	if foreground.Load() != 2 {
+		t.Fatalf("model requests=%d", foreground.Load())
+	}
+	mu.Lock()
+	captured := append([]*aop.Event(nil), events...)
+	mu.Unlock()
+	takeovers, results, handoffs, requests, answers := 0, 0, 0, 0, 0
+	calls := map[string]string{}
+	segments := map[string]string{}
+	for _, event := range captured {
+		if event.GetToolCall() != nil || event.GetToolResult() != nil {
+			t.Fatal("controller corrupted root tool history")
+		}
+		value := new(RuntimeEvent)
+		if event.GetExtension() == nil || event.GetExtension().UnmarshalTo(value) != nil {
+			continue
+		}
+		if event.Id == "" || event.Seq == 0 || event.EmittedAt == nil || event.SessionId == "" || event.TurnId == "" || value.TaskId == "" {
+			t.Fatal("missing durable identity")
+		}
+		if value.Background {
+			continue
+		}
+		switch p := value.Payload.(type) {
+		case *RuntimeEvent_Takeover:
+			takeovers++
+			segments[value.SegmentId] = event.SessionId
+			if p.Takeover.Definition.Observe != r.Observe {
+				t.Fatal("historical definition snapshot differs")
+			}
+		case *RuntimeEvent_Dispatch:
+			calls[p.Dispatch.Call.Id] = event.SessionId
+			if value.CallId != p.Dispatch.Call.Id {
+				t.Fatal("dispatch correlation differs")
+			}
+		case *RuntimeEvent_Result:
+			results++
+			if calls[p.Result.Result.CallId] != event.SessionId || p.Result.Result.IsError {
+				t.Fatal("native result association lost")
+			}
+		case *RuntimeEvent_Handoff:
+			handoffs++
+			if p.Handoff.Reason != report {
+				t.Fatalf("reason=%s", p.Handoff.Reason)
+			}
+		case *RuntimeEvent_DecisionRequest:
+			requests++
+			if len(p.DecisionRequest.Questions) == 0 {
+				t.Fatal("missing actual questions")
+			}
+		case *RuntimeEvent_DecisionResult:
+			answers++
+			for _, answer := range p.DecisionResult.Answers {
+				if answer.Confidence != .91 || len(answer.Probabilities) == 0 {
+					t.Fatal("vendor judgment changed")
+				}
+			}
+		}
+	}
+	if takeovers != 2 || handoffs != 2 || results != 8 || requests != 10 || answers != 10 || len(segments) != 2 {
+		t.Fatalf("takeovers=%d handoffs=%d results=%d requests=%d answers=%d segments=%d", takeovers, handoffs, results, requests, answers, len(segments))
+	}
+}
+
+func TestBackgroundPublicationRetainsSourceAndQueryIsReadOnly(t *testing.T) {
+	e, _, _ := testInstallation(t, Config{Mode: "off"}, nil)
+	r := Reflex{When: "Reusable scene", Decide: "Choose supplied native bindings", Observe: constantObserve(`{}`, nil)}
+	c := Claim{When: "Reusable scene", Question: "Which operation?", Options: map[string]string{"inspect": "Read current state", Defer: "New reasoning"}}
+	cid := "c" + digest(c)[:16]
+	e.library.Claims[cid] = claimRecord{Claim: c, Task: "source-task"}
+	var captured []*aop.Event
+	sub := e.stream.Observe(func(event *aop.Event) { captured = append(captured, event) })
+	defer sub.Close(t.Context())
+	plan := &compilation{job: declaration{session: "source-session", turn: "ended-turn", task: "source-task"}, claims: map[string]Claim{cid: c}}
+	if err := e.publishReflex(plan, &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(captured) != 1 {
+		t.Fatal("publication missing")
+	}
+	value := new(RuntimeEvent)
+	if err := captured[0].GetExtension().UnmarshalTo(value); err != nil {
+		t.Fatal(err)
+	}
+	if !value.Background || value.TaskId != "source-task" || value.SegmentId != "" || captured[0].TurnId != "ended-turn" {
+		t.Fatal("background publication acquired runtime ownership")
+	}
+	before := digest(e.snapshot())
+	for range 3 {
+		view := e.libraryView()
+		if view.Mode != "off" || view.Status != "off" || len(view.Reflexes) != 1 || len(view.Claims) != 1 {
+			t.Fatal("inaccurate read-only library")
+		}
+		view.Reflexes[0].ClaimIds[0] = "mutated"
+		view.Claims[0].Options[Defer] = "mutated"
+	}
+	if digest(e.snapshot()) != before || len(captured) != 1 || e.pending != 0 {
+		t.Fatal("library query mutated state or executed work")
+	}
+}
+
+func TestProjectionKeepsFullConstraintsAndEvictsCallResultGroups(t *testing.T) {
+	constraint := strings.Repeat("system-rule ", 1600)
+	messages := []*aop.Message{provider.TextMessage("system", constraint), provider.TextMessage("user", "Keep user authorization exactly")}
+	for i := range 8 {
+		call := action(fmt.Sprintf("step %d", i)).GetToolCall()
+		result := coretool.TextResult(strings.Repeat("evidence ", 900))
+		result.CallId = call.Id
+		messages = append(messages, &aop.Message{Role: "assistant", Content: []*aop.Content{{Value: &aop.Content_ToolCall{ToolCall: call}}}},
+			&aop.Message{Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: result}}}})
+	}
+	data, ok := contextState(messages)
+	if !ok || len(data) > 32<<10 {
+		t.Fatalf("projection=%d ok=%t", len(data), ok)
+	}
+	var state struct {
+		Messages []struct {
+			Text   string `json:"text"`
+			CallID string `json:"call_id"`
+			Calls  []struct {
+				ID string `json:"id"`
+			} `json:"calls"`
+		} `json:"messages"`
+		Omitted int `json:"omitted_groups"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Messages[0].Text != constraint || state.Messages[1].Text != "Keep user authorization exactly" || state.Omitted == 0 {
+		t.Fatal("constraints or omission metadata lost")
+	}
+	calls, results := map[string]bool{}, map[string]bool{}
+	for _, message := range state.Messages {
+		for _, call := range message.Calls {
+			calls[call.ID] = true
+		}
+		if message.CallID != "" {
+			results[message.CallID] = true
+		}
+	}
+	if digest(calls) != digest(results) {
+		t.Fatal("orphaned retained call/result evidence")
+	}
+}
+
+func TestCompilationKeepsHandoffBoundaryWithoutDuplicatingConstraints(t *testing.T) {
+	constraint := strings.Repeat("preserve this authorization ", 1100)
+	state, ok := contextState([]*aop.Message{provider.TextMessage("system", constraint), provider.TextMessage("user", "Inspect the current target")})
+	if !ok {
+		t.Fatal("valid application context rejected")
+	}
+	var boundary map[string]any
+	_ = json.Unmarshal(state, &boundary)
+	boundary["messages"] = append(boundary["messages"].([]any), map[string]any{"call_id": "completed-before-handoff", "text": "actual result"})
+	raw, _ := json.Marshal(map[string]any{"context": boundary, "observations": map[string]string{"r": "entry missing"}, "candidates": map[string]string{}})
+	before := string(raw)
+	projected, err := compilationHandoff(raw)
+	if err != nil || string(raw) != before || strings.Contains(string(projected), constraint) || !strings.Contains(string(projected), "completed-before-handoff") || !strings.Contains(string(projected), "entry missing") {
+		t.Fatalf("handoff projection lost evidence: %s, %v", projected, err)
+	}
+	requests := 0
+	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
+		requests++
+		if len(req.State) > 64<<10 || strings.Count(string(req.State), constraint) != 1 || !strings.Contains(string(req.State), "entry missing") {
+			t.Error("compilation request duplicated or lost task evidence")
+		}
+		return declarationAnswers(req, false)
+	})
+	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client,
+		coretool.Command{Name: "catalog", Usage: "catalog [arguments]\n" + strings.Repeat("native documentation ", 1400), Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }})
+	c := Claim{When: "Native scene", Question: "Can it progress?", Options: map[string]string{Defer: "Missing facts", "inspect": "Read state"}}
+	e.library.Claims["c"] = claimRecord{Claim: c}
+	e.library.Reflexes["r"] = reflexRecord{Reflex: Reflex{When: c.When, Decide: "Use current native bindings", Observe: normalizeFixture(`js:({state:{},candidates:{}})`)}, Claims: []string{"c"}}
+	catalog, err := e.capabilities(cfg, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicated, _ := json.Marshal(map[string]any{"context": state, "handoff": raw, "capabilities": catalog})
+	if len(duplicated) <= 64<<10 {
+		t.Fatal("fixture does not reproduce the provider's request limit")
+	}
+	if _, err := e.prepareCompilation(t.Context(), declaration{cfg: cfg, state: state, repair: "r", handoff: raw}, "c"); err != nil || requests != 1 {
+		t.Fatalf("requests=%d err=%v", requests, err)
+	}
+}
+
+func TestLargeCapabilityCatalogPreservesObservedNativeDocumentation(t *testing.T) {
+	usage := "inspect [arguments]\n" + strings.Repeat("exact argument documentation ", 200)
+	commands := []coretool.Command{{Name: "inspect", Usage: usage}}
+	for i := range 12 {
+		commands = append(commands, coretool.Command{Name: fmt.Sprintf("unrelated%d", i), Usage: "unrelated [arguments]\n" + strings.Repeat("scanner documentation ", 350)})
+	}
+	for i := range commands {
+		commands[i].Run = func(context.Context, *coretool.Execution) (any, error) { return nil, nil }
+	}
+	client := fakeJEV(t, func(jevapi.Request) map[string]jevapi.Answer {
+		t.Error("catalog inspection dispatched a judgment")
+		return nil
+	})
+	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, commands...)
+	state := json.RawMessage(`{"messages":[{"calls":[{"name":"bash","arguments":{"command":"TOKEN=value inspect 'literal' && unrelated0 --help"}}]}]}`)
+	catalog, err := e.capabilities(cfg, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(catalog)
+	if len(data) > 32<<10 || len(catalog["tools"].([]any)) != len(cfg.Tools.ToolDefinitions()) || len(catalog["commands"].([]any)) < len(commands) {
+		t.Fatal("catalog exceeded budget or lost native schemas")
+	}
+	for _, item := range catalog["commands"].([]any) {
+		command := item.(map[string]any)
+		if command["name"] == "inspect" && command["usage"] != usage {
+			t.Fatal("observed command documentation changed")
+		}
+		if command["name"] == "unrelated11" && (command["usage_complete"] != false || command["description_path"] == nil) {
+			t.Fatal("unobserved command disappeared instead of retaining its documentation path")
+		}
+	}
+	if digest(interactionCommands([]json.RawMessage{state})) != digest(map[string]bool{"inspect": true, "unrelated0": true}) {
+		t.Fatal("shell syntax was not parsed faithfully")
+	}
+}

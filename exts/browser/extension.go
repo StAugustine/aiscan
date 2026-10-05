@@ -48,6 +48,10 @@ func (m *Extension) Load(scope *extension.Scope) error {
 		return err
 	}
 	command := playwright.New(m.workDir).WithDefaultSession(m.defaultSession)
+	if err := extension.Add(scope, command.NativeContract()); err != nil {
+		command.Close()
+		return err
+	}
 	if err := extension.Add(scope, coretool.Command{
 		Name: command.Name(), Usage: command.Usage(),
 		DescriptionPath: "cyber://skills/runtime/playwright.md",

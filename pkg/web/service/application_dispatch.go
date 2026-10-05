@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/chainreactors/cyber/exts/guardrail"
+	"github.com/chainreactors/cyber/exts/jev"
 	"github.com/chainreactors/cyber/pkg/aopconn"
 	"strconv"
 	"sync"
@@ -351,6 +352,23 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 		return nil
 	}
 	defer mux.Close(context.Background())
+	handleJEV := func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
+		value, ok := message.(*jev.ProtocolMessage)
+		if !ok {
+			return fmt.Errorf("unexpected JEV message")
+		}
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			result, err := s.forwardJEV(ctx, value)
+			if err != nil {
+				fail(envelope.Id, "JEV_QUERY_FAILED", err)
+				return
+			}
+			_ = send(envelope.Id, "", result)
+		}()
+		return nil
+	}
 	registrations := []struct {
 		enabled   bool
 		prototype protobuf.Message
@@ -359,6 +377,7 @@ func (s *Service) serveApplication(connection *aopconn.Connection, registerNames
 		{enabled: true, prototype: &aop.ProtocolMessage{}, handler: handleCore},
 		{enabled: true, prototype: &types.CommandProtocolMessage{}, handler: handleCommand},
 		{enabled: s.agents != nil, prototype: &guardrail.ProtocolMessage{}, handler: handleGuardrail},
+		{enabled: s.agents != nil, prototype: &jev.ProtocolMessage{}, handler: handleJEV},
 		{enabled: true, prototype: &filepb.ProtocolMessage{}, handler: handleFile},
 		{enabled: s.api.Scans != nil, prototype: &scanpb.ScanProtocolMessage{}, handler: handleScan},
 		{enabled: s.agents != nil, prototype: &ptypb.ProtocolMessage{}, handler: handlePTY},

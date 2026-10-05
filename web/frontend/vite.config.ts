@@ -25,6 +25,7 @@ const preserveStaticDirectory = {
 export default defineConfig({
   plugins: [react(), preserveStaticDirectory],
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@cyber/ui': path.resolve(cyberUI, 'ui/src'),
@@ -35,6 +36,8 @@ export default defineConfig({
       '@cyber/cstx': path.resolve(cyberUI, 'cstx/src'),
       '@cyber/cstx-easm': path.resolve(cyberUI, 'cstx-easm/src'),
       '@cyber/viewer': path.resolve(cyberUI, 'viewer/src'),
+      '@cyber/file-manager': path.resolve(cyberUI, 'file-manager/src'),
+      '@cyber/traffic': path.resolve(cyberUI, 'traffic/src'),
       '@cyber/ioa': path.resolve(cyberUI, 'ioa/src'),
     },
   },

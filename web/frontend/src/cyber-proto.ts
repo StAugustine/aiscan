@@ -91,3 +91,12 @@ export {
   type ProtocolMessage as GuardrailProtocolMessage,
   type Review,
 } from './gen/types/guardrail_pb.js'
+export {
+  ProtocolMessageSchema as JEVProtocolMessageSchema,
+  RuntimeEventSchema as JEVRuntimeEventSchema,
+  type ProtocolMessage as JEVProtocolMessage,
+  type RuntimeEvent as JEVRuntimeEvent,
+  type GetLibraryResponse as JEVLibrary,
+  type ClaimDefinition,
+  type ReflexDefinition,
+} from './gen/types/jev_pb.js'

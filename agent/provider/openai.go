@@ -283,6 +283,9 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
+	if req.JSONOutput {
+		body["response_format"] = map[string]string{"type": "json_object"}
+	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}

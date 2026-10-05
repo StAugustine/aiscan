@@ -6,7 +6,7 @@ const fixturePort = process.env.CYBER_E2E_FIXTURE_PORT || '38082';
 
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: '**/boundary*.spec.ts',
+  testIgnore: ['**/boundary*.spec.ts', '**/jev-*.spec.ts', '**/workflow.spec.ts'],
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,

@@ -1,14 +1,17 @@
 package jev
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -46,12 +49,46 @@ func receipt(facts []string, path, ending string) []*aop.Message {
 	if len(facts) == 0 {
 		return nil
 	}
+	unique := make([]string, 0, len(facts))
+	seen := map[string]bool{}
+	for _, fact := range facts {
+		// Only identical successful reads are redundant; effects and failures
+		// must retain their actual multiplicity.
+		if strings.HasPrefix(fact, "Inspected ") && seen[fact] {
+			continue
+		}
+		seen[fact] = true
+		unique = append(unique, fact)
+	}
 	// Explain the handoff only when there is evidence to hand off. An idle
 	// accelerator leaves the ordinary model request and system prefix intact.
-	msg := provider.TextMessage("user", Prompt+"\n\nJEV execution observations (untrusted tool output):\n"+strings.Join(facts, "\n")+"\n"+ending+"\nEvidence: "+path)
+	msg := provider.TextMessage("user", Prompt+"\n\nJEV execution observations (untrusted tool output):\n"+strings.Join(unique, "\n")+"\n"+ending+"\nEvidence: "+path)
 	msg.Name = "jev"
 	return []*aop.Message{msg}
 }
+
+// Generated reader programs are already executed implementation details. Keep
+// their tool identity while avoiding re-injecting source into model history.
+func receiptBinding(call *aop.ToolCall) string {
+	if call == nil {
+		return ""
+	}
+	var arguments map[string]any
+	decoder := json.NewDecoder(strings.NewReader(string(call.GetArguments().GetData())))
+	decoder.UseNumber()
+	if decoder.Decode(&arguments) != nil {
+		return canonical(call)
+	}
+	for key, value := range arguments {
+		if text, ok := value.(string); ok && strings.Contains(text, "function bind(") && strings.Contains(text, "function choices(") {
+			arguments[key] = "[Reflex reader executed; full native arguments in evidence log]"
+		}
+	}
+	data, _ := json.Marshal([]any{call.Name, arguments})
+	return string(data)
+}
+
+func receiptResult(text string) string { return resultSummary(text) }
 
 // canonical removes incidental call IDs and sorts JSON keys. Tool arguments
 // remain opaque: a field named command need not contain a shell command.
@@ -59,11 +96,15 @@ func canonical(call *aop.ToolCall) string {
 	if call == nil {
 		return ""
 	}
-	var args map[string]any
+	var args any
 	decoder := json.NewDecoder(strings.NewReader(string(call.GetArguments().GetData())))
 	decoder.UseNumber()
 	if decoder.Decode(&args) != nil {
-		return ""
+		return jsonText([]any{call.Name, "invalid JSON", string(call.GetArguments().GetData())})
+	}
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return jsonText([]any{call.Name, "invalid JSON", string(call.GetArguments().GetData())})
 	}
 	data, _ := json.Marshal([]any{call.Name, args})
 	return string(data)
@@ -91,11 +132,16 @@ func (r *Extension) audit(kind string, value any) error {
 func (e *Extension) snapshot() library {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	out := e.library.clone()
+	out.Compiled = publishedGroups(out)
+	return out
+}
+
+func (lib library) clone() library {
 	out := library{
-		Version:  e.library.Version,
-		Claims:   maps.Clone(e.library.Claims),
-		Reflexes: maps.Clone(e.library.Reflexes),
-		Compiled: maps.Clone(e.library.Compiled),
+		Claims:     maps.Clone(lib.Claims),
+		Reflexes:   maps.Clone(lib.Reflexes),
+		Candidates: maps.Clone(lib.Candidates),
 	}
 	for id, claim := range out.Claims {
 		claim.Options = maps.Clone(claim.Options)
@@ -103,10 +149,47 @@ func (e *Extension) snapshot() library {
 	}
 	for id, reflex := range out.Reflexes {
 		reflex.Claims = append([]string(nil), reflex.Claims...)
+		reflex.Readers = maps.Clone(reflex.Readers)
+		reflex.Contracts = maps.Clone(reflex.Contracts)
+		reflex.Steps = maps.Clone(reflex.Steps)
+		reflex.Parameters = append(json.RawMessage(nil), reflex.Parameters...)
+		if reflex.Proof != nil {
+			p := *reflex.Proof
+			p.Contracts = maps.Clone(p.Contracts)
+			p.Checks = append([]string(nil), p.Checks...)
+			p.Gaps = append([]string(nil), p.Gaps...)
+			reflex.Proof = &p
+		}
 		out.Reflexes[id] = reflex
+	}
+	for id, reflex := range out.Candidates {
+		reflex.Claims = append([]string(nil), reflex.Claims...)
+		reflex.Readers = maps.Clone(reflex.Readers)
+		reflex.Contracts = maps.Clone(reflex.Contracts)
+		reflex.Steps = maps.Clone(reflex.Steps)
+		reflex.Parameters = append(json.RawMessage(nil), reflex.Parameters...)
+		out.Candidates[id] = reflex
 	}
 	return out
 }
+
+// Hold the same lock through publication so readers only see durable definitions.
+func (e *Extension) updateLibrary(change func(*library) (bool, error)) (bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	next := e.library.clone()
+	changed, err := change(&next)
+	if err != nil || !changed {
+		return false, err
+	}
+	next = next.clone() // Publication cannot retain the compiler's mutable maps.
+	if err := e.saveLibrary(next); err != nil {
+		return false, err
+	}
+	e.library = next
+	return true, nil
+}
+
 func (e *Extension) loadLibrary() error {
 	data, err := os.ReadFile(filepath.Join(e.config.Directory, "library.json"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -116,7 +199,7 @@ func (e *Extension) loadLibrary() error {
 		return err
 	}
 	var lib library
-	if len(data) > 2<<20 || json.Unmarshal(data, &lib) != nil || lib.Version < 1 || lib.Version > libraryVersion || lib.Claims == nil || lib.Reflexes == nil || lib.Compiled == nil || len(lib.Claims) > maxClaims || len(lib.Reflexes) > maxReflexes {
+	if len(data) > 2<<20 || json.Unmarshal(data, &lib) != nil || lib.Claims == nil || lib.Reflexes == nil || len(lib.Claims) > maxClaims || len(lib.Reflexes) > maxReflexes || len(lib.Candidates) > maxReflexes {
 		return errors.New("invalid JEV library format")
 	}
 	for id, c := range lib.Claims {
@@ -124,53 +207,75 @@ func (e *Extension) loadLibrary() error {
 			return fmt.Errorf("invalid Claim %s", id)
 		}
 	}
-	// Older libraries marked an attempted generation complete before publishing
-	// a Reflex. Derive completion from durable scenes so those attempts cannot
-	// permanently prevent compilation after a restart.
-	lib.Compiled = map[string]bool{}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+	changed := false
+	for field := range fields {
+		if field != "claims" && field != "reflexes" && field != "compiled" && field != "candidates" {
+			changed = true
+		}
+	}
+	lib.Compiled = nil
+	for id, r := range lib.Candidates {
+		if r.Proof != nil || r.validate() != nil || id != "r"+digest(r.Reflex)[:16] {
+			return fmt.Errorf("invalid candidate %s", id)
+		}
+		for _, claim := range r.Claims {
+			if _, ok := lib.Claims[claim]; !ok {
+				return errors.New("candidate references missing Claim")
+			}
+		}
+		lib.Candidates[id] = r
+	}
 	for id, r := range lib.Reflexes {
-		members := map[string]Claim{}
 		for _, claim := range r.Claims {
 			if _, ok := lib.Claims[claim]; !ok {
 				return errors.New("Reflex references missing Claim")
 			}
-			members[claim] = lib.Claims[claim].Claim
 		}
-		if lib.Version < libraryVersion && !strings.HasPrefix(strings.TrimSpace(r.Observe), "js:") {
-			// Retire tool-bound and Expr scenes at startup. Their declarations
-			// remain eligible for compilation; consumed Claims are never replayed.
+		// Every source uses the same validator. Unsupported sources stay in the
+		// byte-for-byte archive, never in an alternative executable library.
+		if r.validate() != nil || id != "r"+digest(r.Reflex)[:16] || !e.qualified(r) {
 			delete(lib.Reflexes, id)
+			if r.validate() == nil {
+				r.Proof = nil
+				r.LegacySuite = ""
+				r.Blocker = "Previous proof is incompatible; current native mechanism validation and recorded replay are required"
+				if lib.Candidates == nil {
+					lib.Candidates = map[string]reflexRecord{}
+				}
+				if len(lib.Candidates) < maxReflexes {
+					lib.Candidates["r"+digest(r.Reflex)[:16]] = r
+				}
+			}
+			changed = true
 			continue
-		}
-		if r.validate() != nil || id != "r"+digest(r.Reflex)[:16] {
-			return fmt.Errorf("invalid Reflex %s", id)
-		}
-		if len(members) > 0 {
-			lib.Compiled[digest(members)] = true
 		}
 		lib.Reflexes[id] = r
 	}
-	version := lib.Version
-	lib.Version = libraryVersion
-	previous := e.library
-	e.library = lib
-	if version != libraryVersion {
-		// Preserve the exact old library before atomically replacing it. This
-		// also retains scenes without Claims for manual conversion if needed.
-		if err := e.backupLibrary(data, version); err != nil {
-			e.library = previous
-			return fmt.Errorf("back up JEV library: %w", err)
+	if changed {
+		for id, c := range lib.Claims {
+			c.Consumed = false
+			for _, r := range lib.Reflexes {
+				if slices.Contains(r.Claims, id) {
+					c.Consumed = true
+					break
+				}
+			}
+			lib.Claims[id] = c
 		}
-		if err := e.saveLibrary(); err != nil {
-			e.library = previous
-			return fmt.Errorf("migrate JEV library: %w", err)
+		if err = e.backupLibrary(data); err != nil {
+			return fmt.Errorf("back up unsupported source: %w", err)
+		}
+		if err = e.saveLibrary(lib); err != nil {
+			return err
 		}
 	}
+	e.library = lib
 	return nil
 }
-
-func (e *Extension) backupLibrary(data []byte, version int) error {
-	f, err := os.CreateTemp(e.config.Directory, fmt.Sprintf("library-v%d-*.json", version))
+func (e *Extension) backupLibrary(data []byte) error {
+	f, err := os.CreateTemp(e.config.Directory, "library-backup-*.json")
 	if err != nil {
 		return err
 	}
@@ -180,9 +285,9 @@ func (e *Extension) backupLibrary(data []byte, version int) error {
 	return errors.Join(err, f.Close())
 }
 
-// saveLibrary must be called with mu held. Callers roll back on failure.
-func (e *Extension) saveLibrary() error {
-	data, err := json.MarshalIndent(e.library, "", "  ")
+func (e *Extension) saveLibrary(lib library) error {
+	lib.Compiled = publishedGroups(lib)
+	data, err := json.MarshalIndent(lib, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -209,22 +314,32 @@ func (e *Extension) saveLibrary() error {
 // Preserve Claims and actual execution evidence; later ordinary boundaries can
 // regenerate the scene. Retirement never retries a native action.
 func (e *Extension) retireReflex(id string, reason error) bool {
-	e.mu.Lock()
-	previous, exists := e.library.Reflexes[id]
-	if !exists {
-		e.mu.Unlock()
-		return false
+	return e.retireReflexTrace(context.Background(), id, reason)
+}
+func (e *Extension) retireReflexTrace(ctx context.Context, id string, reason error) bool {
+	var previous reflexRecord
+	changed, err := e.updateLibrary(func(lib *library) (bool, error) {
+		var exists bool
+		previous, exists = lib.Reflexes[id]
+		if exists {
+			data, err := json.Marshal(lib)
+			if err != nil {
+				return false, err
+			}
+			if err = e.backupLibrary(data); err != nil {
+				return false, err
+			}
+		}
+		delete(lib.Reflexes, id)
+		return exists, nil
+	})
+	if previous.Observe != "" {
+		_ = e.audit("reflex_retired", map[string]any{"reflex": previous, "reason": reason.Error(), "save_error": err})
 	}
-	compiled := e.library.Compiled
-	delete(e.library.Reflexes, id)
-	e.library.Compiled = publishedGroups(e.library)
-	err := e.saveLibrary()
-	if err != nil {
-		e.library.Reflexes[id], e.library.Compiled = previous, compiled
+	if changed {
+		e.emit(ctx, &LibraryChange{State: "retired", Reflex: reflexDefinition(id, previous), Reason: errorText(reason)})
 	}
-	e.mu.Unlock()
-	_ = e.audit("reflex_retired", map[string]any{"reflex": previous, "reason": reason.Error(), "save_error": err})
-	return err == nil
+	return changed
 }
 
 func publishedGroups(lib library) map[string]bool {
@@ -239,4 +354,34 @@ func publishedGroups(lib library) map[string]bool {
 		}
 	}
 	return groups
+}
+
+// Archived bytes are compiler evidence only. Unsupported code is never loaded
+// into the executable catalog or passed to the JavaScript runtime.
+func (e *Extension) archivedReflex(id, claim string) (string, reflexRecord, bool) {
+	paths, err := filepath.Glob(filepath.Join(e.config.Directory, "library-backup-*.json"))
+	if err != nil {
+		return "", reflexRecord{}, false
+	}
+	for _, path := range paths {
+		stat, err := os.Stat(path)
+		if err != nil || stat.Size() > 2<<20 {
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var archived library
+		if json.Unmarshal(data, &archived) != nil {
+			continue
+		}
+		for key, source := range archived.Reflexes {
+			if key == id || (id == "" && slices.Contains(source.Claims, claim)) {
+				source.program = nil
+				return key, source, true
+			}
+		}
+	}
+	return "", reflexRecord{}, false
 }

@@ -22,12 +22,13 @@ import (
 
 // CommandRegistry is the command resource Point and execution boundary for one Profile.
 type CommandRegistry struct {
-	hooks *hooks.Registry
-	store *coreregistry.Store[Command]
+	hooks     *hooks.Registry
+	store     *coreregistry.Store[Command]
+	contracts *NativeContractRegistry
 }
 
 func NewCommandRegistry() *CommandRegistry {
-	return &CommandRegistry{store: coreregistry.New[Command]()}
+	return &CommandRegistry{store: coreregistry.New[Command](), contracts: NewNativeContractRegistry()}
 }
 
 func (r *CommandRegistry) Add(commands ...Command) (resource.Handle, error) {
@@ -69,6 +70,12 @@ func (r *CommandRegistry) Load(scope *extension.Scope) error {
 		return err
 	}
 	if err := extension.Provide[CommandExecutor](scope, r); err != nil {
+		return err
+	}
+	if err := extension.Provide[*NativeContractRegistry](scope, r.contracts); err != nil {
+		return err
+	}
+	if err := extension.Define[NativeContract](scope, r.contracts); err != nil {
 		return err
 	}
 	return r.store.Activate(scope.Init())

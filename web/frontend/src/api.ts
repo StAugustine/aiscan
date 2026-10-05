@@ -20,6 +20,9 @@ import {
   AgentService,
   CommandProtocolMessageSchema,
   GuardrailProtocolMessageSchema,
+  JEVProtocolMessageSchema,
+  type JEVProtocolMessage,
+  type JEVLibrary,
   type GuardrailProtocolMessage,
   type Review,
   ConfigService,
@@ -86,6 +89,7 @@ const aopClient = new AOPClient()
   .register(CommandProtocolMessageSchema)
   .register(ReloadProtocolMessageSchema)
   .register(GuardrailProtocolMessageSchema)
+  .register(JEVProtocolMessageSchema)
 
 const registeredCapabilities = new Set<string>()
 // Protocol packages are mounted from the server manifest. A profile-neutral
@@ -434,6 +438,19 @@ export async function pendingGuardrailReviews(sessionId: string): Promise<Review
   const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'pending', value: { sessionId } } }))
   if (response.message.case !== 'pendingResult') throw new Error('Expected pending guardrail reviews')
   return response.message.value.reviews
+}
+
+export async function getJEVLibrary(sessionId: string): Promise<JEVLibrary> {
+  const response = await aopClient.request(JEVProtocolMessageSchema,
+    create(JEVProtocolMessageSchema, { message: { case: 'request', value: { sessionId } } }), { timeoutMs: 12_000 })
+  if (response.$typeName === 'aop.ProtocolMessage') {
+    const core = response as AOPProtocolMessage
+    if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
+  }
+  if (response.$typeName !== 'cyber.jev.ProtocolMessage') throw new Error('Unexpected JEV response')
+  const value = response as JEVProtocolMessage
+  if (value.message.case !== 'library') throw new Error('Expected JEV library')
+  return value.message.value
 }
 
 export async function resolveGuardrailReview(sessionId: string, operationId: string, approve: boolean): Promise<void> {

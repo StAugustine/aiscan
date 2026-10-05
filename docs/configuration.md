@@ -68,6 +68,28 @@ aiscan doctor --online
 
 `doctor` 默认检查配置和目录条件，不访问网络、不启动扫描；`--online` 才执行模型及宿主提供的已配置连接检查。未配置可选模型会跳过连接测试。检查失败退出码为 1；成功为 0。命令支持 `--json`，提示信息写 stderr。
 
+## JEV / Reflex
+
+JEV 通过自然语言 Claim 学习可复用能力，后台编译 Agent 持续修复 Reflex，
+通过原生契约、真实轨迹回放和独立语义验证后才接管执行。
+
+```yaml
+extensions:
+  jev:
+    api_key: ""  # 或 TYPESAFE_API_KEY
+    model: jev-1.13.0
+    timeout: 10s
+    mode: auto
+    learning: auto
+    compilation_timeout: 0
+```
+
+`jev.learning` 可选 `auto`（学习及持续编译）或 `frozen`（只复用已有合格 Reflex）。
+`jev.compilation_timeout` 默认 `0`，后台编译不设总时间限制；可显式设置正 duration。
+每次 JEV 请求仍受 `timeout` 限制。编译失败返回具体诊断继续修复；取消或服务不可用
+保留候选，真实证据不足等待新的任务证据。验证范围与实测限制见
+[JEV / Reflex 验证说明](jev-reflex-v2-20261005.md)。
+
 ## 数据与 Web
 
 数据目录优先级为 `--data-dir`、`CYBER_DATA_DIR`、配置中的 `misc.data_dir`；未指定时，依次复用当前目录已有 `.cyber`、二进制旁已有 `.cyber`，否则使用 `~/.cyber`。复用旧目录时提示路径，不自动迁移历史和缓存。

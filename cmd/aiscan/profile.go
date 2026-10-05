@@ -220,6 +220,9 @@ func buildAIScanProfile(config config) (*aiscanProfile, error) {
 		values = append(values, sessionext.New(agentConfig), subagentext.NewTools())
 		values = append(values, sessionext.NewProtocol())
 		values = append(values, guardrailext.NewProtocol())
+		if jevConfig.Mode != "" && jevConfig.Mode != "off" {
+			values = append(values, jevext.NewProtocol())
+		}
 		values = append(values, sessionext.NewConsole())
 		values = append(values, guardrailext.NewConsole())
 	}
