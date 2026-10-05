@@ -104,6 +104,9 @@ export function workflowRecords(records: JEVRecord[], owner: JEVSegment | JEVChe
 }
 
 export function withWorkflows(items: ViewerTimelineItem[], source: readonly AOPEvent[]): ViewerTimelineItem[] {
+  // Ordinary conversations retain their streaming reasoning, tool disclosure
+  // and feedback cards. The control-flow view needs actual JEV activity.
+  if (!source.some(event => jevEvent(event))) return items
   const events = runtimeEvents(source), turns = new Map<string, WorkflowTurn>()
   const parents = new Map(events.flatMap(event => event.payload.case === 'sessionStarted' && event.payload.value.parentToolCallId
     ? [[event.sessionId, event] as const] : []))
