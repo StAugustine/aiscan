@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Box, LogOut, Menu, Monitor, Network, Settings, Wrench } from 'lucide-react'
+import { Box, CircuitBoard, LogOut, Menu, Monitor, Network, Settings, Wrench } from 'lucide-react'
 import SessionList from './components/SessionList'
 import ChatPanel from './components/ChatPanel'
 import ConfigPanel from './components/ConfigPanel'
+import ReflexPanel from './components/ReflexPanel'
 import AgentPanel from './components/AgentPanel'
 import ToolRegistryPanel from './components/ToolRegistryPanel'
 import AssetPanel, { assetMentionables } from './components/AssetPanel'
@@ -30,7 +31,7 @@ import { capabilityPlugin, loadCapabilityManifest, WebPluginRuntime, type Capabi
 const sidebarStorageKey = 'cyber-sidebar-open'
 
 const EMPTY_SEED = { text: '', nonce: 0 }
-type ToolPanel = 'assets' | 'ioa' | 'agents' | 'tools' | 'settings'
+type ToolPanel = 'assets' | 'ioa' | 'agents' | 'tools' | 'settings' | 'reflex'
 const NODE_TRANSPORT_CAPABILITIES = new Set(['repl', 'pty', 'tmux', 'file', 'sco'])
 
 // Respect a previously-chosen theme on boot. ThemeProvider's own initializer is
@@ -300,6 +301,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-0.5 sm:gap-2">
             <GuardrailToggle disabled={activeToolPanel === 'settings'} onConfigure={() => openSettings('jev')} />
+            <HeaderIconButton label="Reflex" active={activeToolPanel === 'reflex'} toolDrawerTrigger onClick={() => toggleToolPanel('reflex')}><CircuitBoard className="h-3.5 w-3.5" /></HeaderIconButton>
             <AssetPoolButton count={scoNodes.length} open={activeToolPanel === 'assets'} onClick={() => toggleToolPanel('assets')} />
             <IOAConsoleButton open={activeToolPanel === 'ioa'} onClick={() => {
               setIOAConsoleTarget(null)
@@ -370,6 +372,8 @@ export default function App() {
           />
         </div>
       </div>
+
+      <ReflexPanel open={activeToolPanel === 'reflex'} onClose={() => setActiveToolPanel(null)} sessionID={chat.activeSessionID} events={chat.aopEvents} />
 
       <ConfigPanel
         open={activeToolPanel === 'settings'}

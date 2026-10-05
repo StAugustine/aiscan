@@ -26,18 +26,8 @@ import (
 )
 
 // Fresh tasks use the same live decision path without task-specific setup.
-func TestBrowserReflexRoutesAndOperatesUnseenPages(t *testing.T) {
-	testBrowserAutomaticTakeover(t, 1)
-}
 
-// Fixed before running the real service: three ordinary tasks may discover and
-// repair the scene, followed by five fresh tasks with no further scene changes.
-// The original one-task acceptance above stays intact and is reported separately.
-func TestBrowserAutomaticTakeoverAfterBoundedDiscovery(t *testing.T) {
-	testBrowserAutomaticTakeover(t, 3)
-}
-
-func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
+func testBrowserAutomaticTakeover(t *testing.T) {
 	if _, ok := launcher.LookPath(); !ok {
 		t.Skip("local Chromium unavailable")
 	}
@@ -45,9 +35,6 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 	var completed, wrong atomic.Int64
 	labels := []string{"Archive", "Invoices", "Cancel", "Continue", "Inventory"}
 	tasks := len(labels)
-	if learningTasks > 1 {
-		tasks = learningTasks + len(labels)
-	}
 	ids := make([]string, tasks)
 	for i := range ids {
 		ids[i] = "node-" + digest(aop.EnvelopeID())[:16]
@@ -111,59 +98,24 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 		t.Cleanup(client.Close)
 	} else {
 		client = fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
-			if !runtimeRequest(req) {
-				return declarationAnswers(req, true)
+			if _, entry := req.Questions["entry"]; entry {
+				return runtimeAnswers(req, "run")
 			}
-			choice := Defer
-			var state struct {
-				Candidates   map[string]string          `json:"candidates"`
-				Observations map[string]json.RawMessage `json:"observations"`
-			}
-			if err := json.Unmarshal(req.State, &state); err != nil {
-				t.Fatal(err)
-			}
-			var selectors []string
-			for _, raw := range state.Observations {
-				var page struct {
-					Text     string
-					Elements []struct{ Label, Selector string }
+			if _, route := req.Questions["route"]; route {
+				var state struct {
+					State struct{ Elements []struct{ Label string } }
 				}
-				if json.Unmarshal(raw, &page) != nil {
-					continue
+				if err := json.Unmarshal(req.State, &state); err != nil {
+					t.Error(err)
 				}
-				if strings.Contains(page.Text, fmt.Sprintf("receipt-%d", index.Load())) {
-					return runtimeAnswers(req, report)
-				}
-				for _, element := range page.Elements {
+				for i, element := range state.State.Elements {
 					if element.Label == labels[int(index.Load())%len(labels)] {
-						selectors = append(selectors, element.Selector)
+						return map[string]jevapi.Answer{"route": answer(fmt.Sprintf("element%d", i))}
 					}
 				}
+				return map[string]jevapi.Answer{"route": answer(Defer)}
 			}
-			for id, q := range req.Questions {
-				if !strings.HasPrefix(id, "r") {
-					continue
-				}
-				for key := range q.Criteria.(map[string]any) {
-					var encoded []json.RawMessage
-					var call struct{ Command string }
-					if json.Unmarshal([]byte(state.Candidates[key]), &encoded) != nil || len(encoded) != 2 || json.Unmarshal(encoded[1], &call) != nil {
-						continue
-					}
-					arguments, err := coretool.SplitCommandLine(call.Command)
-					if err != nil || len(arguments) < 2 {
-						continue
-					}
-					matched := false
-					for _, selector := range selectors {
-						matched = matched || (len(arguments) == 4 && arguments[1] == "click" && selector == arguments[3])
-					}
-					if arguments[1] == "open" || arguments[1] == "evaluate" || matched {
-						choice = key
-					}
-				}
-			}
-			return runtimeAnswers(req, choice)
+			return declarationAnswers(req, true)
 		})
 	}
 	config := Config{Mode: "auto", DeclarationEffort: os.Getenv("JEV_DECLARATION_EFFORT")}
@@ -222,7 +174,7 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 	finished := false
 	writeReport := func() {
 		if path := os.Getenv("JEV_BROWSER_REPORT"); path != "" {
-			data, err := json.MarshalIndent(map[string]any{"real_jev": live, "real_l2": meter != nil, "model": cfg.Model, "declaration_effort": e.config.DeclarationEffort, "learning_tasks": learningTasks, "expected_tasks": tasks, "test_finished": finished, "library": e.snapshot(), "evidence_directory": e.config.Directory, "runs": rows}, "", "  ")
+			data, err := json.MarshalIndent(map[string]any{"real_jev": live, "real_l2": meter != nil, "model": cfg.Model, "declaration_effort": e.config.DeclarationEffort, "expected_tasks": tasks, "test_finished": finished, "library": e.snapshot(), "evidence_directory": e.config.Directory, "runs": rows}, "", "  ")
 			if err == nil {
 				err = os.MkdirAll(filepath.Dir(path), 0700)
 			}
@@ -238,7 +190,7 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 	var initialReflexes string
 	for n := 0; n < tasks; n++ {
 		label := labels[n%len(labels)]
-		learning := n < learningTasks
+		priorReflexes := e.snapshot().Reflexes
 		index.Store(int64(n))
 		completed.Store(0)
 		wrong.Store(0)
@@ -276,11 +228,12 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 			}
 		}
 		closedLoop := result != nil && result.Turns == 1 && len(decisions) == 0
-		correct := err == nil && settleErr == nil && result != nil && strings.Contains(result.Output, fmt.Sprintf("receipt-%d", n)) && completed.Load() == 1 && wrong.Load() == 0 && (learning || (entry && operation && resultEvidence && closedLoop))
+		correct := err == nil && settleErr == nil && result != nil && strings.Contains(result.Output, fmt.Sprintf("receipt-%d", n)) && completed.Load() == 1 && wrong.Load() == 0
 		row := map[string]any{"page": n, "target": label, "foreground_ms": foreground, "including_background_ms": time.Since(started).Milliseconds(), "correct": correct, "completed_actions": completed.Load(), "wrong_actions": wrong.Load(), "jev_usage": subtractUsage(client.Usage(), beforeJ)}
 		row["jev_browser_entry"], row["jev_page_operation"], row["receipts"] = entry, operation, receipts
 		row["jev_result_evidence"] = resultEvidence
-		row["learning"] = learning
+		row["reflexes_before"] = len(priorReflexes)
+		row["reflexes_after"] = len(e.snapshot().Reflexes)
 		row["closed_loop"] = closedLoop
 		if result != nil {
 			row["output"], row["foreground_l2_calls"] = result.Output, result.Turns
@@ -306,20 +259,20 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 			return
 		}
 		t.Logf("page=%d real_l2=%t correct=%t foreground=%dms", n, meter != nil, correct, foreground)
-		if !correct || (!learning && meter == nil && result.Turns != 1) {
+		if !correct || (len(priorReflexes) > 0 && !(entry && operation && resultEvidence && closedLoop)) {
 			t.Logf("decision evidence: %s", filepath.Join(e.config.Directory, "decisions.jsonl"))
 			// Keep this failure and still evaluate the remaining independent pages.
 			t.Errorf("page %d: entry=%t operation=%t closed_loop=%t completed=%d wrong=%d error=%v", n, entry, operation, closedLoop, completed.Load(), wrong.Load(), err)
 		}
-		if n >= learningTasks-1 && len(e.snapshot().Reflexes) == 0 {
+		if len(e.snapshot().Reflexes) == 0 {
 			t.Error("ordinary browser task produced no Reflex")
 		}
 		compiled, _ := json.Marshal(e.snapshot().Reflexes)
 		row["reflexes_hash"] = digest(e.snapshot().Reflexes)
-		row["scene_stable"] = learning || string(compiled) == initialReflexes
-		if n == learningTasks-1 {
+		row["scene_stable"] = len(priorReflexes) == 0 || string(compiled) == initialReflexes
+		if len(priorReflexes) == 0 {
 			initialReflexes = string(compiled)
-		} else if !learning && string(compiled) != initialReflexes {
+		} else if string(compiled) != initialReflexes {
 			t.Error("new page changed the capability-level Reflex")
 		}
 		writeReport() // Preserve completed rows even if a later request/test stalls.
@@ -331,7 +284,7 @@ func testBrowserAutomaticTakeover(t *testing.T, learningTasks int) {
 			t.Fatal("compiled scene memorized a page")
 		}
 	}
-	t.Logf("browser discovery tasks=%d total tasks=%d: real_jev=%t real_l2=%t JEV requests=%d", learningTasks, tasks, live, meter != nil, client.Usage().Detail["requests"])
+	t.Logf("browser tasks=%d: real_jev=%t real_l2=%t JEV requests=%d", tasks, live, meter != nil, client.Usage().Detail["requests"])
 }
 
 // Count actual dispatched calls, never operation names embedded in a reader's

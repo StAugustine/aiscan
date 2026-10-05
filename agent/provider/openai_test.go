@@ -48,3 +48,22 @@ func TestMarshalOpenAIRequestAlwaysIncludesMessageContent(t *testing.T) {
 		}
 	}
 }
+
+func TestStructuredOutputIsOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		data, err := marshalOpenAIRequest(&ChatCompletionRequest{Model: "deepseek-flash", JSONOutput: enabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := body["response_format"]; present != enabled {
+			t.Fatalf("unexpected format control: %s", data)
+		}
+		if enabled && string(body["response_format"]) != `{"type":"json_object"}` {
+			t.Fatalf("unsupported vendor format: %s", data)
+		}
+	}
+}

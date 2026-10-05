@@ -79,6 +79,31 @@ var BeforeModel = corehooks.NewPoint[ContextEvent, []*Msg]("before_model").WithR
 // and cannot replace the output or dispatch its tool calls.
 var AfterModel = corehooks.NewPoint[ContextEvent, struct{}]("after_model")
 
+// ModelRequestPolicy is applied to every request, including retries and streams.
+// Restrictions combine monotonically: a handler cannot restore denied tools.
+type ModelRequestEvent struct {
+	ContextEvent
+	Purpose string
+}
+type ModelPolicy struct {
+	Purpose      string
+	DisableTools bool
+	Deny         error
+}
+
+var ModelRequestPolicy = corehooks.NewPoint[ModelRequestEvent, ModelPolicy]("model_request_policy").WithReducer(
+	corehooks.Fold(func(acc *ModelPolicy, ev *ModelRequestEvent, out ModelPolicy) {
+		acc.DisableTools = acc.DisableTools || out.DisableTools
+		if out.Deny != nil {
+			acc.Deny = out.Deny
+		}
+		if out.Purpose != "" {
+			acc.Purpose = out.Purpose
+			ev.Purpose = out.Purpose
+		}
+	}),
+)
+
 // ContextResult replaces the whole message list; nil means unchanged.
 type ContextResult struct {
 	Messages []*Msg

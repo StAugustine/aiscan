@@ -1,0 +1,5772 @@
+{
+  "attempts": [
+    {
+      "family": "browser",
+      "group": -1,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 73,
+            "total_tokens": 3680,
+            "detail": {
+              "cache_miss": 3607,
+              "cache_read": 0,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1001
+        },
+        {
+          "purpose": "claim",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7309,
+            "output_tokens": 143,
+            "total_tokens": 7452,
+            "detail": {
+              "cache_miss": 3853,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1075
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3731,
+            "output_tokens": 53,
+            "total_tokens": 3784,
+            "detail": {
+              "cache_miss": 147,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 634
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4404,
+            "output_tokens": 81,
+            "total_tokens": 4485,
+            "detail": {
+              "cache_miss": 692,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 888
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4518,
+            "output_tokens": 59,
+            "total_tokens": 4577,
+            "detail": {
+              "cache_miss": 166,
+              "cache_read": 4352,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 921
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4607,
+            "output_tokens": 116,
+            "total_tokens": 4723,
+            "detail": {
+              "cache_miss": 255,
+              "cache_read": 4352,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 740
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4767,
+            "output_tokens": 68,
+            "total_tokens": 4835,
+            "detail": {
+              "cache_miss": 159,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 542
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4864,
+            "output_tokens": 71,
+            "total_tokens": 4935,
+            "detail": {
+              "cache_miss": 256,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 989
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5604,
+            "output_tokens": 227,
+            "total_tokens": 5831,
+            "detail": {
+              "cache_miss": 868,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1626
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 140181,
+        "output_tokens": 2815,
+        "total_tokens": 142996,
+        "detail": {
+          "requests": 15,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 9291,
+      "output": "The search completed successfully against the live page.\n\n**Result**\n\nI opened the browser UI at `http://127.0.0.1:64315/?layout=-1` (title \"Catalogue -1\"), which exposes a form with a text input (`name=term`, label \"Search term\") and a \"Find\" button, plus an `\u003coutput\u003e` region initialized to \"Waiting for a query\".\n\nSteps taken:\n1. Navigated to the page.\n2. Entered the exact term into the input: `当前-browser--1 'quote' \\ path` — verified via the live input value, which preserved the CJK characters, the surrounding single quotes around `quote`, and the single backslash followed by a space before `path`.\n3. Clicked \"Find\".\n4. Read the fresh output region.\n\n**Server receipt:**\n\n```\nReceipt: server-runtime:dlwsj9lnp7ts:2\n```\n\nThis was confirmed both by the `output` element text and by a re-snapshot of the current page state (no stale \"Waiting for a query\" text remains)."
+    },
+    {
+      "family": "browser",
+      "group": -2,
+      "arm": "cold_learning",
+      "success": false,
+      "error": "query count=0 target=\"\"",
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 73,
+            "total_tokens": 3680,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 908
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3711,
+            "output_tokens": 49,
+            "total_tokens": 3760,
+            "detail": {
+              "cache_miss": 255,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1026
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3795,
+            "output_tokens": 73,
+            "total_tokens": 3868,
+            "detail": {
+              "cache_miss": 211,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 787
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3918,
+            "output_tokens": 55,
+            "total_tokens": 3973,
+            "detail": {
+              "cache_miss": 206,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1002
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4642,
+            "output_tokens": 93,
+            "total_tokens": 4735,
+            "detail": {
+              "cache_miss": 674,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 776
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4770,
+            "output_tokens": 82,
+            "total_tokens": 4852,
+            "detail": {
+              "cache_miss": 162,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 948
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4970,
+            "output_tokens": 122,
+            "total_tokens": 5092,
+            "detail": {
+              "cache_miss": 234,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1148
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5151,
+            "output_tokens": 72,
+            "total_tokens": 5223,
+            "detail": {
+              "cache_miss": 159,
+              "cache_read": 4992,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 925
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5258,
+            "output_tokens": 104,
+            "total_tokens": 5362,
+            "detail": {
+              "cache_miss": 138,
+              "cache_read": 5120,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1094
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6031,
+            "output_tokens": 133,
+            "total_tokens": 6164,
+            "detail": {
+              "cache_miss": 783,
+              "cache_read": 5248,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1032
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6211,
+            "output_tokens": 99,
+            "total_tokens": 6310,
+            "detail": {
+              "cache_miss": 195,
+              "cache_read": 6016,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1135
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 8469,
+            "output_tokens": 95,
+            "total_tokens": 8564,
+            "detail": {
+              "cache_miss": 2197,
+              "cache_read": 6272,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1257
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 355343,
+        "output_tokens": 7368,
+        "total_tokens": 362711,
+        "detail": {
+          "requests": 34,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 14517,
+      "output": "The `-s s1 evaluate \u003cscript\u003e` form consumed the flag differently. Let me use the documented positional form: `evaluate \u003csession\u003e \u003cscript\u003e`."
+    },
+    {
+      "family": "browser",
+      "group": -3,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 72,
+            "total_tokens": 3679,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 698
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3710,
+            "output_tokens": 51,
+            "total_tokens": 3761,
+            "detail": {
+              "cache_miss": 254,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 935
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3796,
+            "output_tokens": 58,
+            "total_tokens": 3854,
+            "detail": {
+              "cache_miss": 212,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1179
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4523,
+            "output_tokens": 85,
+            "total_tokens": 4608,
+            "detail": {
+              "cache_miss": 683,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1083
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4626,
+            "output_tokens": 67,
+            "total_tokens": 4693,
+            "detail": {
+              "cache_miss": 146,
+              "cache_read": 4480,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1041
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4744,
+            "output_tokens": 42,
+            "total_tokens": 4786,
+            "detail": {
+              "cache_miss": 136,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 756
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5406,
+            "output_tokens": 123,
+            "total_tokens": 5529,
+            "detail": {
+              "cache_miss": 670,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1095
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5610,
+            "output_tokens": 103,
+            "total_tokens": 5713,
+            "detail": {
+              "cache_miss": 234,
+              "cache_read": 5376,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 900
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5791,
+            "output_tokens": 109,
+            "total_tokens": 5900,
+            "detail": {
+              "cache_miss": 159,
+              "cache_read": 5632,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1106
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5980,
+            "output_tokens": 49,
+            "total_tokens": 6029,
+            "detail": {
+              "cache_miss": 220,
+              "cache_read": 5760,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 577
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6692,
+            "output_tokens": 134,
+            "total_tokens": 6826,
+            "detail": {
+              "cache_miss": 676,
+              "cache_read": 6016,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 994
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 10680,
+            "output_tokens": 1367,
+            "total_tokens": 12047,
+            "detail": {
+              "cache_miss": 6072,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 5535
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 12108,
+            "output_tokens": 1276,
+            "total_tokens": 13384,
+            "detail": {
+              "cache_miss": 204,
+              "cache_read": 11904,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 3998
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 13445,
+            "output_tokens": 1121,
+            "total_tokens": 14566,
+            "detail": {
+              "cache_miss": 261,
+              "cache_read": 13184,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 3367
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 14599,
+            "output_tokens": 352,
+            "total_tokens": 14951,
+            "detail": {
+              "cache_miss": 135,
+              "cache_read": 14464,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 2006
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 286420,
+        "output_tokens": 6078,
+        "total_tokens": 292498,
+        "detail": {
+          "requests": 29,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 26865,
+      "output": "The search submitted successfully and the page returned a fresh receipt.\n\n**Result**\n\n- **Page:** `http://127.0.0.1:64315/?layout=-3` (\"Catalogue -3\")\n- **Term entered:** `当前-browser--3 'quote' \\ path` (verified in the field before submission)\n- **Server receipt:** `server-runtime:dlwsjkjkqa98:bt`\n\nNote: an existing session was already on `?layout=-1` (with its own unrelated receipt); I closed it and opened the requested `?layout=-3` page so the receipt corresponds to the specified layout and exact term."
+    },
+    {
+      "family": "browser",
+      "group": 0,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 71,
+            "total_tokens": 3678,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 765
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3709,
+            "output_tokens": 48,
+            "total_tokens": 3757,
+            "detail": {
+              "cache_miss": 253,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 702
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3799,
+            "output_tokens": 59,
+            "total_tokens": 3858,
+            "detail": {
+              "cache_miss": 215,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 834
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4544,
+            "output_tokens": 128,
+            "total_tokens": 4672,
+            "detail": {
+              "cache_miss": 704,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1274
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4723,
+            "output_tokens": 87,
+            "total_tokens": 4810,
+            "detail": {
+              "cache_miss": 243,
+              "cache_read": 4480,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 696
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5508,
+            "output_tokens": 132,
+            "total_tokens": 5640,
+            "detail": {
+              "cache_miss": 772,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1129
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 8146,
+      "output": "The search submitted with the exact term and the server returned a fresh receipt.\n\n**Server receipt:** `server-runtime:dlwsjwvzf9cs:jt`\n\nDetails:\n- Page: http://127.0.0.1:64315/?layout=-3 (\"Current catalogue\")\n- Search term (input value confirmed): `当前-browser-0 'quote' \\ path`\n- Output element text: `Receipt: server-runtime:dlwsjwvzf9cs:jt`\n\nThe receipt changed from the pre-existing `server-runtime:dlwsjkjkqa98:bt`, confirming this result came from the new submission."
+    },
+    {
+      "family": "browser",
+      "group": 0,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 0,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 1,
+      "arm": "ordinary_llm",
+      "success": false,
+      "error": "final composition omitted current server receipt",
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 71,
+            "total_tokens": 3678,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 685
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3728,
+            "output_tokens": 60,
+            "total_tokens": 3788,
+            "detail": {
+              "cache_miss": 144,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 809
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3819,
+            "output_tokens": 38,
+            "total_tokens": 3857,
+            "detail": {
+              "cache_miss": 235,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 839
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3899,
+            "output_tokens": 53,
+            "total_tokens": 3952,
+            "detail": {
+              "cache_miss": 187,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 713
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4618,
+            "output_tokens": 148,
+            "total_tokens": 4766,
+            "detail": {
+              "cache_miss": 778,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1176
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4876,
+            "output_tokens": 138,
+            "total_tokens": 5014,
+            "detail": {
+              "cache_miss": 140,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 965
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5065,
+            "output_tokens": 42,
+            "total_tokens": 5107,
+            "detail": {
+              "cache_miss": 201,
+              "cache_read": 4864,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 865
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5727,
+            "output_tokens": 140,
+            "total_tokens": 5867,
+            "detail": {
+              "cache_miss": 735,
+              "cache_read": 4992,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 948
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5948,
+            "output_tokens": 107,
+            "total_tokens": 6055,
+            "detail": {
+              "cache_miss": 188,
+              "cache_read": 5760,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1146
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6133,
+            "output_tokens": 109,
+            "total_tokens": 6242,
+            "detail": {
+              "cache_miss": 245,
+              "cache_read": 5888,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1680
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6322,
+            "output_tokens": 57,
+            "total_tokens": 6379,
+            "detail": {
+              "cache_miss": 178,
+              "cache_read": 6144,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 508
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7048,
+            "output_tokens": 68,
+            "total_tokens": 7116,
+            "detail": {
+              "cache_miss": 776,
+              "cache_read": 6272,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 774
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 12981,
+      "output": "The search was submitted at `?layout=1` with the exact term and returned a fresh receipt. Let me close the session I created."
+    },
+    {
+      "family": "browser",
+      "group": 1,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 1,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 2,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 73,
+            "total_tokens": 3680,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 724
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3711,
+            "output_tokens": 51,
+            "total_tokens": 3762,
+            "detail": {
+              "cache_miss": 255,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1312
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4428,
+            "output_tokens": 113,
+            "total_tokens": 4541,
+            "detail": {
+              "cache_miss": 716,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1165
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4659,
+            "output_tokens": 65,
+            "total_tokens": 4724,
+            "detail": {
+              "cache_miss": 179,
+              "cache_read": 4480,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 644
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4759,
+            "output_tokens": 90,
+            "total_tokens": 4849,
+            "detail": {
+              "cache_miss": 151,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 912
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4900,
+            "output_tokens": 54,
+            "total_tokens": 4954,
+            "detail": {
+              "cache_miss": 164,
+              "cache_read": 4736,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 720
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5574,
+            "output_tokens": 80,
+            "total_tokens": 5654,
+            "detail": {
+              "cache_miss": 710,
+              "cache_read": 4864,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1022
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5687,
+            "output_tokens": 72,
+            "total_tokens": 5759,
+            "detail": {
+              "cache_miss": 183,
+              "cache_read": 5504,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 886
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5789,
+            "output_tokens": 63,
+            "total_tokens": 5852,
+            "detail": {
+              "cache_miss": 157,
+              "cache_read": 5632,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 891
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5890,
+            "output_tokens": 42,
+            "total_tokens": 5932,
+            "detail": {
+              "cache_miss": 258,
+              "cache_read": 5632,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 761
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6604,
+            "output_tokens": 212,
+            "total_tokens": 6816,
+            "detail": {
+              "cache_miss": 716,
+              "cache_read": 5888,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1596
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 11863,
+      "output": "The search was submitted and the server returned a fresh receipt.\n\n**Result:** Searching for the exact term `当前-browser-2 'quote' \\ path` on the layout-2 page (`http://127.0.0.1:64315/?layout=2`) produced the server receipt:\n\n```\nReceipt: server-runtime:dlwsk6lgm31c:o1\n```\n\nDetails:\n- Page: \"Catalogue 2\" (layout=2), form with `input[name=term]` and \"Find\" button.\n- The input held exactly `当前-browser-2 'quote' \\ path` (verified via `input-value` — a single backslash before \"path\") when the Find button was clicked.\n- The page's `\u003coutput\u003e` element replaced \"Waiting for a query\" with the receipt above.\n\nNote: a pre-existing session (`s1`) was already open at layout=-3; I left it untouched and used a separate session (`s2`) on the requested layout=2 URL."
+    },
+    {
+      "family": "browser",
+      "group": 2,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 2,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 3,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 71,
+            "total_tokens": 3678,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 869
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3709,
+            "output_tokens": 47,
+            "total_tokens": 3756,
+            "detail": {
+              "cache_miss": 253,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1073
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3824,
+            "output_tokens": 85,
+            "total_tokens": 3909,
+            "detail": {
+              "cache_miss": 240,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 958
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3960,
+            "output_tokens": 42,
+            "total_tokens": 4002,
+            "detail": {
+              "cache_miss": 248,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 757
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4622,
+            "output_tokens": 130,
+            "total_tokens": 4752,
+            "detail": {
+              "cache_miss": 654,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 978
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4833,
+            "output_tokens": 104,
+            "total_tokens": 4937,
+            "detail": {
+              "cache_miss": 225,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 956
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5015,
+            "output_tokens": 112,
+            "total_tokens": 5127,
+            "detail": {
+              "cache_miss": 151,
+              "cache_read": 4864,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1063
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5207,
+            "output_tokens": 42,
+            "total_tokens": 5249,
+            "detail": {
+              "cache_miss": 215,
+              "cache_read": 4992,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 585
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5921,
+            "output_tokens": 157,
+            "total_tokens": 6078,
+            "detail": {
+              "cache_miss": 673,
+              "cache_read": 5248,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1210
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 9810,
+      "output": "The search returned a server receipt.\n\n**Server receipt:** `server-runtime:dlwskc1onq4g:qe`\n\nSteps taken:\n1. Opened `http://127.0.0.1:64315/?layout=3` in a new browser session (page title \"Catalogue 3\").\n2. Filled the \"Search term\" field with the exact term `当前-browser-3 'quote' \\ path` and verified the input value matched character-for-character (single backslash, straight single quotes).\n3. Clicked **Find**, which submitted the query.\n4. Read the page's `\u003coutput\u003e` element, which displayed `Receipt: server-runtime:dlwskc1onq4g:qe`."
+    },
+    {
+      "family": "browser",
+      "group": 3,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 3,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 4,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3607,
+            "output_tokens": 68,
+            "total_tokens": 3675,
+            "detail": {
+              "cache_miss": 279,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 637
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3726,
+            "output_tokens": 51,
+            "total_tokens": 3777,
+            "detail": {
+              "cache_miss": 142,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 601
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3923,
+            "output_tokens": 72,
+            "total_tokens": 3995,
+            "detail": {
+              "cache_miss": 211,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 626
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4024,
+            "output_tokens": 102,
+            "total_tokens": 4126,
+            "detail": {
+              "cache_miss": 184,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 905
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4240,
+            "output_tokens": 71,
+            "total_tokens": 4311,
+            "detail": {
+              "cache_miss": 144,
+              "cache_read": 4096,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 760
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4344,
+            "output_tokens": 61,
+            "total_tokens": 4405,
+            "detail": {
+              "cache_miss": 248,
+              "cache_read": 4096,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 644
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4435,
+            "output_tokens": 59,
+            "total_tokens": 4494,
+            "detail": {
+              "cache_miss": 211,
+              "cache_read": 4224,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 830
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4532,
+            "output_tokens": 52,
+            "total_tokens": 4584,
+            "detail": {
+              "cache_miss": 180,
+              "cache_read": 4352,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1043
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4789,
+            "output_tokens": 86,
+            "total_tokens": 4875,
+            "detail": {
+              "cache_miss": 309,
+              "cache_read": 4480,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1154
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 18475,
+      "output": "The search returned a server receipt.\n\n**Result**\n\nSearched for the exact term `当前-browser-4 'quote' \\ path` in the search box (`input[name=term]`) at http://127.0.0.1:64315/?layout=4 (layout 4) and submitted.\n\nServer receipt: **`server-runtime:dlwskgjycw0s:sb`**"
+    },
+    {
+      "family": "browser",
+      "group": 4,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "browser",
+      "group": 4,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": -1,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 67,
+            "total_tokens": 3670,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 653
+        },
+        {
+          "purpose": "claim",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7299,
+            "output_tokens": 91,
+            "total_tokens": 7390,
+            "detail": {
+              "cache_miss": 387,
+              "cache_read": 6912,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1017
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3734,
+            "output_tokens": 83,
+            "total_tokens": 3817,
+            "detail": {
+              "cache_miss": 150,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 912
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3868,
+            "output_tokens": 70,
+            "total_tokens": 3938,
+            "detail": {
+              "cache_miss": 156,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1140
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3989,
+            "output_tokens": 62,
+            "total_tokens": 4051,
+            "detail": {
+              "cache_miss": 149,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 709
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4121,
+            "output_tokens": 179,
+            "total_tokens": 4300,
+            "detail": {
+              "cache_miss": 153,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1047
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 66682,
+        "output_tokens": 1150,
+        "total_tokens": 67832,
+        "detail": {
+          "requests": 8,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 9908,
+      "output": "The operation completed. Here is the outcome:\n\n**Task:** Submit exactly one experiment for actor `当前-async--1 'quote' \\ path`, then inspect that operation (not resubmit) until complete, and return the receipt.\n\n**Result:**\n- Submission returned a lost response with host call ID `call_00_qRxmEV6xT8oM6b23YDUq4798` (status 503 at submit).\n- I did **not** resubmit; I inspected the same native operation ID repeatedly via `experiment status`.\n- Polls showed `complete:false` (count 1, status 200) twice, then `complete:true`.\n- **Server receipt:** `server-runtime:dlwskp3vz624:u9`\n\nOnly one experiment was submitted, and the same operation was followed to completion."
+    },
+    {
+      "family": "async",
+      "group": -2,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 59,
+            "total_tokens": 3662,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 809
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3727,
+            "output_tokens": 78,
+            "total_tokens": 3805,
+            "detail": {
+              "cache_miss": 143,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 827
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3857,
+            "output_tokens": 73,
+            "total_tokens": 3930,
+            "detail": {
+              "cache_miss": 145,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 661
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3982,
+            "output_tokens": 62,
+            "total_tokens": 4044,
+            "detail": {
+              "cache_miss": 142,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 610
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4113,
+            "output_tokens": 152,
+            "total_tokens": 4265,
+            "detail": {
+              "cache_miss": 145,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1436
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5933,
+            "output_tokens": 1081,
+            "total_tokens": 7014,
+            "detail": {
+              "cache_miss": 1325,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 4381
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7075,
+            "output_tokens": 943,
+            "total_tokens": 8018,
+            "detail": {
+              "cache_miss": 163,
+              "cache_read": 6912,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 3577
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 8053,
+            "output_tokens": 1143,
+            "total_tokens": 9196,
+            "detail": {
+              "cache_miss": 245,
+              "cache_read": 7808,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 4219
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 9231,
+            "output_tokens": 1106,
+            "total_tokens": 10337,
+            "detail": {
+              "cache_miss": 143,
+              "cache_read": 9088,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 4182
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 74750,
+        "output_tokens": 1432,
+        "total_tokens": 76182,
+        "detail": {
+          "requests": 9,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 20336,
+      "output": "The operation completed. Here is the result.\n\n## Summary\n\n- **Actor:** `当前-async--2 'quote' \\ path`\n- **Native operation ID:** `call_00_4AfrF1uaYxQPBV8jFu1l2228`\n- **Submission:** one experiment, submitted once\n- **Outcome:** the initial `experiment submit` response was lost (status 503), so I recovered the result by inspecting that **same** host call ID — no resubmission was performed, per instruction.\n- **Server receipt:** `server-runtime:dlwsktntkrz8:wn`\n\n**Final receipt:** `server-runtime:dlwsktntkrz8:wn`"
+    },
+    {
+      "family": "async",
+      "group": -3,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 60,
+            "total_tokens": 3663,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 537
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3725,
+            "output_tokens": 82,
+            "total_tokens": 3807,
+            "detail": {
+              "cache_miss": 141,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 765
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3856,
+            "output_tokens": 75,
+            "total_tokens": 3931,
+            "detail": {
+              "cache_miss": 144,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 734
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3980,
+            "output_tokens": 67,
+            "total_tokens": 4047,
+            "detail": {
+              "cache_miss": 140,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 755
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4113,
+            "output_tokens": 152,
+            "total_tokens": 4265,
+            "detail": {
+              "cache_miss": 145,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1308
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 66318,
+        "output_tokens": 1332,
+        "total_tokens": 67650,
+        "detail": {
+          "requests": 8,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 4615,
+      "output": "The operation is now complete. Here is the server receipt:\n\n**Server receipt:** `server-runtime:dlwsl308asns:10h`\n\nSummary of what happened:\n- Submitted exactly one experiment for actor `当前-async--3 'quote' \\ path` → native operation `call_00_8Z9vu7fOGOmfvtUMzbJC2060`.\n- The initial response was lost (no receipt returned), so I did **not** resubmit.\n- I inspected that same operation ID repeatedly until it reported `complete: true`, confirming the submit had actually gone through (count: 1).\n- The final receipt from the server is `server-runtime:dlwsl308asns:10h`."
+    },
+    {
+      "family": "async",
+      "group": 0,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 59,
+            "total_tokens": 3662,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 755
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3725,
+            "output_tokens": 75,
+            "total_tokens": 3800,
+            "detail": {
+              "cache_miss": 141,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 771
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3850,
+            "output_tokens": 69,
+            "total_tokens": 3919,
+            "detail": {
+              "cache_miss": 138,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 949
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3969,
+            "output_tokens": 58,
+            "total_tokens": 4027,
+            "detail": {
+              "cache_miss": 257,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 947
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4096,
+            "output_tokens": 198,
+            "total_tokens": 4294,
+            "detail": {
+              "cache_miss": 256,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1211
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 4638,
+      "output": "The operation is now complete. Here is the server receipt.\n\n**Result**\n\n- **Actor:** `当前-async-0 'quote' \\ path`\n- **Native operation ID:** `call_00_o2OlqC4e6HKi1ZT1tbaz3807`\n- **Submissions:** exactly 1 (no resubmit after the lost response)\n- **Final status:** complete, HTTP 200, count 1\n- **Server receipt:** `server-runtime:dlwsl54lwwi8:12w`\n\nThe initial `submit` returned a 503 with the response lost, but it had already registered operation `call_00_o2OlqC4e6HKi1ZT1tbaz3807`. I inspected that same host call ID (rather than re-submitting) until `complete:true`, and the server receipt is `server-runtime:dlwsl54lwwi8:12w`."
+    },
+    {
+      "family": "async",
+      "group": 0,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 0,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 1,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 65,
+            "total_tokens": 3668,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 912
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3729,
+            "output_tokens": 83,
+            "total_tokens": 3812,
+            "detail": {
+              "cache_miss": 145,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 965
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3860,
+            "output_tokens": 63,
+            "total_tokens": 3923,
+            "detail": {
+              "cache_miss": 148,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 676
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3971,
+            "output_tokens": 56,
+            "total_tokens": 4027,
+            "detail": {
+              "cache_miss": 259,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 820
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4094,
+            "output_tokens": 125,
+            "total_tokens": 4219,
+            "detail": {
+              "cache_miss": 254,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1120
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 4499,
+      "output": "Done. Submitted exactly one experiment for actor `当前-async-1 'quote' \\ path`. The initial submit response was lost (503), but per instructions I did not resubmit — I inspected the same native operation ID until it completed.\n\nServer receipt:\n- **native_operation_id:** `call_00_Q13YSq4obE9UXl57Llp75817`\n- **complete:** true\n- **count:** 1 (single submission)\n- **status:** 200\n- **receipt:** `server-runtime:dlwsl79c6qiw:13x`"
+    },
+    {
+      "family": "async",
+      "group": 1,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 1,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 2,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 62,
+            "total_tokens": 3665,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 954
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3725,
+            "output_tokens": 77,
+            "total_tokens": 3802,
+            "detail": {
+              "cache_miss": 141,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 868
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3849,
+            "output_tokens": 55,
+            "total_tokens": 3904,
+            "detail": {
+              "cache_miss": 137,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 801
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3951,
+            "output_tokens": 58,
+            "total_tokens": 4009,
+            "detail": {
+              "cache_miss": 239,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 672
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4074,
+            "output_tokens": 147,
+            "total_tokens": 4221,
+            "detail": {
+              "cache_miss": 234,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1103
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 9441,
+      "output": "The operation completed. Here is the server receipt:\n\n- **Native operation ID:** `call_00_rEcAxkasjHiLcuumYorq9389`\n- **Complete:** `true`\n- **Count:** `1` (exactly one submission, no resubmission)\n- **Server receipt:** `server-runtime:dlwsl9brqv60:14y`\n\nI submitted the experiment for actor `当前-async-2 'quote' \\ path` exactly once. The initial response was lost (503), so I inspected the same host call ID via `experiment status` rather than resubmitting. It became complete, and the receipt above is from the server for that single operation."
+    },
+    {
+      "family": "async",
+      "group": 2,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 2,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 3,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 59,
+            "total_tokens": 3662,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 998
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3725,
+            "output_tokens": 76,
+            "total_tokens": 3801,
+            "detail": {
+              "cache_miss": 141,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 829
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3851,
+            "output_tokens": 69,
+            "total_tokens": 3920,
+            "detail": {
+              "cache_miss": 139,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 762
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3970,
+            "output_tokens": 58,
+            "total_tokens": 4028,
+            "detail": {
+              "cache_miss": 258,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 995
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4095,
+            "output_tokens": 156,
+            "total_tokens": 4251,
+            "detail": {
+              "cache_miss": 255,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1492
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 5081,
+      "output": "The operation is complete. Here is the server receipt.\n\n**Result**\n\n- **Actor submitted:** `当前-async-3 'quote' \\ path` (exactly one submission)\n- **Native operation ID:** `call_00_s9VTFDHfRbqv5gLpASRf9065`\n- **Final status:** `complete: true`, `count: 1`\n- **Server receipt:** `server-runtime:dlwsldnxoi0o:160`\n\nNote: the initial submit returned a lost response (status 503), so I did not resubmit. Instead I polled the same host call ID until it reported completion. The `count` field stayed at 1 throughout, confirming only one experiment was ever submitted."
+    },
+    {
+      "family": "async",
+      "group": 3,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 3,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 4,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3603,
+            "output_tokens": 63,
+            "total_tokens": 3666,
+            "detail": {
+              "cache_miss": 275,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1098
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3728,
+            "output_tokens": 79,
+            "total_tokens": 3807,
+            "detail": {
+              "cache_miss": 144,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 844
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3856,
+            "output_tokens": 74,
+            "total_tokens": 3930,
+            "detail": {
+              "cache_miss": 144,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1046
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3979,
+            "output_tokens": 57,
+            "total_tokens": 4036,
+            "detail": {
+              "cache_miss": 139,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 646
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4103,
+            "output_tokens": 136,
+            "total_tokens": 4239,
+            "detail": {
+              "cache_miss": 135,
+              "cache_read": 3968,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1306
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 4944,
+      "output": "The operation is now complete. Here is the server receipt.\n\n**Operation:** `call_00_UL4mMQsPra7vK7pRZU175885`\n**Status:** `complete: true`, HTTP `200`\n**Receipt:** `server-runtime:dlwslfzzty2k:171`\n\nNotes:\n- Exactly one experiment was submitted for actor `当前-async-4 'quote' \\ path`.\n- The first submit returned a lost response (503) but the native operation did register; I did **not** resubmit.\n- I inspected the same host call ID until `complete: true` and returned its receipt."
+    },
+    {
+      "family": "async",
+      "group": 4,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "async",
+      "group": 4,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": -1,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 60,
+            "total_tokens": 3656,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 875
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3698,
+            "output_tokens": 58,
+            "total_tokens": 3756,
+            "detail": {
+              "cache_miss": 242,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 863
+        },
+        {
+          "purpose": "claim",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7287,
+            "output_tokens": 138,
+            "total_tokens": 7425,
+            "detail": {
+              "cache_miss": 375,
+              "cache_read": 6912,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1226
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3795,
+            "output_tokens": 113,
+            "total_tokens": 3908,
+            "detail": {
+              "cache_miss": 211,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 987
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3989,
+            "output_tokens": 203,
+            "total_tokens": 4192,
+            "detail": {
+              "cache_miss": 149,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1328
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 41999,
+        "output_tokens": 806,
+        "total_tokens": 42805,
+        "detail": {
+          "requests": 5,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 4588,
+      "output": "Both entries were appended as separate identical effects.\n\n**Results:**\n- **Current count:** `2` (matches the exactly-two requested repetitions)\n- **Server receipt:** `server-runtime:dlwsli9unon8:183` (from summary; `complete: true`)\n- **Operation receipts:**\n  - 1st append: `call_00_hGpuaU442Mj6s4i0mwcC4687` → status `200`\n  - 2nd append: `call_00_0NosFAekSCCL14nOctdy6781` → status `200`\n\nThe summary reports `complete: true` with count 2, while the per-operation status for the second call shows `complete: false`, `count: 2` — consistent with the operation-level receipt not being the final aggregate. The authoritative aggregate is the summary: 2 entries, receipt `server-runtime:dlwsli9unon8:183`."
+    },
+    {
+      "family": "repeat",
+      "group": -2,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 71,
+            "total_tokens": 3667,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1048
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3714,
+            "output_tokens": 56,
+            "total_tokens": 3770,
+            "detail": {
+              "cache_miss": 258,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 644
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3818,
+            "output_tokens": 144,
+            "total_tokens": 3962,
+            "detail": {
+              "cache_miss": 234,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 899
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4092,
+            "output_tokens": 140,
+            "total_tokens": 4232,
+            "detail": {
+              "cache_miss": 252,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1031
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 5840,
+            "output_tokens": 791,
+            "total_tokens": 6631,
+            "detail": {
+              "cache_miss": 1232,
+              "cache_read": 4608,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 3146
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 6692,
+            "output_tokens": 797,
+            "total_tokens": 7489,
+            "detail": {
+              "cache_miss": 164,
+              "cache_read": 6528,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 2790
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 7522,
+            "output_tokens": 919,
+            "total_tokens": 8441,
+            "detail": {
+              "cache_miss": 226,
+              "cache_read": 7296,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 2883
+        },
+        {
+          "purpose": "compilation",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 8474,
+            "output_tokens": 128,
+            "total_tokens": 8602,
+            "detail": {
+              "cache_miss": 154,
+              "cache_read": 8320,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1095
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 75529,
+        "output_tokens": 1533,
+        "total_tokens": 77062,
+        "detail": {
+          "requests": 9,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 13839,
+      "output": "Done. Both identical appends were submitted as separate effects.\n\n**Results:**\n- **Count:** `2` (complete: true) — both entries recorded.\n- **Server receipt:** `server-runtime:dlwslkdrw9cc:19z`\n- Operation receipts: `call_00_w6Dbl5AWKFQ6bZ50Cyvb4351` and `call_00_kbo3XZAHUHgOKgm2nD8U1512`, each with `status: 200`.\n\nThe actor name with embedded quote, backslash, and text was passed as a single quoted argument, so it reached the tool literally as intended."
+    },
+    {
+      "family": "repeat",
+      "group": -3,
+      "arm": "cold_learning",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 65,
+            "total_tokens": 3661,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 845
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3704,
+            "output_tokens": 58,
+            "total_tokens": 3762,
+            "detail": {
+              "cache_miss": 248,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1021
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3805,
+            "output_tokens": 81,
+            "total_tokens": 3886,
+            "detail": {
+              "cache_miss": 221,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1065
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3937,
+            "output_tokens": 74,
+            "total_tokens": 4011,
+            "detail": {
+              "cache_miss": 225,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 834
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 4050,
+            "output_tokens": 129,
+            "total_tokens": 4179,
+            "detail": {
+              "cache_miss": 210,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1153
+        }
+      ],
+      "jev_usage": {
+        "input_tokens": 82926,
+        "output_tokens": 1546,
+        "total_tokens": 84472,
+        "detail": {
+          "requests": 10,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 5320,
+      "output": "Done.\n\n**Results:**\n- Two identical appends performed as separate effects, both HTTP 200:\n  - `call_00_z1lbO4ocdZ0s9vmWnShn8757`\n  - `call_00_FIe8f3pE5Z83AltTAVbJ2287`\n- **Current count:** 2\n- **Server receipt:** `server-runtime:dlwslqqpj8ug:1dt` (complete: true)\n\nThe actor name was passed through as a single quoted argument, preserving the embedded single quotes and literal backslash path exactly."
+    },
+    {
+      "family": "repeat",
+      "group": 0,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 60,
+            "total_tokens": 3656,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 872
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3697,
+            "output_tokens": 49,
+            "total_tokens": 3746,
+            "detail": {
+              "cache_miss": 241,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 642
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3787,
+            "output_tokens": 115,
+            "total_tokens": 3902,
+            "detail": {
+              "cache_miss": 203,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 791
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3987,
+            "output_tokens": 165,
+            "total_tokens": 4152,
+            "detail": {
+              "cache_miss": 147,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1196
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 3505,
+      "output": "Both effectful appends are done and verified.\n\n**Results:**\n- **Count for actor** `当前-repeat-0 'quote' \\ path`: **2** (two distinct entries, as required)\n- **Server receipt**: `server-runtime:dlwslt6rih1w:1gi`\n\n**Receipts for the two individual appends:**\n1. `call_00_77A4gf5iwBMqur6rk5p64341` — status 200\n2. `call_00_ujpx5lcFvXuyoWeCK46p7896` — status 200\n\nThe two appends were preserved as separate, intentional effects (not deduplicated), and the summary confirms `complete: true` with a count of 2."
+    },
+    {
+      "family": "repeat",
+      "group": 0,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 0,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 1,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 58,
+            "total_tokens": 3654,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 654
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3698,
+            "output_tokens": 59,
+            "total_tokens": 3757,
+            "detail": {
+              "cache_miss": 242,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 687
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3797,
+            "output_tokens": 62,
+            "total_tokens": 3859,
+            "detail": {
+              "cache_miss": 213,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 657
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3898,
+            "output_tokens": 161,
+            "total_tokens": 4059,
+            "detail": {
+              "cache_miss": 186,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1318
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 3319,
+      "output": "Done. Both identical appends were performed as separate effects.\n\n- **Append 1:** native operation `call_00_92W0o7PHpOe9dqcDvoCJ6483`, status 200\n- **Append 2:** native operation `call_00_bCOxuUMQSXHOH3AUf4Rm6203`, status 200\n- **Actor:** `当前-repeat-1 'quote' \\ path`\n- **Current count:** 2\n- **Server receipt:** `server-runtime:dlwsluss8vw8:1hg`\n\nNote: the actor name was passed verbatim (including the single quotes and backslash) as a shell-quoted argument, so the literal string was preserved rather than expanded."
+    },
+    {
+      "family": "repeat",
+      "group": 1,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 1,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 2,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 64,
+            "total_tokens": 3660,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 969
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3704,
+            "output_tokens": 49,
+            "total_tokens": 3753,
+            "detail": {
+              "cache_miss": 248,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 714
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3796,
+            "output_tokens": 101,
+            "total_tokens": 3897,
+            "detail": {
+              "cache_miss": 212,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 890
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3985,
+            "output_tokens": 188,
+            "total_tokens": 4173,
+            "detail": {
+              "cache_miss": 145,
+              "cache_read": 3840,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1350
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 3926,
+      "output": "Both appends completed identically.\n\n**Results:**\n- **Count:** 2 (for actor `当前-repeat-2 'quote' \\ path`)\n- **Receipts:**\n  - First append: `call_00_2ChtCW8TQZvUj5LeVEPt7849` (status 200)\n  - Second append: `call_00_C4cTCoZlJR1i8SZ2Nn0I1009` (status 200)\n- **Server receipt (summary):** `server-runtime:dlwslwbqp2q8:1i9`, `complete: true`, `count: 2`\n\nNote: the `operation-status` for the second call reported `complete: false` while the summary reported `complete: true` with count 2 — the authoritative count is 2, matching exactly the two requested appends."
+    },
+    {
+      "family": "repeat",
+      "group": 2,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 2,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 3,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 59,
+            "total_tokens": 3655,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1220
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3698,
+            "output_tokens": 59,
+            "total_tokens": 3757,
+            "detail": {
+              "cache_miss": 242,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 629
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3800,
+            "output_tokens": 66,
+            "total_tokens": 3866,
+            "detail": {
+              "cache_miss": 216,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 648
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3906,
+            "output_tokens": 128,
+            "total_tokens": 4034,
+            "detail": {
+              "cache_miss": 194,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 951
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 3454,
+      "output": "Both entries appended successfully.\n\n- **Actor:** `当前-repeat-3 'quote' \\ path`\n- **Appends (two, identical and separate):**\n  1. `call_00_0XqcN1OfKH683gBQcI5o2025` → status 200\n  2. `call_00_HfZaSisU7X0mMVF7cj0e9639` → status 200\n- **Current count:** 2 (complete: true)\n- **Server receipt:** `server-runtime:dlwsly4py1js:1j7`"
+    },
+    {
+      "family": "repeat",
+      "group": 3,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 3,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 4,
+      "arm": "ordinary_llm",
+      "success": true,
+      "llm_requests": [
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3596,
+            "output_tokens": 59,
+            "total_tokens": 3655,
+            "detail": {
+              "cache_miss": 268,
+              "cache_read": 3328,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 844
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3695,
+            "output_tokens": 49,
+            "total_tokens": 3744,
+            "detail": {
+              "cache_miss": 239,
+              "cache_read": 3456,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 961
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3785,
+            "output_tokens": 59,
+            "total_tokens": 3844,
+            "detail": {
+              "cache_miss": 201,
+              "cache_read": 3584,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 747
+        },
+        {
+          "purpose": "execution",
+          "model": "deepseek-flash",
+          "usage": {
+            "input_tokens": 3885,
+            "output_tokens": 154,
+            "total_tokens": 4039,
+            "detail": {
+              "cache_miss": 173,
+              "cache_read": 3712,
+              "cache_write": 0
+            }
+          },
+          "elapsed_ms": 1275
+        }
+      ],
+      "jev_usage": {
+        "detail": {
+          "requests": 0,
+          "usage_missing": 0
+        }
+      },
+      "source_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "elapsed_ms": 3831,
+      "output": "Done — two identical appends executed as separate effects.\n\n**Results:**\n- Append 1: `call_00_J0zbOYtHLgAdSShAFZXl1464` → status 200\n- Append 2: `call_00_7bcwo8wrfmgcgQovCUGI3508` → status 200\n- **Current count for actor `当前-repeat-4 'quote' \\ path`: 2** (complete: true)\n- **Server receipt: `server-runtime:dlwslzpvz5ng:1k0`**\n\nThe count of 2 confirms both entries registered for the exact actor string, including its full-width prefix, single quotes, and trailing backslash."
+    },
+    {
+      "family": "repeat",
+      "group": 4,
+      "arm": "reflex_llm_judge",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    },
+    {
+      "family": "repeat",
+      "group": 4,
+      "arm": "reflex_jev",
+      "success": false,
+      "error": "no autonomously qualified source after three training tasks",
+      "llm_requests": null,
+      "elapsed_ms": 0
+    }
+  ],
+  "conclusion": "inconclusive",
+  "created": "2026-10-05T09:18:16.6992785Z",
+  "expanded_groups": 30,
+  "initial_groups": 5,
+  "jev_model": "jev-1.13.0",
+  "libraries": {
+    "async": {
+      "claims": {
+        "c00a2620293f3e1a7": {
+          "text": "Submit exactly one experiment for a given actor; if a submission response is lost or unclear, inspect the existing operation rather than submitting again.",
+          "task": "480f0939f242c0e1ca649a45f065ed68e52a3f7e398d7b636c246a63ee5b3ae6",
+          "consumed": false
+        },
+        "c6b0f24bc1e763ffb": {
+          "text": "Inspect the same experiment operation by its native call ID repeatedly until it reports completion, then return the operation's server receipt.",
+          "task": "480f0939f242c0e1ca649a45f065ed68e52a3f7e398d7b636c246a63ee5b3ae6",
+          "consumed": false
+        },
+        "c8aad17a3fb50979d": {
+          "text": "Preserve actor names exactly as provided, including special characters such as quotes, backslashes, and spaces, without normalization.",
+          "task": "480f0939f242c0e1ca649a45f065ed68e52a3f7e398d7b636c246a63ee5b3ae6",
+          "consumed": false
+        }
+      },
+      "reflexes": {},
+      "compiled": {}
+    },
+    "browser": {
+      "claims": {
+        "c4706b5b636af0290": {
+          "text": "When an exact search term contains quoting, escaping, or path-like characters, encode or enter it so the term reaches the search field literally and the page's results reflect that exact term.",
+          "task": "5f903a51f9b4e27de300b1a2ed42c8323c4f7bf4a48cb1ac332fafbac572cef6",
+          "consumed": false
+        },
+        "c5415a11f8633fc62": {
+          "text": "When a task directs the browser to a web UI, navigate a persistent browser session to the given URL and inspect the live page state before acting.",
+          "task": "5f903a51f9b4e27de300b1a2ed42c8323c4f7bf4a48cb1ac332fafbac572cef6",
+          "consumed": false
+        },
+        "c9860b2af80f07ec1": {
+          "text": "Perform a text search through the site's own search interface, entering the required term verbatim and submitting it via the page's search control.",
+          "task": "5f903a51f9b4e27de300b1a2ed42c8323c4f7bf4a48cb1ac332fafbac572cef6",
+          "consumed": false
+        },
+        "cf041a69b7496bd9a": {
+          "text": "After searching, re-read the live page rather than relying on the submission acknowledgement, and extract the resulting server receipt or confirmation shown by the application as completion evidence.",
+          "task": "5f903a51f9b4e27de300b1a2ed42c8323c4f7bf4a48cb1ac332fafbac572cef6",
+          "consumed": false
+        }
+      },
+      "reflexes": {},
+      "compiled": {}
+    },
+    "repeat": {
+      "claims": {
+        "c09edd583f2d39911": {
+          "text": "Appending an experiment entry for a named actor should be treated as a distinct native occurrence even when the actor name and payload are identical to a prior append, so repeated identical appends must each be dispatched as separate effects rather than deduplicated.",
+          "task": "3fb8d23a0033d1acf81ebcb5bc6372d64902b4d66a0f206e71f6cfed1e8cbb06",
+          "consumed": false
+        },
+        "ca4e3f46e19c56279": {
+          "text": "After appending experiment entries for an actor, the reported completion evidence is the actor's current entry count and the server-side native receipt for each append; these should be read back from fresh native results rather than assumed.",
+          "task": "3fb8d23a0033d1acf81ebcb5bc6372d64902b4d66a0f206e71f6cfed1e8cbb06",
+          "consumed": false
+        },
+        "cbb5d6bb3e39358b4": {
+          "text": "When an actor identifier contains special characters such as quotes or backslashes, it must be passed through exactly as given without shell re-interpretation or normalization.",
+          "task": "3fb8d23a0033d1acf81ebcb5bc6372d64902b4d66a0f206e71f6cfed1e8cbb06",
+          "consumed": false
+        }
+      },
+      "reflexes": {},
+      "compiled": {}
+    }
+  },
+  "max_training_tasks": 3,
+  "model": "deepseek-flash",
+  "price_source": "https://api-docs.deepseek.com/quick_start/pricing off-peak; https://typesafe.ai/blog/introducing-system-one-models-and-jev; invoice not available",
+  "prices": "{\"llm_input_miss_per_million\":0.15,\"llm_input_hit_per_million\":0.003,\"llm_output_per_million\":0.6,\"jev_input_per_million\":0.042,\"jev_output_per_million\":0}",
+  "requests": [
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 73,
+        "total_tokens": 3680,
+        "detail": {
+          "cache_miss": 3607,
+          "cache_read": 0,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1001
+    },
+    {
+      "purpose": "claim",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7309,
+        "output_tokens": 143,
+        "total_tokens": 7452,
+        "detail": {
+          "cache_miss": 3853,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1075
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3731,
+        "output_tokens": 53,
+        "total_tokens": 3784,
+        "detail": {
+          "cache_miss": 147,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 634
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4404,
+        "output_tokens": 81,
+        "total_tokens": 4485,
+        "detail": {
+          "cache_miss": 692,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 888
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4518,
+        "output_tokens": 59,
+        "total_tokens": 4577,
+        "detail": {
+          "cache_miss": 166,
+          "cache_read": 4352,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 921
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4607,
+        "output_tokens": 116,
+        "total_tokens": 4723,
+        "detail": {
+          "cache_miss": 255,
+          "cache_read": 4352,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 740
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4767,
+        "output_tokens": 68,
+        "total_tokens": 4835,
+        "detail": {
+          "cache_miss": 159,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 542
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4864,
+        "output_tokens": 71,
+        "total_tokens": 4935,
+        "detail": {
+          "cache_miss": 256,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 989
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5604,
+        "output_tokens": 227,
+        "total_tokens": 5831,
+        "detail": {
+          "cache_miss": 868,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1626
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 73,
+        "total_tokens": 3680,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 908
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3711,
+        "output_tokens": 49,
+        "total_tokens": 3760,
+        "detail": {
+          "cache_miss": 255,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1026
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3795,
+        "output_tokens": 73,
+        "total_tokens": 3868,
+        "detail": {
+          "cache_miss": 211,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 787
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3918,
+        "output_tokens": 55,
+        "total_tokens": 3973,
+        "detail": {
+          "cache_miss": 206,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1002
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4642,
+        "output_tokens": 93,
+        "total_tokens": 4735,
+        "detail": {
+          "cache_miss": 674,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 776
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4770,
+        "output_tokens": 82,
+        "total_tokens": 4852,
+        "detail": {
+          "cache_miss": 162,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 948
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4970,
+        "output_tokens": 122,
+        "total_tokens": 5092,
+        "detail": {
+          "cache_miss": 234,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1148
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5151,
+        "output_tokens": 72,
+        "total_tokens": 5223,
+        "detail": {
+          "cache_miss": 159,
+          "cache_read": 4992,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 925
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5258,
+        "output_tokens": 104,
+        "total_tokens": 5362,
+        "detail": {
+          "cache_miss": 138,
+          "cache_read": 5120,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1094
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6031,
+        "output_tokens": 133,
+        "total_tokens": 6164,
+        "detail": {
+          "cache_miss": 783,
+          "cache_read": 5248,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1032
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6211,
+        "output_tokens": 99,
+        "total_tokens": 6310,
+        "detail": {
+          "cache_miss": 195,
+          "cache_read": 6016,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1135
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 8469,
+        "output_tokens": 95,
+        "total_tokens": 8564,
+        "detail": {
+          "cache_miss": 2197,
+          "cache_read": 6272,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1257
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 72,
+        "total_tokens": 3679,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 698
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3710,
+        "output_tokens": 51,
+        "total_tokens": 3761,
+        "detail": {
+          "cache_miss": 254,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 935
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3796,
+        "output_tokens": 58,
+        "total_tokens": 3854,
+        "detail": {
+          "cache_miss": 212,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1179
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4523,
+        "output_tokens": 85,
+        "total_tokens": 4608,
+        "detail": {
+          "cache_miss": 683,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1083
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4626,
+        "output_tokens": 67,
+        "total_tokens": 4693,
+        "detail": {
+          "cache_miss": 146,
+          "cache_read": 4480,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1041
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4744,
+        "output_tokens": 42,
+        "total_tokens": 4786,
+        "detail": {
+          "cache_miss": 136,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 756
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5406,
+        "output_tokens": 123,
+        "total_tokens": 5529,
+        "detail": {
+          "cache_miss": 670,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1095
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5610,
+        "output_tokens": 103,
+        "total_tokens": 5713,
+        "detail": {
+          "cache_miss": 234,
+          "cache_read": 5376,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 900
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5791,
+        "output_tokens": 109,
+        "total_tokens": 5900,
+        "detail": {
+          "cache_miss": 159,
+          "cache_read": 5632,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1106
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5980,
+        "output_tokens": 49,
+        "total_tokens": 6029,
+        "detail": {
+          "cache_miss": 220,
+          "cache_read": 5760,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 577
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6692,
+        "output_tokens": 134,
+        "total_tokens": 6826,
+        "detail": {
+          "cache_miss": 676,
+          "cache_read": 6016,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 994
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 10680,
+        "output_tokens": 1367,
+        "total_tokens": 12047,
+        "detail": {
+          "cache_miss": 6072,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 5535
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 12108,
+        "output_tokens": 1276,
+        "total_tokens": 13384,
+        "detail": {
+          "cache_miss": 204,
+          "cache_read": 11904,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 3998
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 13445,
+        "output_tokens": 1121,
+        "total_tokens": 14566,
+        "detail": {
+          "cache_miss": 261,
+          "cache_read": 13184,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 3367
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 14599,
+        "output_tokens": 352,
+        "total_tokens": 14951,
+        "detail": {
+          "cache_miss": 135,
+          "cache_read": 14464,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 2006
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 71,
+        "total_tokens": 3678,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 765
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3709,
+        "output_tokens": 48,
+        "total_tokens": 3757,
+        "detail": {
+          "cache_miss": 253,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 702
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3799,
+        "output_tokens": 59,
+        "total_tokens": 3858,
+        "detail": {
+          "cache_miss": 215,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 834
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4544,
+        "output_tokens": 128,
+        "total_tokens": 4672,
+        "detail": {
+          "cache_miss": 704,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1274
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4723,
+        "output_tokens": 87,
+        "total_tokens": 4810,
+        "detail": {
+          "cache_miss": 243,
+          "cache_read": 4480,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 696
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5508,
+        "output_tokens": 132,
+        "total_tokens": 5640,
+        "detail": {
+          "cache_miss": 772,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1129
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 71,
+        "total_tokens": 3678,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 685
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3728,
+        "output_tokens": 60,
+        "total_tokens": 3788,
+        "detail": {
+          "cache_miss": 144,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 809
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3819,
+        "output_tokens": 38,
+        "total_tokens": 3857,
+        "detail": {
+          "cache_miss": 235,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 839
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3899,
+        "output_tokens": 53,
+        "total_tokens": 3952,
+        "detail": {
+          "cache_miss": 187,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 713
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4618,
+        "output_tokens": 148,
+        "total_tokens": 4766,
+        "detail": {
+          "cache_miss": 778,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1176
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4876,
+        "output_tokens": 138,
+        "total_tokens": 5014,
+        "detail": {
+          "cache_miss": 140,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 965
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5065,
+        "output_tokens": 42,
+        "total_tokens": 5107,
+        "detail": {
+          "cache_miss": 201,
+          "cache_read": 4864,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 865
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5727,
+        "output_tokens": 140,
+        "total_tokens": 5867,
+        "detail": {
+          "cache_miss": 735,
+          "cache_read": 4992,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 948
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5948,
+        "output_tokens": 107,
+        "total_tokens": 6055,
+        "detail": {
+          "cache_miss": 188,
+          "cache_read": 5760,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1146
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6133,
+        "output_tokens": 109,
+        "total_tokens": 6242,
+        "detail": {
+          "cache_miss": 245,
+          "cache_read": 5888,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1680
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6322,
+        "output_tokens": 57,
+        "total_tokens": 6379,
+        "detail": {
+          "cache_miss": 178,
+          "cache_read": 6144,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 508
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7048,
+        "output_tokens": 68,
+        "total_tokens": 7116,
+        "detail": {
+          "cache_miss": 776,
+          "cache_read": 6272,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 774
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 73,
+        "total_tokens": 3680,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 724
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3711,
+        "output_tokens": 51,
+        "total_tokens": 3762,
+        "detail": {
+          "cache_miss": 255,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1312
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4428,
+        "output_tokens": 113,
+        "total_tokens": 4541,
+        "detail": {
+          "cache_miss": 716,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1165
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4659,
+        "output_tokens": 65,
+        "total_tokens": 4724,
+        "detail": {
+          "cache_miss": 179,
+          "cache_read": 4480,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 644
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4759,
+        "output_tokens": 90,
+        "total_tokens": 4849,
+        "detail": {
+          "cache_miss": 151,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 912
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4900,
+        "output_tokens": 54,
+        "total_tokens": 4954,
+        "detail": {
+          "cache_miss": 164,
+          "cache_read": 4736,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 720
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5574,
+        "output_tokens": 80,
+        "total_tokens": 5654,
+        "detail": {
+          "cache_miss": 710,
+          "cache_read": 4864,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1022
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5687,
+        "output_tokens": 72,
+        "total_tokens": 5759,
+        "detail": {
+          "cache_miss": 183,
+          "cache_read": 5504,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 886
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5789,
+        "output_tokens": 63,
+        "total_tokens": 5852,
+        "detail": {
+          "cache_miss": 157,
+          "cache_read": 5632,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 891
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5890,
+        "output_tokens": 42,
+        "total_tokens": 5932,
+        "detail": {
+          "cache_miss": 258,
+          "cache_read": 5632,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 761
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6604,
+        "output_tokens": 212,
+        "total_tokens": 6816,
+        "detail": {
+          "cache_miss": 716,
+          "cache_read": 5888,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1596
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 71,
+        "total_tokens": 3678,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 869
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3709,
+        "output_tokens": 47,
+        "total_tokens": 3756,
+        "detail": {
+          "cache_miss": 253,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1073
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3824,
+        "output_tokens": 85,
+        "total_tokens": 3909,
+        "detail": {
+          "cache_miss": 240,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 958
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3960,
+        "output_tokens": 42,
+        "total_tokens": 4002,
+        "detail": {
+          "cache_miss": 248,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 757
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4622,
+        "output_tokens": 130,
+        "total_tokens": 4752,
+        "detail": {
+          "cache_miss": 654,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 978
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4833,
+        "output_tokens": 104,
+        "total_tokens": 4937,
+        "detail": {
+          "cache_miss": 225,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 956
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5015,
+        "output_tokens": 112,
+        "total_tokens": 5127,
+        "detail": {
+          "cache_miss": 151,
+          "cache_read": 4864,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1063
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5207,
+        "output_tokens": 42,
+        "total_tokens": 5249,
+        "detail": {
+          "cache_miss": 215,
+          "cache_read": 4992,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 585
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5921,
+        "output_tokens": 157,
+        "total_tokens": 6078,
+        "detail": {
+          "cache_miss": 673,
+          "cache_read": 5248,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1210
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3607,
+        "output_tokens": 68,
+        "total_tokens": 3675,
+        "detail": {
+          "cache_miss": 279,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 637
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3726,
+        "output_tokens": 51,
+        "total_tokens": 3777,
+        "detail": {
+          "cache_miss": 142,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 601
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3923,
+        "output_tokens": 72,
+        "total_tokens": 3995,
+        "detail": {
+          "cache_miss": 211,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 626
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4024,
+        "output_tokens": 102,
+        "total_tokens": 4126,
+        "detail": {
+          "cache_miss": 184,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 905
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4240,
+        "output_tokens": 71,
+        "total_tokens": 4311,
+        "detail": {
+          "cache_miss": 144,
+          "cache_read": 4096,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 760
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4344,
+        "output_tokens": 61,
+        "total_tokens": 4405,
+        "detail": {
+          "cache_miss": 248,
+          "cache_read": 4096,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 644
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4435,
+        "output_tokens": 59,
+        "total_tokens": 4494,
+        "detail": {
+          "cache_miss": 211,
+          "cache_read": 4224,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 830
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4532,
+        "output_tokens": 52,
+        "total_tokens": 4584,
+        "detail": {
+          "cache_miss": 180,
+          "cache_read": 4352,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1043
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4789,
+        "output_tokens": 86,
+        "total_tokens": 4875,
+        "detail": {
+          "cache_miss": 309,
+          "cache_read": 4480,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1154
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 67,
+        "total_tokens": 3670,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 653
+    },
+    {
+      "purpose": "claim",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7299,
+        "output_tokens": 91,
+        "total_tokens": 7390,
+        "detail": {
+          "cache_miss": 387,
+          "cache_read": 6912,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1017
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3734,
+        "output_tokens": 83,
+        "total_tokens": 3817,
+        "detail": {
+          "cache_miss": 150,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 912
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3868,
+        "output_tokens": 70,
+        "total_tokens": 3938,
+        "detail": {
+          "cache_miss": 156,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1140
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3989,
+        "output_tokens": 62,
+        "total_tokens": 4051,
+        "detail": {
+          "cache_miss": 149,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 709
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4121,
+        "output_tokens": 179,
+        "total_tokens": 4300,
+        "detail": {
+          "cache_miss": 153,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1047
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 59,
+        "total_tokens": 3662,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 809
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3727,
+        "output_tokens": 78,
+        "total_tokens": 3805,
+        "detail": {
+          "cache_miss": 143,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 827
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3857,
+        "output_tokens": 73,
+        "total_tokens": 3930,
+        "detail": {
+          "cache_miss": 145,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 661
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3982,
+        "output_tokens": 62,
+        "total_tokens": 4044,
+        "detail": {
+          "cache_miss": 142,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 610
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4113,
+        "output_tokens": 152,
+        "total_tokens": 4265,
+        "detail": {
+          "cache_miss": 145,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1436
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5933,
+        "output_tokens": 1081,
+        "total_tokens": 7014,
+        "detail": {
+          "cache_miss": 1325,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 4381
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7075,
+        "output_tokens": 943,
+        "total_tokens": 8018,
+        "detail": {
+          "cache_miss": 163,
+          "cache_read": 6912,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 3577
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 8053,
+        "output_tokens": 1143,
+        "total_tokens": 9196,
+        "detail": {
+          "cache_miss": 245,
+          "cache_read": 7808,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 4219
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 9231,
+        "output_tokens": 1106,
+        "total_tokens": 10337,
+        "detail": {
+          "cache_miss": 143,
+          "cache_read": 9088,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 4182
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 60,
+        "total_tokens": 3663,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 537
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3725,
+        "output_tokens": 82,
+        "total_tokens": 3807,
+        "detail": {
+          "cache_miss": 141,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 765
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3856,
+        "output_tokens": 75,
+        "total_tokens": 3931,
+        "detail": {
+          "cache_miss": 144,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 734
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3980,
+        "output_tokens": 67,
+        "total_tokens": 4047,
+        "detail": {
+          "cache_miss": 140,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 755
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4113,
+        "output_tokens": 152,
+        "total_tokens": 4265,
+        "detail": {
+          "cache_miss": 145,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1308
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 59,
+        "total_tokens": 3662,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 755
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3725,
+        "output_tokens": 75,
+        "total_tokens": 3800,
+        "detail": {
+          "cache_miss": 141,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 771
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3850,
+        "output_tokens": 69,
+        "total_tokens": 3919,
+        "detail": {
+          "cache_miss": 138,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 949
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3969,
+        "output_tokens": 58,
+        "total_tokens": 4027,
+        "detail": {
+          "cache_miss": 257,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 947
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4096,
+        "output_tokens": 198,
+        "total_tokens": 4294,
+        "detail": {
+          "cache_miss": 256,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1211
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 65,
+        "total_tokens": 3668,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 912
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3729,
+        "output_tokens": 83,
+        "total_tokens": 3812,
+        "detail": {
+          "cache_miss": 145,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 965
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3860,
+        "output_tokens": 63,
+        "total_tokens": 3923,
+        "detail": {
+          "cache_miss": 148,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 676
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3971,
+        "output_tokens": 56,
+        "total_tokens": 4027,
+        "detail": {
+          "cache_miss": 259,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 820
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4094,
+        "output_tokens": 125,
+        "total_tokens": 4219,
+        "detail": {
+          "cache_miss": 254,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1120
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 62,
+        "total_tokens": 3665,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 954
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3725,
+        "output_tokens": 77,
+        "total_tokens": 3802,
+        "detail": {
+          "cache_miss": 141,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 868
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3849,
+        "output_tokens": 55,
+        "total_tokens": 3904,
+        "detail": {
+          "cache_miss": 137,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 801
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3951,
+        "output_tokens": 58,
+        "total_tokens": 4009,
+        "detail": {
+          "cache_miss": 239,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 672
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4074,
+        "output_tokens": 147,
+        "total_tokens": 4221,
+        "detail": {
+          "cache_miss": 234,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1103
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 59,
+        "total_tokens": 3662,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 998
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3725,
+        "output_tokens": 76,
+        "total_tokens": 3801,
+        "detail": {
+          "cache_miss": 141,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 829
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3851,
+        "output_tokens": 69,
+        "total_tokens": 3920,
+        "detail": {
+          "cache_miss": 139,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 762
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3970,
+        "output_tokens": 58,
+        "total_tokens": 4028,
+        "detail": {
+          "cache_miss": 258,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 995
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4095,
+        "output_tokens": 156,
+        "total_tokens": 4251,
+        "detail": {
+          "cache_miss": 255,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1492
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3603,
+        "output_tokens": 63,
+        "total_tokens": 3666,
+        "detail": {
+          "cache_miss": 275,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1098
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3728,
+        "output_tokens": 79,
+        "total_tokens": 3807,
+        "detail": {
+          "cache_miss": 144,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 844
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3856,
+        "output_tokens": 74,
+        "total_tokens": 3930,
+        "detail": {
+          "cache_miss": 144,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1046
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3979,
+        "output_tokens": 57,
+        "total_tokens": 4036,
+        "detail": {
+          "cache_miss": 139,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 646
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4103,
+        "output_tokens": 136,
+        "total_tokens": 4239,
+        "detail": {
+          "cache_miss": 135,
+          "cache_read": 3968,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1306
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 60,
+        "total_tokens": 3656,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 875
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3698,
+        "output_tokens": 58,
+        "total_tokens": 3756,
+        "detail": {
+          "cache_miss": 242,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 863
+    },
+    {
+      "purpose": "claim",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7287,
+        "output_tokens": 138,
+        "total_tokens": 7425,
+        "detail": {
+          "cache_miss": 375,
+          "cache_read": 6912,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1226
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3795,
+        "output_tokens": 113,
+        "total_tokens": 3908,
+        "detail": {
+          "cache_miss": 211,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 987
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3989,
+        "output_tokens": 203,
+        "total_tokens": 4192,
+        "detail": {
+          "cache_miss": 149,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1328
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 71,
+        "total_tokens": 3667,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1048
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3714,
+        "output_tokens": 56,
+        "total_tokens": 3770,
+        "detail": {
+          "cache_miss": 258,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 644
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3818,
+        "output_tokens": 144,
+        "total_tokens": 3962,
+        "detail": {
+          "cache_miss": 234,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 899
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4092,
+        "output_tokens": 140,
+        "total_tokens": 4232,
+        "detail": {
+          "cache_miss": 252,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1031
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 5840,
+        "output_tokens": 791,
+        "total_tokens": 6631,
+        "detail": {
+          "cache_miss": 1232,
+          "cache_read": 4608,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 3146
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 6692,
+        "output_tokens": 797,
+        "total_tokens": 7489,
+        "detail": {
+          "cache_miss": 164,
+          "cache_read": 6528,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 2790
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 7522,
+        "output_tokens": 919,
+        "total_tokens": 8441,
+        "detail": {
+          "cache_miss": 226,
+          "cache_read": 7296,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 2883
+    },
+    {
+      "purpose": "compilation",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 8474,
+        "output_tokens": 128,
+        "total_tokens": 8602,
+        "detail": {
+          "cache_miss": 154,
+          "cache_read": 8320,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1095
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 65,
+        "total_tokens": 3661,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 845
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3704,
+        "output_tokens": 58,
+        "total_tokens": 3762,
+        "detail": {
+          "cache_miss": 248,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1021
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3805,
+        "output_tokens": 81,
+        "total_tokens": 3886,
+        "detail": {
+          "cache_miss": 221,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1065
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3937,
+        "output_tokens": 74,
+        "total_tokens": 4011,
+        "detail": {
+          "cache_miss": 225,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 834
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 4050,
+        "output_tokens": 129,
+        "total_tokens": 4179,
+        "detail": {
+          "cache_miss": 210,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1153
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 60,
+        "total_tokens": 3656,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 872
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3697,
+        "output_tokens": 49,
+        "total_tokens": 3746,
+        "detail": {
+          "cache_miss": 241,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 642
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3787,
+        "output_tokens": 115,
+        "total_tokens": 3902,
+        "detail": {
+          "cache_miss": 203,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 791
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3987,
+        "output_tokens": 165,
+        "total_tokens": 4152,
+        "detail": {
+          "cache_miss": 147,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1196
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 58,
+        "total_tokens": 3654,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 654
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3698,
+        "output_tokens": 59,
+        "total_tokens": 3757,
+        "detail": {
+          "cache_miss": 242,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 687
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3797,
+        "output_tokens": 62,
+        "total_tokens": 3859,
+        "detail": {
+          "cache_miss": 213,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 657
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3898,
+        "output_tokens": 161,
+        "total_tokens": 4059,
+        "detail": {
+          "cache_miss": 186,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1318
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 64,
+        "total_tokens": 3660,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 969
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3704,
+        "output_tokens": 49,
+        "total_tokens": 3753,
+        "detail": {
+          "cache_miss": 248,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 714
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3796,
+        "output_tokens": 101,
+        "total_tokens": 3897,
+        "detail": {
+          "cache_miss": 212,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 890
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3985,
+        "output_tokens": 188,
+        "total_tokens": 4173,
+        "detail": {
+          "cache_miss": 145,
+          "cache_read": 3840,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1350
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 59,
+        "total_tokens": 3655,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1220
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3698,
+        "output_tokens": 59,
+        "total_tokens": 3757,
+        "detail": {
+          "cache_miss": 242,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 629
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3800,
+        "output_tokens": 66,
+        "total_tokens": 3866,
+        "detail": {
+          "cache_miss": 216,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 648
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3906,
+        "output_tokens": 128,
+        "total_tokens": 4034,
+        "detail": {
+          "cache_miss": 194,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 951
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3596,
+        "output_tokens": 59,
+        "total_tokens": 3655,
+        "detail": {
+          "cache_miss": 268,
+          "cache_read": 3328,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 844
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3695,
+        "output_tokens": 49,
+        "total_tokens": 3744,
+        "detail": {
+          "cache_miss": 239,
+          "cache_read": 3456,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 961
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3785,
+        "output_tokens": 59,
+        "total_tokens": 3844,
+        "detail": {
+          "cache_miss": 201,
+          "cache_read": 3584,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 747
+    },
+    {
+      "purpose": "execution",
+      "model": "deepseek-flash",
+      "usage": {
+        "input_tokens": 3885,
+        "output_tokens": 154,
+        "total_tokens": 4039,
+        "detail": {
+          "cache_miss": 173,
+          "cache_read": 3712,
+          "cache_write": 0
+        }
+      },
+      "elapsed_ms": 1275
+    }
+  ]
+}

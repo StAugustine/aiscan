@@ -1,0 +1,80 @@
+{
+  "experiment": "reflex-replacement-live-20261005-r15-async",
+  "billing_basis": "official tariff snapshot and returned usage; not invoice",
+  "price_source": "Prior experiment tariff snapshot; not independently reconfirmed for this run",
+  "groups": {
+    "async/cold_learning": {
+      "attempts": 3,
+      "executed": 3,
+      "blocked": 0,
+      "successes": 2,
+      "llm_execution_calls": 11,
+      "provider_blocked": 2,
+      "successes_over_provider_available_attempts": "2/1",
+      "compilation_known_usd": 0.028759833,
+      "runtime_known_usd": 0.000953742,
+      "missing_usage_or_tariff": 2,
+      "total_usd": null,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": 42087.7
+    },
+    "async/ordinary_llm": {
+      "attempts": 5,
+      "executed": 5,
+      "blocked": 0,
+      "successes": 0,
+      "llm_execution_calls": 5,
+      "provider_blocked": 5,
+      "successes_over_provider_available_attempts": "0/0",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.0,
+      "missing_usage_or_tariff": 5,
+      "total_usd": null,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": 399.6
+    },
+    "async/reflex_llm_judge": {
+      "attempts": 5,
+      "executed": 0,
+      "blocked": 5,
+      "successes": 0,
+      "llm_execution_calls": 0,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "0/0",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.0,
+      "missing_usage_or_tariff": 0,
+      "total_usd": null,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": null
+    },
+    "async/reflex_jev": {
+      "attempts": 5,
+      "executed": 0,
+      "blocked": 5,
+      "successes": 0,
+      "llm_execution_calls": 0,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "0/0",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.0,
+      "missing_usage_or_tariff": 0,
+      "total_usd": null,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": null
+    }
+  },
+  "known_cost_usd": 0.029713575,
+  "missing_usage_or_tariff": 7,
+  "total_usd": null,
+  "real_jev_requests": 21,
+  "llm_requests_by_purpose": {
+    "execution": 16,
+    "claim": 1,
+    "compilation": 36
+  },
+  "break_even": null,
+  "library_origin": null,
+  "compilation_accounting": "current cold experiment",
+  "conclusion": "replacement not established"
+}

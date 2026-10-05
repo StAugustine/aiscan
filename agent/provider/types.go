@@ -22,6 +22,7 @@ const (
 // back into aop types; nothing upstream of this package sees vendor JSON.
 
 type ChatCompletionRequest struct {
+	Purpose         string // Host-only request purpose; never serialized to the provider.
 	Model           string
 	Messages        []*aop.Message
 	Tools           []*aop.ToolDefinition
@@ -31,6 +32,7 @@ type ChatCompletionRequest struct {
 	CacheRetention  CacheRetention
 	SessionID       string
 	ReasoningEffort string // Optional inference hint; empty uses the provider default.
+	JSONOutput      bool   // Request a JSON object from adapters that support structured output.
 }
 
 type ChatCompletionResponse struct {

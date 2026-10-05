@@ -2,6 +2,23 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Reflex views respond to the current drawer width. */
+.tool-drawer { container: tool-drawer / inline-size; }
+.tool-panel-split { display: flex; height: 100%; min-height: 0; flex: 1; flex-direction: column; overflow: auto; }
+.tool-panel-list { flex-shrink: 0; }
+.reflex-network-layout { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: auto; }
+.reflex-network-canvas { height: 470px; min-height: 320px; }
+@container tool-drawer (min-width: 720px) {
+  .tool-panel-split { flex-direction: row; overflow: hidden; }
+  .tool-panel-list { width: 240px; max-height: none; overflow: auto; border-bottom: 0; border-right: 1px solid hsl(var(--border)); }
+}
+@container tool-drawer (min-width: 900px) {
+  .reflex-network-layout { flex-direction: row; overflow: hidden; }
+  .reflex-network-canvas { height: auto; flex: 1; border-bottom: 0; border-right: 1px solid hsl(var(--border)); }
+  .reflex-network-detail { width: 320px; min-height: 0; overflow: auto; }
+}
+
+
 /* iOS Safari auto-zooms the whole page whenever a focused control's font-size is
    below 16px. The composer (text-[15px]) and the compact settings/eval fields
    (text-xs) would each trip it, so tapping any of them on a phone yanks the page

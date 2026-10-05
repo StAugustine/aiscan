@@ -1,0 +1,82 @@
+{
+  "experiment": "reflex-replacement-live-20261005-r13-repeat",
+  "billing_basis": "official tariff snapshot and returned usage; not invoice",
+  "price_source": "Prior experiment tariff snapshot; not independently reconfirmed for this run",
+  "groups": {
+    "repeat/cold_learning": {
+      "attempts": 2,
+      "executed": 2,
+      "blocked": 0,
+      "successes": 2,
+      "llm_execution_calls": 8,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "2/2",
+      "compilation_known_usd": 0.008251014,
+      "runtime_known_usd": 0.000695748,
+      "missing_usage_or_tariff": 0,
+      "total_usd": 0.008946762,
+      "all_attempt_cost_per_success_usd": 0.004473381,
+      "mean_wall_ms_including_wait_for_background": 10331.5
+    },
+    "repeat/ordinary_llm": {
+      "attempts": 5,
+      "executed": 5,
+      "blocked": 0,
+      "successes": 5,
+      "llm_execution_calls": 22,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "5/5",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.002095428,
+      "missing_usage_or_tariff": 0,
+      "total_usd": 0.002095428,
+      "all_attempt_cost_per_success_usd": 0.000419086,
+      "mean_wall_ms_including_wait_for_background": 4410.2
+    },
+    "repeat/reflex_llm_judge": {
+      "attempts": 5,
+      "executed": 5,
+      "blocked": 0,
+      "successes": 0,
+      "llm_execution_calls": 0,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "0/5",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.005225532,
+      "missing_usage_or_tariff": 0,
+      "total_usd": 0.005225532,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": 3196.6
+    },
+    "repeat/reflex_jev": {
+      "attempts": 5,
+      "executed": 5,
+      "blocked": 0,
+      "successes": 0,
+      "llm_execution_calls": 0,
+      "provider_blocked": 0,
+      "successes_over_provider_available_attempts": "0/5",
+      "compilation_known_usd": 0.0,
+      "runtime_known_usd": 0.007120026,
+      "missing_usage_or_tariff": 0,
+      "total_usd": 0.007120026,
+      "all_attempt_cost_per_success_usd": null,
+      "mean_wall_ms_including_wait_for_background": 3079.8
+    }
+  },
+  "known_cost_usd": 0.023387748,
+  "missing_usage_or_tariff": 0,
+  "total_usd": 0.023387748,
+  "real_jev_requests": 41,
+  "llm_requests_by_purpose": {
+    "execution": 30,
+    "claim": 1,
+    "compilation": 4,
+    "finite_judge": 15,
+    "parameters": 10
+  },
+  "break_even": null,
+  "library_origin": null,
+  "compilation_accounting": "current cold experiment",
+  "conclusion": "replacement not established"
+}

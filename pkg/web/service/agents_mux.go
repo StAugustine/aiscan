@@ -5,6 +5,7 @@ import (
 	"fmt"
 	operationpb "github.com/chainreactors/cyber/aop/operation"
 	"github.com/chainreactors/cyber/exts/guardrail"
+	"github.com/chainreactors/cyber/exts/jev"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"log/slog"
 
@@ -28,6 +29,19 @@ func namespaceMessage[T protobuf.Message](message protobuf.Message) (T, error) {
 }
 
 func (p *AgentPool) registerAgentNamespaces(mux *aop.NamespaceMux, agent *remoteAgent) error {
+	if err := mux.Register(&jev.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
+		value, err := namespaceMessage[*jev.ProtocolMessage](message)
+		if err != nil {
+			return err
+		}
+		if value.GetLibrary() == nil && value.GetIdle() == nil {
+			return fmt.Errorf("unsupported JEV reply")
+		}
+		p.finishAgentTask(agent, envelope.ReplyTo, protobuf.CloneOf(value))
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := mux.Register(&guardrail.ProtocolMessage{}, func(_ context.Context, envelope *aop.Envelope, message protobuf.Message, _ aop.SendFunc) error {
 		value, err := namespaceMessage[*guardrail.ProtocolMessage](message)
 		if err != nil {

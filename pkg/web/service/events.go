@@ -9,6 +9,7 @@ import (
 
 	aop "github.com/chainreactors/cyber/aop"
 	types "github.com/chainreactors/cyber/core/types"
+	"github.com/chainreactors/cyber/exts/jev"
 	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 	proto "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -222,6 +223,9 @@ func (s *Service) broadcastHubTurnEnded(sessionID, turnID, code, message string)
 }
 
 func isReliableAOPEvent(event *aop.Event) bool {
+	if payload := event.GetExtension(); payload != nil && payload.MessageIs(new(jev.RuntimeEvent)) {
+		return true
+	}
 	switch payload := event.Payload.(type) {
 	case *aop.Event_SessionEnded, *aop.Event_Error, *aop.Event_ToolResult, *aop.Event_TurnEnded, *aop.Event_Message:
 		return true

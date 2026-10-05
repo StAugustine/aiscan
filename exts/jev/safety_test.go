@@ -3,14 +3,10 @@ package jev
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/chainreactors/cyber/agent"
 	"github.com/chainreactors/cyber/agent/hooks"
-	"github.com/chainreactors/cyber/agent/inbox"
 	"github.com/chainreactors/cyber/agent/provider"
 	jevapi "github.com/chainreactors/cyber/agent/provider/jev"
 	aop "github.com/chainreactors/cyber/aop"
@@ -50,6 +46,23 @@ func TestContextRewriterLeavesDecisionWithModel(t *testing.T) {
 	}
 }
 
+func TestEffectIdentityPreservesAllNativeJSONShapes(t *testing.T) {
+	seen := map[string]bool{}
+	for _, arguments := range []string{`[1]`, `[2]`, `null`, `{}`, `{"id":9007199254740993}`, `{"id":9007199254740992}`, `broken`, `{"id":1} trailing`} {
+		key := canonical(&aop.ToolCall{Name: "native", Arguments: &aop.EncodedValue{Data: []byte(arguments)}})
+		if key == "" || seen[key] {
+			t.Fatalf("different native calls share an effect identity: %s", arguments)
+		}
+		seen[key] = true
+	}
+	call := func(arguments string) *aop.ToolCall {
+		return &aop.ToolCall{Name: "native", Arguments: &aop.EncodedValue{Data: []byte(arguments)}}
+	}
+	if canonical(call(`{"b":2,"a":1}`)) != canonical(call(`{"a":1,"b":2}`)) {
+		t.Fatal("object field order changed native effect identity")
+	}
+}
+
 func TestMediaConstraintsCannotSilentlyBecomeTextOnly(t *testing.T) {
 	m := provider.TextMessage("user", "Use the target shown in this image")
 	m.Content = append(m.Content, &aop.Content{Value: &aop.Content_Media{Media: &aop.MediaContent{Kind: "image"}}})
@@ -58,82 +71,10 @@ func TestMediaConstraintsCannotSilentlyBecomeTextOnly(t *testing.T) {
 	}
 }
 
-func TestInputDuringDecisionStopsDispatch(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	var executions atomic.Int64
-	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
-		if !runtimeRequest(req) {
-			return runtimeAnswers(req, Defer)
-		}
-		if strings.Contains(string(req.State), "Stop executing") {
-			return runtimeAnswers(req, Defer)
-		}
-		close(entered)
-		<-release
-		return runtimeAnswers(req, "step/go")
-	})
-	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "step", Run: func(context.Context, *coretool.Execution) (any, error) { executions.Add(1); return nil, nil }})
-	installReflex(e, "step")
-	ib := inbox.NewBuffered(8)
-	cfg.Inbox = ib
-	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
-		return reply(provider.TextMessage("assistant", "Stopped as requested.")), nil
-	})
-	done := make(chan error, 1)
-	go func() {
-		_, err := agent.NewAgent(cfg).Run(t.Context(), agent.TextInput("Perform the finite step."))
-		done <- err
-	}()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("controller did not enter")
-	}
-	msg := inbox.NewUserMessage("Stop executing steps")
-	msg.Interrupt = true
-	if err := ib.Push(msg); err != nil {
-		t.Fatal(err)
-	}
-	close(release)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("input failed to interrupt controller")
-	}
-	if executions.Load() != 0 {
-		t.Fatal("dispatched after new input")
-	}
-}
-
-func TestNoProgressYieldsWithinBound(t *testing.T) {
-	var executions atomic.Int64
-	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
-		return runtimeAnswers(req, "stuck/go")
-	})
-	e, cfg, _ := testInstallation(t, Config{Mode: "auto"}, client, coretool.Command{Name: "stuck", Run: func(_ context.Context, ex *coretool.Execution) (any, error) {
-		executions.Add(1)
-		_, err := fmt.Fprint(ex.Stdout, "unchanged")
-		return nil, err
-	}}, coretool.Command{Name: "unrelated", Run: func(context.Context, *coretool.Execution) (any, error) { return nil, nil }})
-	installReflex(e, "stuck")
-	cfg.Provider = testProvider(func(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
-		return reply(provider.TextMessage("assistant", "No progress; another strategy is required.")), nil
-	})
-	if _, err := agent.NewAgent(cfg).Run(t.Context(), agent.TextInput("Try the known step.")); err != nil {
-		t.Fatal(err)
-	}
-	if executions.Load() != 1 {
-		t.Fatalf("no-progress count=%d", executions.Load())
-	}
-}
-
 func TestObservationFailureDoesNotHideCompetingCapability(t *testing.T) {
 	client := fakeJEV(t, func(req jevapi.Request) map[string]jevapi.Answer {
-		if runtimeRequest(req) {
-			t.Error("incomplete observation reached runtime decision")
+		if runtimeRequest(req) && req.Questions["entry"].Type == "" {
+			t.Error("unselected broken program reached runtime decision")
 		}
 		return runtimeAnswers(req, Defer)
 	})

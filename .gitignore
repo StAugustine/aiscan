@@ -72,3 +72,9 @@ web/static-stale/
 cyber.yaml
 aiscan.yaml
 .runlogs/harness/
+
+# Local JEV experiments and browser replay output
+/output/
+/exts/jev/output/
+/.runlogs/
+/exts/jev/.runlogs/

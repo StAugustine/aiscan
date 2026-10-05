@@ -1,0 +1,53 @@
+{
+  "created": "2026-10-05T10:04:10.465135+00:00",
+  "paid_accuracy": "four retained failed autonomous qualification experiments; no frozen Reflex replacement arms executed",
+  "checks": [
+    {
+      "result": "pass",
+      "elapsed_seconds": 21.615,
+      "scope": "Full JEV package regression, retained execution session 80351"
+    },
+    {
+      "command": "go test -race -tags 'full sqlite' ./exts/jev -run '^TestReflexV2' -count=1 -timeout 180s",
+      "result": "pass",
+      "elapsed_seconds": 57.901
+    },
+    {
+      "command": "go test -race -tags 'full sqlite' ./cmd/aiscan -run '^TestJEVProfileStreamingCompilationRuntimeAndWebReplay$' -count=1 -timeout 180s",
+      "result": "pass",
+      "elapsed_seconds": 2.134,
+      "inference": "simulated"
+    },
+    {
+      "command": "go test -tags 'full sqlite' ./tools/playwright ./exts/browser ./core/tool/... ./agent/... -count=1 -timeout 300s",
+      "result": "pass"
+    },
+    {
+      "command": "npm run build",
+      "result": "pass"
+    },
+    {
+      "command": "npm run test:jev",
+      "result": "pass",
+      "stats": {
+        "startTime": "2026-10-05T09:59:39.238Z",
+        "duration": 152890.946,
+        "expected": 55,
+        "skipped": 0,
+        "unexpected": 0,
+        "flaky": 0
+      }
+    },
+    {
+      "command": "node docs/check-links.mjs",
+      "result": "pass",
+      "local_links": 400,
+      "documents": 34
+    },
+    {
+      "command": "explicit local links in dated validation document",
+      "result": "pass",
+      "local_links": 14
+    }
+  ]
+}

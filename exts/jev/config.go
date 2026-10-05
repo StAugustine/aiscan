@@ -13,15 +13,20 @@ import (
 const ConfigKey = "jev"
 
 type Config struct {
-	APIKey            string `config:"api_key" json:"api_key" description:"TypeSafe API key (or TYPESAFE_API_KEY)"`
-	Model             string `config:"model" json:"model"`
-	Timeout           string `config:"timeout" json:"timeout" description:"Total request budget including retries"`
-	Mode              string `config:"mode" json:"mode" description:"Optional accelerator: off (default), auto"`
-	Directory         string `config:"directory" json:"directory" description:"Claim/Reflex library and execution evidence directory; default .cyber/jev"`
-	DeclarationEffort string `config:"declaration_effort" json:"declaration_effort,omitempty" description:"Optional provider reasoning effort for background Claim/Compile; empty uses provider default"`
+	APIKey             string `config:"api_key" json:"api_key" description:"TypeSafe API key (or TYPESAFE_API_KEY)"`
+	Model              string `config:"model" json:"model"`
+	Timeout            string `config:"timeout" json:"timeout" description:"Total request budget including retries"`
+	Mode               string `config:"mode" json:"mode" description:"Optional accelerator: off (default), auto"`
+	Learning           string `config:"learning" json:"learning" description:"auto (default) learns Claims and compiles; frozen only reuses qualified Reflexes"`
+	Directory          string `config:"directory" json:"directory" description:"Claim/Reflex library and execution evidence directory; default .cyber/jev"`
+	DeclarationEffort  string `config:"declaration_effort" json:"declaration_effort,omitempty" description:"Provider reasoning effort for background Claim/Compile; default none"`
+	CompilationTimeout string `config:"compilation_timeout" json:"compilation_timeout,omitempty" description:"Optional total background compilation time; 0 (default) continues repair until accepted or canceled"`
 }
 
 func defaults(c Config) Config {
+	if c.Learning == "" {
+		c.Learning = "auto"
+	}
 	if c.Mode == "" {
 		c.Mode = "off"
 	}
@@ -31,16 +36,28 @@ func defaults(c Config) Config {
 	if c.Timeout == "" {
 		c.Timeout = "10s"
 	}
+	if c.DeclarationEffort == "" {
+		c.DeclarationEffort = "none"
+	}
+	if c.CompilationTimeout == "" {
+		c.CompilationTimeout = "0"
+	}
 	return c
 }
 
 func (c Config) validate() error {
 	c = defaults(c)
+	if c.Learning != "auto" && c.Learning != "frozen" {
+		return fmt.Errorf("jev learning must be auto or frozen")
+	}
 	if c.Mode != "off" && c.Mode != "auto" {
 		return fmt.Errorf("jev mode must be off or auto")
 	}
 	if d, err := time.ParseDuration(c.Timeout); err != nil || d <= 0 {
 		return fmt.Errorf("jev timeout must be positive")
+	}
+	if d, err := time.ParseDuration(c.CompilationTimeout); err != nil || d < 0 {
+		return fmt.Errorf("jev compilation_timeout must be zero or a positive duration")
 	}
 	return nil
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chainreactors/cyber/agent/hooks"
 	"github.com/chainreactors/cyber/agent/inbox"
 	"github.com/chainreactors/cyber/agent/provider"
 	aop "github.com/chainreactors/cyber/aop"
@@ -277,7 +278,18 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 }
 
 func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, bool, error) {
+	policy, policyErr := hooks.ModelRequestPolicy.Emit(ctx, cfg.Hooks, hooks.ModelRequestEvent{ContextEvent: hooks.ContextEvent{SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: cloneModelMessages(messages)}, Purpose: "execution"})
+	if policyErr != nil {
+		return nil, nil, false, fmt.Errorf("model request policy: %w", policyErr)
+	}
+	if policy.Deny != nil {
+		return nil, nil, false, policy.Deny
+	}
+	if policy.DisableTools {
+		tools = nil
+	}
 	req := &ChatCompletionRequest{
+		Purpose:        policy.Purpose,
 		Model:          cfg.Model,
 		Messages:       messages,
 		Tools:          tools,
@@ -285,6 +297,9 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 		Temperature:    cfg.Temperature,
 		CacheRetention: cfg.CacheRetention,
 		SessionID:      cfg.SessionID,
+	}
+	if req.Purpose == "" {
+		req.Purpose = "execution"
 	}
 	estimatedInputTokens := estimateRequestTokens(messages, tools)
 	maxTokens, err := clampMaxTokens(cfg.MaxTokens, cfg.ContextWindow, estimatedInputTokens)
@@ -297,7 +312,11 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 	})
 	if cfg.Stream {
 		if streaming, ok := cfg.Provider.(StreamingProvider); ok {
-			return streamAssistantMessageWithUsage(ctx, streaming, req, em, cfg.Logger, turn, messageID)
+			assistant, usage, streamed, err := streamAssistantMessageWithUsage(ctx, streaming, req, em, cfg.Logger, turn, messageID)
+			if err == nil && policy.DisableTools && len(provider.MessageToolCalls(assistant.message)) > 0 {
+				return nil, usage, streamed, fmt.Errorf("model request policy forbids tool calls for %s", req.Purpose)
+			}
+			return assistant, usage, streamed, err
 		}
 	}
 
@@ -315,7 +334,13 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 	choice := resp.Choices[0]
 	msg := choice.Message
 	if msg == nil {
-		msg = &aop.Message{Role: "assistant"}
+		return nil, usage, false, fmt.Errorf("LLM protocol error at turn %d: choice 0 has no message", turn)
+	}
+	if policy.DisableTools && len(provider.MessageToolCalls(msg)) > 0 {
+		return nil, usage, false, fmt.Errorf("model request policy forbids tool calls for %s", req.Purpose)
+	}
+	if provider.MessageText(msg) == "" && len(provider.MessageToolCalls(msg)) == 0 {
+		return nil, usage, false, fmt.Errorf("LLM protocol error at turn %d: response message has no final text or tool call", turn)
 	}
 	msg.Id = messageID
 	if len(msg.Content) > 0 {

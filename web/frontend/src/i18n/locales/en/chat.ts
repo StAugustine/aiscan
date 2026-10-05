@@ -73,6 +73,13 @@ export default {
   thinkingLabel: 'Thinking',
   responseLabel: 'Response',
   // Shared labels for tool-call cards (ToolCallDisplay / ScannerToolCall).
+  record: {
+    title: 'Screen capture', desktop: 'Desktop', window: 'Window', empty: 'No recordings',
+    download: 'Download', openImage: 'Open screenshot', duration: '{{seconds}} s', frames: '{{count}} frames',
+    unavailable: 'Media is unavailable in this session.', loadFailed: 'Could not load media. Reconnect the node and try again.',
+    actions: { screenshot: 'Screenshot', record: 'Record video', start: 'Start recording', stop: 'Stop recording', status: 'Recording status' },
+    states: { starting: 'Starting', recording: 'Recording', stopping: 'Stopping', completed: 'Completed', failed: 'Failed' },
+  },
   toolCard: {
     arguments: 'Arguments',
     result: 'Result',
