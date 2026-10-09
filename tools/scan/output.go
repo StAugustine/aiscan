@@ -1,7 +1,7 @@
 package scan
 
 import (
-	"github.com/chainreactors/aiscan/core/output"
+	"github.com/chainreactors/cyber/pkg/output"
 	"github.com/chainreactors/utils/parsers"
 )
 
@@ -38,7 +38,7 @@ func formatEventLine(event event, color bool) string {
 			}
 			return output.FormatLine(output.OutputPrefix("web", c.Green), parsers.JoinOutput(target.URL, target.HostHeader), c)
 		case webProbeTarget:
-			if !reportableSprayResultForCapability(target.Result, target.Capability) {
+			if !reportableSprayResultForCapability(target.Result, event.Source) {
 				return ""
 			}
 			return output.FormatLine(output.OutputPrefix("web", c.Green), target.Result.OutputLine(), c)
@@ -50,15 +50,15 @@ func formatEventLine(event event, color bool) string {
 		loot := event.Loot
 		var label string
 		switch loot.Kind {
-		case output.LootFingerprint:
+		case parsers.LootFingerprint:
 			focus, _ := loot.Data["focus"].(bool)
 			if !focus {
 				return ""
 			}
 			label = "fingerprint"
-		case output.LootWeakpass:
+		case parsers.LootWeakpass:
 			label = "risk"
-		case output.LootVuln:
+		case parsers.LootVuln:
 			label = "vuln"
 		default:
 			label = loot.Kind
@@ -68,10 +68,10 @@ func formatEventLine(event event, color bool) string {
 		}
 		return output.FormatLine(output.OutputPrefix(label, c.ForPriority(loot.Priority)), loot.Description, c)
 	case eventError:
-		if event.Error.Message == "" {
+		if event.Error == "" {
 			return ""
 		}
-		return output.FormatLine(output.OutputPrefix("error", c.Red), parsers.JoinOutput(event.Error.Message), c)
+		return output.FormatLine(output.OutputPrefix("error", c.Red), parsers.JoinOutput(event.Error), c)
 	}
 	return ""
 }

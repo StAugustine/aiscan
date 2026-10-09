@@ -7,50 +7,46 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/tools/scan/pipeline"
-	sdktypes "github.com/chainreactors/sdk/pkg/types"
-	"github.com/chainreactors/utils"
+	"github.com/chainreactors/cyber/tools/scan/pipeline"
 	"github.com/chainreactors/utils/parsers"
 )
 
-type sprayObservation struct {
-	Result     *parsers.SprayResult
-	Capability string
-}
-
 type collector struct {
-	mu           sync.Mutex
-	inputs       []string
-	debug        bool
-	stats        *statsCollector
-	gogoResults  []*parsers.GOGOResult
-	sprayResults []sprayObservation
-	artifacts    []output.ArtifactResult
-	loots        []output.Loot
-	errors       []string
-	trace        []string
-	seenWeb      map[string]struct{}
-	seenFinger   map[string]int
-	stream       io.Writer
-	streamColor  bool
-	fileLines    []string
+	mu          sync.Mutex
+	inputs      int
+	debug       bool
+	startedAt   time.Time
+	finishedAt  time.Time
+	tasks       int64
+	requests    int64
+	services    int
+	probes      int
+	json        bool
+	jsonLines   strings.Builder
+	loots       []parsers.Loot
+	errors      []string
+	canceled    bool
+	trace       []string
+	seenWeb     map[string]struct{}
+	seenFinger  map[string]struct{}
+	stream      io.Writer
+	streamColor bool
+	fileLines   []string
 }
 
 func newCollector(inputs []string, stream io.Writer, streamColor, debug bool) *collector {
 	return &collector{
-		inputs:      append([]string(nil), inputs...),
+		inputs:      len(inputs),
 		debug:       debug,
-		stats:       newStatsCollector(len(inputs)),
+		startedAt:   time.Now(),
 		seenWeb:     make(map[string]struct{}),
-		seenFinger:  make(map[string]int),
+		seenFinger:  make(map[string]struct{}),
 		stream:      stream,
 		streamColor: streamColor,
-		fileLines:   make([]string, 0),
 	}
 }
 
-func (c *collector) Observe(pe pipelineEvent) {
+func (c *collector) Observe(pe pipeline.Observation[event]) {
 	accepted := pe.Action == pipeline.ActionAccept
 
 	var traceEntry string
@@ -58,7 +54,7 @@ func (c *collector) Observe(pe pipelineEvent) {
 		traceEntry = formatTraceEvent(pe)
 	}
 	var plain string
-	if accepted {
+	if accepted && c.stream == nil && !c.json {
 		plain = formatEventLine(pe.Event, false)
 	}
 
@@ -66,11 +62,21 @@ func (c *collector) Observe(pe pipelineEvent) {
 	if traceEntry != "" {
 		c.trace = append(c.trace, traceEntry)
 	}
-	if c.stats != nil {
-		c.stats.Observe(pe)
+	if accepted && pe.Event.Kind == eventStats && (pe.Event.Stats.Engine != "" || pe.Event.Stats.Task != "") {
+		c.tasks += pe.Event.Stats.Tasks
+		c.requests += pe.Event.Stats.Requests
 	}
 	if accepted {
-		c.recordAcceptedEvent(pe.Event)
+		switch pe.Event.Kind {
+		case eventTarget:
+			c.recordTargetEvent(pe.Event)
+		case eventLoot:
+			c.recordLootEvent(pe.Event)
+		case eventError:
+			if pe.Event.Error != "" {
+				c.errors = append(c.errors, pe.Event.Error)
+			}
+		}
 		if plain != "" {
 			c.fileLines = append(c.fileLines, plain)
 		}
@@ -86,41 +92,22 @@ func (c *collector) Observe(pe pipelineEvent) {
 	}
 }
 
-func (c *collector) recordAcceptedEvent(event event) {
-	switch event.Kind {
-	case eventTarget:
-		c.recordTargetEvent(event)
-	case eventLoot:
-		c.recordLootEvent(event)
-	case eventError:
-		if event.Error.Message != "" {
-			c.errors = append(c.errors, event.Error.Message)
-		}
-	}
-}
-
 func (c *collector) recordTargetEvent(event event) {
 	switch target := event.Target.(type) {
 	case webTarget:
-		key := utils.NormalizeURL(target.URL) + "|host=" + strings.ToLower(target.HostHeader)
-		if _, ok := c.seenWeb[key]; !ok {
-			c.seenWeb[key] = struct{}{}
-		}
+		c.seenWeb[target.Key()] = struct{}{}
 	case serviceTarget:
 		if target.Result != nil {
-			c.gogoResults = append(c.gogoResults, target.Result)
+			c.services++
 		}
 	case webProbeTarget:
-		if reportableSprayResultForCapability(target.Result, target.Capability) {
-			source := target.Capability
-			if source == "" {
-				source = event.Source
-			}
-			c.sprayResults = append(c.sprayResults, sprayObservation{
-				Result:     target.Result,
-				Capability: source,
-			})
+		if reportableSprayResultForCapability(target.Result, event.Source) {
+			c.probes++
 		}
+	}
+	if c.json && event.Artifact != nil {
+		c.jsonLines.Write(event.Artifact.Data)
+		c.jsonLines.WriteByte('\n')
 	}
 }
 
@@ -129,18 +116,12 @@ func (c *collector) recordLootEvent(event event) {
 		return
 	}
 	loot := *event.Loot
-	if event.Artifact != nil {
-		c.artifacts = append(c.artifacts, *event.Artifact)
-	}
 	switch loot.Kind {
-	case output.LootFingerprint:
+	case parsers.LootFingerprint:
 		fingers := loot.Tags
 		for _, name := range parsers.NormalizeNames(fingers) {
 			key := strings.ToLower(loot.Target) + "|" + strings.ToLower(name)
-			if _, ok := c.seenFinger[key]; ok {
-				continue
-			}
-			c.seenFinger[key] = len(c.seenFinger)
+			c.seenFinger[key] = struct{}{}
 		}
 	}
 	c.loots = append(c.loots, loot)
@@ -149,159 +130,16 @@ func (c *collector) recordLootEvent(event event) {
 func (c *collector) Finish() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.stats != nil {
-		c.stats.Finish()
+	c.finishedAt = time.Now()
+}
+
+func (c *collector) duration() time.Duration {
+	if c.startedAt.IsZero() {
+		return 0
 	}
-}
-
-func (c *collector) statsSnapshotLocked() statsSnapshot {
-	if c.stats != nil {
-		return c.stats.Snapshot()
-	}
-	stats := newStatsCollector(len(c.inputs))
-	stats.Finish()
-	return stats.Snapshot()
-}
-
-func (c *collector) String() string {
-	return formatSummary(c, false)
-}
-
-func (c *collector) TerminalString(color bool) string {
-	return formatSummary(c, color)
-}
-
-func (c *collector) JSONLines() (string, error) {
-	return formatJSONLines(c)
-}
-
-func (c *collector) PlainText() string {
-	c.mu.Lock()
-	lines := append([]string(nil), c.fileLines...)
-	c.mu.Unlock()
-	return formatPlainText(c, lines)
-}
-
-type statsSnapshot struct {
-	StartedAt         time.Time
-	FinishedAt        time.Time
-	Inputs            int
-	Accepted          map[string]int
-	CapabilityRuns    map[string]int
-	CapabilityOutput  map[string]int
-	SprayByCapability map[string]int
-	ErrorsBySource    map[string]int
-	EngineStats       map[string]sdktypes.Stats
-	Tasks             int64
-	Requests          int64
-}
-
-type statsCollector struct {
-	summary statsSnapshot
-}
-
-func newStatsCollector(inputs int) *statsCollector {
-	return &statsCollector{
-		summary: statsSnapshot{
-			StartedAt:         time.Now(),
-			Inputs:            inputs,
-			Accepted:          make(map[string]int),
-			CapabilityRuns:    make(map[string]int),
-			CapabilityOutput:  make(map[string]int),
-			SprayByCapability: make(map[string]int),
-			ErrorsBySource:    make(map[string]int),
-			EngineStats:       make(map[string]sdktypes.Stats),
-		},
-	}
-}
-
-func (s *statsCollector) Observe(event pipelineEvent) {
-	switch event.Action {
-	case pipeline.ActionAccept:
-		if event.Event.Kind == eventStats {
-			s.recordEngineStats(event.Event.Source, event.Event.Stats)
-			return
-		}
-		s.summary.Accepted[event.Event.label()]++
-		if event.Event.Kind == eventError && event.Event.Error.Message != "" {
-			s.summary.ErrorsBySource[event.Event.Source]++
-		}
-		if target, ok := event.Event.Target.(webProbeTarget); ok && reportableSprayResultForCapability(target.Result, target.Capability) {
-			source := target.Capability
-			if source == "" {
-				source = event.Event.Source
-			}
-			s.summary.SprayByCapability[source]++
-		}
-	case pipeline.ActionCapabilityStart:
-		s.summary.CapabilityRuns[event.Capability]++
-	case pipeline.ActionEmit:
-		if event.Event.Source != "" {
-			s.summary.CapabilityOutput[event.Event.Source]++
-		}
-	}
-}
-
-func (s *statsCollector) recordEngineStats(source string, stats sdktypes.Stats) {
-	if stats.Engine == "" && stats.Task == "" {
-		return
-	}
-	s.summary.Tasks += stats.Tasks
-	s.summary.Requests += stats.Requests
-
-	key := source
-	if key == "" {
-		key = stats.Engine
-	}
-	if key == "" {
-		key = stats.Task
-	}
-	current := s.summary.EngineStats[key]
-	if current.Engine == "" {
-		current.Engine = stats.Engine
-	}
-	if current.Task == "" {
-		current.Task = stats.Task
-	}
-	current.Targets += stats.Targets
-	current.Tasks += stats.Tasks
-	current.Requests += stats.Requests
-	current.Results += stats.Results
-	current.Errors += stats.Errors
-	current.Duration += stats.Duration
-	s.summary.EngineStats[key] = current
-}
-
-func (s *statsCollector) Finish() {
-	s.summary.FinishedAt = time.Now()
-}
-
-func (s *statsCollector) Snapshot() statsSnapshot {
-	out := s.summary
-	out.Accepted = cloneMap(out.Accepted)
-	out.CapabilityRuns = cloneMap(out.CapabilityRuns)
-	out.CapabilityOutput = cloneMap(out.CapabilityOutput)
-	out.SprayByCapability = cloneMap(out.SprayByCapability)
-	out.ErrorsBySource = cloneMap(out.ErrorsBySource)
-	out.EngineStats = cloneMap(out.EngineStats)
-	return out
-}
-
-func (s statsSnapshot) Duration() time.Duration {
-	finished := s.FinishedAt
+	finished := c.finishedAt
 	if finished.IsZero() {
 		finished = time.Now()
 	}
-	return finished.Sub(s.StartedAt)
-}
-
-func cloneMap[K comparable, V any](m map[K]V) map[K]V {
-	if m == nil {
-		return nil
-	}
-	out := make(map[K]V, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
+	return finished.Sub(c.startedAt)
 }

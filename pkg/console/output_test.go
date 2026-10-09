@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/output"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/output"
 )
 
 type syncedBuffer struct {
@@ -948,31 +948,6 @@ func TestFormatToolArguments(t *testing.T) {
 	}
 }
 
-func TestExtractPseudoCommand(t *testing.T) {
-	tests := []struct {
-		input      string
-		wantTool   string
-		wantTarget string
-	}{
-		{"scan -i 10.0.0.1 --mode quick", "scan", "10.0.0.1"},
-		{"gogo -i 10.0.0.0/24 --ports top1000", "gogo", "10.0.0.0/24"},
-		{"ls -la", "", ""},
-		{"neutron http://target.com", "neutron", "http://target.com"},
-		{"", "", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			tool, target := extractPseudoCommand(tt.input)
-			if tool != tt.wantTool {
-				t.Errorf("tool = %q, want %q", tool, tt.wantTool)
-			}
-			if target != tt.wantTarget {
-				t.Errorf("target = %q, want %q", target, tt.wantTarget)
-			}
-		})
-	}
-}
-
 func TestToolCallCounting(t *testing.T) {
 	var stderr syncedBuffer
 	o := testOutput(&stderr, 0, false)
@@ -1046,6 +1021,31 @@ func TestLiveStatusEvalRoundUsesProtocolValue(t *testing.T) {
 	live.ShowEvalRound(1)
 	if live.note != "eval · round 1" {
 		t.Fatalf("eval live status used wrong round: %q", live.note)
+	}
+}
+
+func TestRetryReplacesDeltaAccumulatorAndPrintOffsets(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	option := &cfg.Option{}
+	option.NoColor = true
+	o := NewStaticAgentOutputWithWriters(option, &stdout, &stderr, false)
+	defer o.Close()
+	o.SetVerbosity(2)
+	o.stream.enabled = true
+	o.HandleEvent(turnStartEvent(1))
+	o.HandleEvent(reasoningDeltaEvent("m-1", "long failed reasoning"))
+	o.HandleEvent(textDeltaEvent("m-1", "long failed answer"))
+	o.HandleEvent(messageEvent("m-1", "assistant"))
+	stdout.Reset()
+	stderr.Reset()
+	o.HandleEvent(reasoningDeltaEvent("m-1", "new thought"))
+	o.HandleEvent(textDeltaEvent("m-1", "new answer"))
+	o.stream.Flush()
+	if acc := o.deltas["m-1"]; acc.text != "new answer" || acc.reasoning != "new thought" {
+		t.Fatalf("retry accumulator = %+v", acc)
+	}
+	if !strings.Contains(stdout.String(), "new answer") || !strings.Contains(stderr.String(), "new thought") {
+		t.Fatalf("retry output was truncated: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 

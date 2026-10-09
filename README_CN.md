@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="web/assets/logo.svg" width="180" alt="aiscan logo">
-  <h1 align="center">aiscan</h1>
-  <p align="center">AI 驱动的面向实战的单文件渗透 agent，内置多引擎武器库开箱即用</p>
+  <img src="web/assets/logo.svg" width="180" alt="cyber logo">
+  <h1 align="center">cyber-harness</h1>
+  <p align="center">用于 cyber 场景的通用 agent harness，一切皆扩展</p>
 </p>
 
 <p align="center">
-  <a href="https://github.com/chainreactors/aiscan/releases"><img src="https://img.shields.io/github/v/release/chainreactors/aiscan?style=flat-square&color=00E59B" alt="Release"></a>
-  <a href="https://github.com/chainreactors/aiscan/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/chainreactors/aiscan/ci.yml?branch=master&style=flat-square&label=CI" alt="CI"></a>
-  <a href="https://github.com/chainreactors/aiscan/releases"><img src="https://img.shields.io/github/downloads/chainreactors/aiscan/total?style=flat-square&color=00B4D8" alt="Downloads"></a>
-  <a href="https://github.com/chainreactors/aiscan/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="AGPL-3.0"></a>
-  <a href="https://github.com/chainreactors/aiscan/stargazers"><img src="https://img.shields.io/github/stars/chainreactors/aiscan?style=flat-square&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/chainreactors/cyber-harness/releases"><img src="https://img.shields.io/github/v/release/chainreactors/cyber-harness?style=flat-square&color=00E59B" alt="Release"></a>
+  <a href="https://github.com/chainreactors/cyber-harness/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/chainreactors/cyber-harness/ci.yml?branch=master&style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/chainreactors/cyber-harness/releases"><img src="https://img.shields.io/github/downloads/chainreactors/cyber-harness/total?style=flat-square&color=00B4D8" alt="Downloads"></a>
+  <a href="https://github.com/chainreactors/cyber-harness/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square" alt="AGPL-3.0"></a>
+  <a href="https://github.com/chainreactors/cyber-harness/stargazers"><img src="https://img.shields.io/github/stars/chainreactors/cyber-harness?style=flat-square&color=yellow" alt="Stars"></a>
 </p>
 
 <p align="center">
@@ -18,251 +18,202 @@
 
 ---
 
-**aiscan** 融合 LLM agent 与传统安全扫描引擎。三种模式：**Scan**（确定性流水线扫描，AI 可选辅助）、**Agent**（自然语言驱动的自主安全评估）、**IOA**（多 agent 分布式协作）。
+cyber-harness 是用于 cyber 场景的通用 Agent 运行框架。它把模型循环、工具执行、知识、观测和协作按同一套 Extension 生命周期组装，由任务和已安装的扩展决定使用哪些工具与工作流；你可以使用现成发行版，也可以在 Go 应用里选择自己的能力组合。
 
-> **请只在明确授权的目标上使用，未经授权的使用属于违法行为。**
+按任务选择入口：
 
-## 快速开始
-
-```bash
-# 无需 LLM，一行启动扫描
-aiscan scan -i 192.168.1.0/24
-
-# 有 LLM，一行启动 agent
-aiscan agent --base-url "https://api.deepseek.com" --api-key "sk-..." --model deepseek-chat \
-  -p "扫描目标并检查高风险漏洞" -i 192.168.1.0/24
-```
-
-## 安装
-
-### 下载二进制
-
-从 [GitHub Releases](https://github.com/chainreactors/aiscan/releases/latest) 下载：
-
-| 版本 | 说明 |
+| 入口 | 用途 |
 | --- | --- |
-| **aiscan** | 标准版 — scan/agent/gogo/spray/zombie/neutron/proton/arsenal |
-| **aiscan-full** | 完整版 — 额外包含 Web、playwright、passive 和 katana |
+| `aiscan` / `aiscan-full` | Agent、核心扫描器、代理和 IOA；full 增加 Web、浏览器、被动测绘和爬取 |
+| [`cyber-audit`](cmd/audit/README.md) | 模型驱动的源码与二进制审计、证据收集和报告 |
+| `cyber-web`（源码构建） | 通用 Web Hub，管理 scan、audit 或自定义 AOP 节点的会话、事件与产物 |
+| `agent` | 从源码构建的最小本地 Agent，包含文件、终端、Skills 和本地子 Agent |
 
-| 系统 | 架构 | 标准版 | 完整版 |
-| --- | --- | --- | --- |
-| Linux | amd64 / arm64 | `aiscan_linux_<arch>.zip` | `aiscan-full_linux_<arch>.zip` |
-| macOS | Intel / Apple Silicon | `aiscan_darwin_<arch>.zip` | `aiscan-full_darwin_<arch>.zip` |
-| Windows | amd64 / arm64 | `aiscan_windows_<arch>.zip` | `aiscan-full_windows_amd64.zip` |
+> 请只在明确授权的目标上使用。
 
-```bash
-# Linux
-curl -LO https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_linux_amd64.zip
-unzip aiscan_linux_amd64.zip
-chmod +x aiscan && sudo mv aiscan /usr/local/bin/
+## 开始使用
 
-# macOS Apple Silicon
-curl -LO https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_darwin_arm64.zip
-unzip aiscan_darwin_arm64.zip
-chmod +x aiscan && sudo mv aiscan /usr/local/bin/
+从 [GitHub Releases](https://github.com/chainreactors/cyber-harness/releases/latest) 下载与你的系统和架构匹配的压缩包。使用 CLI 时选择 `aiscan` 或 `cyber-audit`，解压后将可执行文件加入 PATH。执行 Agent 任务前，先按下文完成模型配置：
 
-# Windows (PowerShell)
-Invoke-WebRequest "https://github.com/chainreactors/aiscan/releases/latest/download/aiscan_windows_amd64.zip" -OutFile aiscan.zip
-Expand-Archive .\aiscan.zip -DestinationPath .
-.\aiscan.exe --version
+```sh
+# 已配置模型后：完成一次 Agent 任务，保存事件记录
+aiscan agent -p "只读查看当前目录并解释文件结构" -o first-run.jsonl
+
+# 审计本地代码仓库
+cyber-audit --workdir /path/to/repository -p "审计认证逻辑与租户隔离"
+
+# 对自己的本地靶场执行规则扫描，关闭 AI 验证
+aiscan scan -i http://127.0.0.1:3000 --verify=off
 ```
 
-### Web 控制台（完整版）
+使用 Web 工作台时，下载 `aiscan-full` 并启动：
 
-Web 控制台包含在 `aiscan-full` 中，默认同时启动浏览器界面和一个内嵌本地
-Agent。启动后访问 `http://127.0.0.1:8080`，并输入终端中显示的 access key：
-
-```bash
-aiscan-full web
+```sh
+aiscan-full web --token replace-me
 ```
 
-监听局域网地址并使用固定 access key：
+访问 `http://127.0.0.1:8080`，使用 access key 登录。快速连接面板会生成一行命令，在执行节点所在机器上下载并启动扫描或审计节点。已有节点程序时，在另一个终端选择对应命令接入：
 
-```bash
-aiscan-full web --addr 0.0.0.0:8080 --token change-me
+```sh
+aiscan agent --server-url http://replace-me@127.0.0.1:8080
+cyber-audit --workdir /path/to/repository --server-url http://replace-me@127.0.0.1:8080
 ```
 
-也可以让 Web 只作为 Hub 运行，不启动内嵌 Agent，再从本机或其他主机接入
-执行节点：
+安装、PowerShell 配置、模型连接和首个任务的完整步骤见[快速上手](docs/getting-started.md)。Agent 由模型决定下一步工具调用；`scan` 由规则和扫描事件驱动，可按需启用 AI 阶段。
 
-```bash
-# Hub
-aiscan-full web --addr 0.0.0.0:8080 --token change-me --no-agent
+## 模型配置
 
-# 远程执行节点
-aiscan agent --server-url http://change-me@server.example:8080 --node-name worker-01
-```
+运行 `cyber-web init` 或 `aiscan init` 配置用户级模型（`~/.cyber/cyber.yaml`）；项目覆盖增加 `--project`。这些是 cyber-harness 公共命令，通用 `agent` CLI 同样支持；重复初始化保留已有文件。详见[配置与初始化](docs/configuration.md)。
 
-Web 默认使用 `aiscan-web.db` 保存会话、扫描、资产、发现和配置；可以通过
-`--db <path>` 指定其他 SQLite 数据库路径。
-
-### 从源码构建
-
-```bash
-git clone https://github.com/chainreactors/aiscan.git && cd aiscan
-
-make                                                       # 标准版
-make full                                                  # 前端 + 完整版
-```
-
-独立 agent 可执行文件不再作为维护或发布目标。参考 wiring 已迁移到
-唯一的 AIScan 产品入口是 `cmd/aiscan`。执行
-`make full` 需要 Node.js/npm 和可用的 CGO 工具链；它会先构建前端，再将最新的
-`web/static` 嵌入 full 二进制。默认 full 构建不包含原生 `record` 工具；SDK 和工具
-开发者可通过 `make record` 显式构建，详见 [record 文档](docs/record.md)。
-
-```bash
-make web WEB_ADDR=127.0.0.1:18081 WEB_TOKEN=local-dev    # Full 构建并启动 Web UI
-```
-
-在 Windows amd64 上，`make` 和 `make full` 会使用内置的静态 RE2 后端，
-并静态链接 MinGW 运行库，最终只需发布一个 EXE，不再附带 RE2、Abseil、
-libstdc++、libgcc 或 winpthread DLL。
-
----
-
-## Features
-
-### 设计理念
-
-- **单文件分发** — 内置引擎无需额外安装，仍使用操作系统图形与基础系统库
-- **极简 agent 内核** — 可组合的 ~160 行循环；工具、重试、评估均为插拔式，非硬编码
-- **插件式架构** — 工具通过显式注册和 Profile 装配接入；重依赖（playwright、katana）编译期可选
-- **内嵌 Skill** — 每个工具自带用法文档和战术指导，agent 按需加载
-- **Scan + Agent 统一** — 同一套引擎驱动确定性流水线和自主 agent
-
-### Scan — 确定性扫描流水线
-
-- 多阶段自动串联：端口发现 → Web 探测 → 弱口令检测 → POC 检测，无需 LLM
-- 可选 AI 驱动的结果验证、公开漏洞关联和动态测试
-- quick 模式快速暴露面发现，full 模式深度爬取和扩展覆盖
-
-### Agent — 自主安全评估
-
-- 自然语言描述任务，agent 自主规划、扫描、分析、输出结论
-- Goal Evaluation — 独立评估器判定任务完成度，自动驱动重试
-- 交互式 REPL，支持直接执行命令
-- 多 provider 配置，支持显式手动切换
-
-### [IOA](https://github.com/chainreactors/ioa) — 多 Agent 协作
-
-- 共享消息空间实现分布式 agent 协调
-- Worker 模式持续监听任务
-- 内置 IOA server，支持 token 认证
-- 参阅：[设计理念](https://github.com/chainreactors/ioa/blob/main/docs/design_zh.md) | [CLI 文档](https://github.com/chainreactors/ioa/blob/main/docs/cli_zh.md) | [扩展开发](https://github.com/chainreactors/ioa/blob/main/docs/extension_zh.md)
-
-### 内置工具集
-
-**扫描器**
-- [gogo](https://github.com/chainreactors/gogo) — 端口、服务、banner 发现
-- [spray](https://github.com/chainreactors/spray) — Web 探测、指纹识别、路径 fuzz
-- [zombie](https://github.com/chainreactors/zombie) — 弱口令检测
-- [neutron](https://github.com/chainreactors/neutron) — 模板化 POC 执行
-- [proton](https://github.com/chainreactors/proton) — 敏感信息扫描（API 密钥、令牌、凭证、密码）
-- [cyberhub](https://github.com/chainreactors/fingers) — 指纹和 POC 关联查询
-
-**浏览器 & 侦察**（完整版）
-- playwright — headless Chromium 会话、截图、网络捕获
-- katana — Web 爬虫，支持 standard/headless/hybrid 引擎
-- passive — 网络空间搜索（FOFA、Hunter、Shodan）
-
-**可选 SDK 工具**
-- record — 原生桌面/窗口截图和 H.264/MP4 录屏（Windows 与 Linux X11）
-
-**辅助工具**
-- tmux — 后台任务会话，增量输出自动推送
-- arsenal — 安全工具包管理器（[crtm](https://github.com/chainreactors/crtm)），一键安装
-- proxy — 多协议代理链（trojan/vless/anytls/hy2/ss）
-- web_search / fetch — CVE 搜索和 URL 抓取
-
----
-
-## 使用示例
-
-### Scan 模式
-
-```bash
-aiscan scan -i 192.168.1.0/24                                    # 快速扫描
-aiscan scan -i 192.168.1.0/24 --mode full                        # 完整扫描
-aiscan scan -i http://target.example --verify=high --sniper       # AI 增强
-aiscan scan -i http://target.example --mode full --deep --report  # 完整 + 深度 + 报告
-```
-
-### Agent 模式
-
-```bash
-# 一次性任务
-aiscan agent -p "扫描目标，发现所有 Web 服务并检查高风险漏洞" -i 192.168.1.0/24
-
-# 带 Goal Evaluation
-aiscan agent -p "全面扫描目标" -i http://target.example -e "发现所有开放端口并输出服务指纹"
-
-# 交互式 REPL
-aiscan agent
-```
-
-### IOA 模式
-
-```bash
-# 启动 IOA Server
-aiscan ioa serve --ioa-url http://0.0.0.0:8765
-
-# 启动 IOA worker
-aiscan agent --ioa-url http://127.0.0.1:8765 --space pentest-project \
-  -p "scan assigned targets and report findings"
-```
-
-### LLM 配置
-
-```bash
-# 环境变量
-export OPENAI_API_KEY="sk-..."
-
-# CLI 参数
-aiscan agent --provider openai --base-url https://api.deepseek.com/v1 --api-key sk-... --model deepseek-chat
-```
-
-配置文件 `aiscan.yaml`：
+`cyber.yaml` 示例：
 
 ```yaml
 llm:
   provider: openai
-  api_key: sk-...
-  model: gpt-4o
-  context_window: 128000   # 模型上下文窗口；自定义模型建议显式填写
-  max_tokens: 16384        # 单次最大输出
+  base_url: https://api.deepseek.com/v1
+  model: deepseek-chat
 ```
 
-`context_window` 填写真实 Token 数，例如 `128000`，不要写 `128K`。小于 8192 的值可以保存，但 Web 页面会提示窗口可能过小。实际请求的输出上限会按剩余上下文自动收紧：`min(max_tokens, context_window - 当前上下文 - 4096)`；如果已没有输出空间，AIScan 会返回明确错误，而不是发送只允许输出 1 Token 的请求。上下文接近配置窗口时会自动压缩。
-
----
+通过 `CYBER_API_KEY` 提供密钥，端点与模型使用你的账号实际可用的值。Anthropic-compatible 服务使用 `provider: anthropic` 和相应配置。协议、profile、环境变量优先级见[配置参考](docs/reference.md)。
 
 ## 文档
 
-| 文档 | 说明 |
+从[文档首页](docs/README.md)进入。教程与参考描述当前已实现的行为，正文以中文为主；使用 release 时选择对应 Git tag 的文档。
+
+| 需要做什么 | 阅读入口 |
 | --- | --- |
-| [Scan 模式详解](docs/scan.md) | 扫描流水线、AI 增强、输出格式 |
-| [Agent 模式详解](docs/agent.md) | Agent 工具集、Goal Evaluation、REPL |
-| [IOA 协作](docs/ioa.md) | 多 Agent 协作架构、Space/Node/Message 模型 |
-| [Record 工具](docs/record.md) | 桌面/窗口捕获、平台支持与原生构建 |
-| [协议与传输架构](docs/protocol-architecture.md) | AOP WebSocket、Connect 管理平面、namespace 与身份边界 |
-| [参考手册](docs/reference.md) | 配置、LLM Provider、全局参数、扫描器用法、FAQ |
-| [v1.0.0 发布与迁移](docs/v1.0.0.md) | 稳定接口基线、pre-v1 接口清理与发布平台 |
-| [Changelog](docs/changelog.md) | 版本变更记录 |
+| 理解 harness、模型、工具与会话 | [基本概念](docs/concepts.md) |
+| 安装、配置模型并完成第一次任务 | [快速上手](docs/getting-started.md) · [模型配置](docs/configuration.md) |
+| 使用会话、工具、Skills、扫描与协作 | [使用者指南](docs/README.md#使用者指南) · [审计指南](cmd/audit/README.md) |
+| 构建 Go 应用或嵌入会话 | [开发者指南](docs/development.md) |
+| 接入外部客户端或查询参数 | [第三方语言集成](docs/integration.md) · [API](docs/api.md) · [配置与命令](docs/reference.md) |
+| 理解生命周期、执行与数据归属 | [架构](docs/architecture.md) |
+| 升级前了解版本变化 | [Changelog](docs/changelog.md) |
+
+## 构建与嵌入
+
+### 准备源码
+
+安装 Git 和 [go.mod](go.mod) 指定的 Go 版本（当前为 Go 1.26）。Makefile 需要 GNU Make 和 POSIX shell；Windows 可安装 MSYS2 工具链并加入 PATH，或使用下文的 PowerShell 直接构建命令。
+
+```sh
+git clone --recurse-submodules https://github.com/chainreactors/cyber-harness.git
+cd cyber-harness
+# 已有仓库补齐子模块
+git submodule update --init --recursive
+```
+
+### 构建源码发行版
+
+以下命令均在仓库根目录执行，产物默认放在 `bin/`；Windows 下自动追加 `.exe` 后缀。
+
+| 命令 | 产物 | 能力 | 是否需要前端 |
+| --- | --- | --- | --- |
+| `make` / `make standard` | `bin/aiscan` | Agent、核心扫描器、代理、Skills 和 IOA | 否 |
+| `make full` / `make web-build` | `bin/aiscan-full` | 标准能力，加 Web、浏览器、被动测绘和爬取 | 是 |
+| `make audit` | `bin/cyber-audit` | 源码与二进制审计，从独立的 `cmd/audit` 模块构建 | 否 |
+| `make agent` | `bin/agent` | 本地 Agent、文件、终端、Skills 和本地子 Agent | 否 |
+| `make all` | `bin/aiscan` 与 `bin/aiscan-full` | 标准与完整发行版 | 是 |
+
+需要前端的目标还需 Node.js/npm（CI 使用 Node.js 22）。首次构建前安装前端依赖：
+
+```sh
+npm --prefix web/frontend ci
+make
+make full
+```
+
+上述目标均使用 `CGO_ENABLED=0`。`make web-build` 构建完整发行版，`make web` 还会启动其 Web 服务。构建标签统一维护在 [editions.env](editions.env)，执行步骤见 [Makefile](Makefile)。独立的 `cyber-web` Hub 可从源码构建：先执行 `make frontend`，再运行 `CGO_ENABLED=0 go build -tags "full sqlite" -o bin/cyber-web ./cmd/cyber-web`。原生录屏使用 `make record`，需要 CGO 与录屏 SDK，详见[录屏构建](docs/record.md)。
+
+### 构建最小本地 Agent
+
+`make agent` 只需 Go 和 Makefile 工具链，依赖图中不包含扫描器、代理、IOA、浏览器、录屏和 Web。[配置模型](docs/configuration.md)后直接通过 `-p` 运行任务：
+
+```sh
+make agent
+./bin/agent -p "只读查看当前目录并解释文件结构"
+```
+
+不使用 Make 时，可在仓库根目录通过 PowerShell 构建：
+
+```powershell
+$env:CGO_ENABLED = "0"
+go build -trimpath -buildvcs=false -ldflags "-s -w" -o bin/agent.exe ./cmd/agent
+.\bin\agent.exe -p "只读查看当前目录并解释文件结构"
+```
+
+### 自定义最小应用
+
+最小工具宿主，无需模型。保存为 `cmd/my-agent/main.go`：
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "os"
+
+    "github.com/chainreactors/cyber/agent/provider"
+    "github.com/chainreactors/cyber/core/tool"
+    "github.com/chainreactors/cyber/pkg/harness"
+)
+
+func main() {
+    dir, err := os.Getwd()
+    check(err)
+    ctx := context.Background()
+    app, err := harness.New(harness.Config{Base: harness.BaseConfig{
+        Directory: dir,
+        Provider: provider.StartupConfig{Mode: provider.StartupDisabled},
+    }})
+    check(err)
+    defer func() { check(app.Close(ctx)) }()
+    check(app.Load(ctx))
+
+    bash, err := app.Bash()
+    check(err)
+    result, err := bash.Execute(ctx, `{"command":"echo Hello, Cyber!"}`)
+    check(err)
+    fmt.Println(tool.ResultText(result))
+}
+
+func check(err error) {
+    if err != nil {
+        panic(err)
+    }
+}
+```
+
+在仓库根目录编译并运行：
+
+```sh
+CGO_ENABLED=0 go build -o bin/my-agent ./cmd/my-agent
+./bin/my-agent
+# Hello, Cyber!
+```
+
+PowerShell:
+
+```powershell
+$env:CGO_ENABLED = "0"
+go build -o bin/my-agent.exe ./cmd/my-agent
+.\bin\my-agent.exe
+```
+
+扩展用法：[注册工具](docs/developer/extensions.md) · [接入模型与会话](docs/developer/hosting.md#嵌入一个会话) · [保留 CLI](cmd/agent)。
+
+### 高级构建
+
+[资源内嵌开关](Makefile) · [外部工具与离线分发](docs/arsenal-bundles.md) · [原生录屏](docs/record.md)。
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request。
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/xxx`)
-3. 提交更改 (`git commit -m 'feat: add xxx'`)
-4. 推送分支 (`git push origin feature/xxx`)
-5. 创建 Pull Request
+先阅读[开发者指南](docs/development.md)与[文档维护标准](docs/maintaining-docs.md)。测试运行说明分别见[仓库 harness](cmd/harness/README.md)、[Web 前端](web/frontend/e2e/README.md)与[审计测试](cmd/audit/tests/README.md)。提交 PR 时描述具体行为变化、影响的入口和验证结果；行为变化应同步更新对应教程或参考页。
 
 ## 免责声明
 
-1. 本工具仅面向**合法授权**的企业安全建设行为及个人学习用途，如您需要测试本工具的可用性，请自行搭建靶机环境。
+1. 本框架用于 cyber 场景下**合法授权**的 Agent 任务、研究与个人学习。扫描示例请在自建或有权测试的环境中运行。
 2. 在使用本工具进行检测时，您应确保该行为符合当地的法律法规，并且已经取得了足够的授权。**请勿对非授权目标进行扫描。**
 3. 如您在使用本工具的过程中存在任何非法行为，您需自行承担相应后果，我们将不承担任何法律及连带责任。
 4. 在安装并使用本工具前，请您**务必审慎阅读、充分理解各条款内容**，限制、免责条款或者其他涉及您重大权益的条款可能会以加粗、加下划线等形式提示您重点注意。
@@ -276,21 +227,16 @@ llm:
 
 - [chainreactors](https://github.com/chainreactors) — 组织
 - [IOA](https://github.com/chainreactors/ioa) — Internet of Agents 多 agent 协作协议
-- [gogo](https://github.com/chainreactors/gogo) — 端口和服务发现
-- [spray](https://github.com/chainreactors/spray) — Web 探测和指纹识别
-- [zombie](https://github.com/chainreactors/zombie) — 弱口令检测
-- [neutron](https://github.com/chainreactors/neutron) — 模板化 POC 引擎
-- [fingers](https://github.com/chainreactors/fingers) — 指纹规则引擎
-- [sdk](https://github.com/chainreactors/sdk) — 扫描器 SDK（gogo/spray/zombie 核心）
+- [sdk](https://github.com/chainreactors/sdk) — 扫描器 SDK
 - [proxyclient](https://github.com/chainreactors/proxyclient) — 多协议代理客户端
-- [crtm](https://github.com/chainreactors/crtm) — 安全工具包注册中心
+- [crtm](https://github.com/chainreactors/crtm) — CLI 工具包注册中心
 - [utils](https://github.com/chainreactors/utils) — 共享工具库 & PTY 管理器
 - [parsers](https://github.com/chainreactors/parsers) — 协议和数据解析器
 
 ---
 
 <p align="center">
-  <a href="https://star-history.com/#chainreactors/aiscan&Date">
-    <img src="https://api.star-history.com/svg?repos=chainreactors/aiscan&type=Date" alt="Star History" width="600">
+  <a href="https://star-history.com/#chainreactors/cyber-harness&Date">
+    <img src="https://api.star-history.com/svg?repos=chainreactors/cyber-harness&type=Date" alt="Star History" width="600">
   </a>
 </p>

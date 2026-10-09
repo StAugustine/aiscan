@@ -3,6 +3,7 @@ package katana
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,12 +14,12 @@ import (
 	"sync"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	browserutil "github.com/chainreactors/aiscan/pkg/headless"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	browserutil "github.com/chainreactors/cyber/tools/headless"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"github.com/projectdiscovery/goflags"
 	"github.com/projectdiscovery/katana/pkg/engine"
 	"github.com/projectdiscovery/katana/pkg/engine/headless"
@@ -124,7 +125,7 @@ Examples:
   katana -list urls.txt -d 2 -jc -timeout 60`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("katana", &err)
 	args := execution.Args
 	args = c.resolveRelativePaths(args)
@@ -147,11 +148,11 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 
 	// Inject the call-scoped Runner route only when the caller did not provide
 	// an explicit -proxy option.
-	egress := commands.ResolveExecutionEgress(execution, c.Proxy)
+	egress := coretool.ResolveExecutionEgress(execution, c.Proxy)
 	if options.Proxy == "" {
 		options.Proxy = egress.ProxyURL
 	}
-	if err := configureBrowserOptions(options); err != nil {
+	if err := configureBrowserOptionsWith(options, browserutil.Discover); err != nil {
 		return nil, fmt.Errorf("katana: %w", err)
 	}
 
@@ -183,17 +184,12 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	}
 
 	// Use instance-owned output and logging for embedded crawling.
-
 	crawlerOptions, err := katanatypes.NewCrawlerOptionsWithOutput(options, collector, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-
 		return nil, fmt.Errorf("katana: init: %w", err)
 	}
 	// Output ownership is transferred during construction.
-	defer func() {
-		crawlerOptions.Close()
-
-	}()
+	defer crawlerOptions.Close()
 
 	var crawler engine.Engine
 	switch {
@@ -212,6 +208,7 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	defer crawler.Close()
 
 	// Crawl each URL.
+	var failed []error
 	for _, u := range options.URLs {
 		if ctx.Err() != nil {
 			break
@@ -221,25 +218,25 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, fmt.Errorf("katana: %w", ctxErr)
 			}
-			c.Logger.Warnf("katana: crawl %s: %v", u, crawlErr)
+			failed = append(failed, fmt.Errorf("crawl %s: %w", u, crawlErr))
 		}
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("katana: %w", ctxErr)
 	}
 
-	// Write collected results.
+	// Write collected results. An input that failed is reported after the
+	// results it did produce, so a partly readable crawl still yields them.
 	for _, line := range collector.lines() {
 		fmt.Fprint(execution.Stdout, string(line)+"\n")
+	}
+	if len(failed) > 0 {
+		return nil, fmt.Errorf("katana: %w", errors.Join(failed...))
 	}
 	return nil, nil
 }
 
 type browserDiscoverer func() (browserutil.Binary, error)
-
-func configureBrowserOptions(options *katanatypes.Options) error {
-	return configureBrowserOptionsWith(options, browserutil.Discover)
-}
 
 func configureBrowserOptionsWith(options *katanatypes.Options, discover browserDiscoverer) error {
 	if options.ChromeWSUrl != "" {

@@ -2,30 +2,87 @@ package console
 
 import (
 	"context"
-	"fmt"
-	"github.com/chainreactors/aiscan/cmd/harness"
-	"github.com/chainreactors/aiscan/core/extension"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent"
-	ptypb "github.com/chainreactors/aiscan/aop/pty"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	"github.com/chainreactors/aiscan/pkg/terminal"
-	"github.com/chainreactors/utils/pty"
+	loopext "github.com/chainreactors/cyber/exts/agent"
+
+	"github.com/chainreactors/cyber/agent"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	ptypb "github.com/chainreactors/cyber/aop/pty"
+	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/namespaces"
+	procbus "github.com/chainreactors/cyber/core/proc"
+	"github.com/chainreactors/cyber/core/telemetry"
+	promptext "github.com/chainreactors/cyber/exts/prompt"
+	ptyext "github.com/chainreactors/cyber/exts/pty"
+	sessionext "github.com/chainreactors/cyber/exts/session"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
+	terminaltool "github.com/chainreactors/cyber/tools/terminal"
+	"github.com/chainreactors/utils/proc"
 )
 
-func newPTYRouter(bash *commands.BashTool) (*terminal.Router, error) {
-	manager := bashManager(bash)
-	if manager == nil || manager.Manager == nil {
-		return nil, fmt.Errorf("pty manager unavailable")
+// loadPTYRegistry mounts the PTY extension exactly as a Profile does.
+func loadPTYRegistry(t *testing.T, ctx context.Context, bash *terminaltool.BashTool) *namespaces.Registry {
+	t.Helper()
+	registry := namespaces.New()
+	// The PTY extension borrows the session registry the terminal owns; a test
+	// stands in for that owner.
+	sessions := extension.Func{LoadFunc: func(scope *extension.Scope) error {
+		return extension.Provide[procbus.Sessions](scope, bash.Manager())
+	}}
+	value := hosttest.Set(t, registry, sessions, ptyext.New())
+	if err := value.Load(ctx); err != nil {
+		t.Fatal(err)
 	}
-	return terminal.NewRuntimeRouter(manager.Manager), nil
+	t.Cleanup(func() { _ = value.Close(context.Background()) })
+	return registry
+}
+
+// ptyTransport models one AOP connection. Binding the registry opens a fresh
+// PTY handler for it, and canceling its context is what a connection ending
+// looks like now that the router has no teardown of its own.
+type ptyTransport struct {
+	t        *testing.T
+	mux      *aop.NamespaceMux
+	cancel   context.CancelFunc
+	messages chan *ptypb.ProtocolMessage
+}
+
+func newPTYTransport(t *testing.T, ctx context.Context, registry *namespaces.Registry, buffer int) *ptyTransport {
+	t.Helper()
+	connectionCtx, cancel := context.WithCancel(ctx)
+	transport := &ptyTransport{t: t, cancel: cancel, messages: make(chan *ptypb.ProtocolMessage, buffer)}
+	transport.mux = aop.NewNamespaceMux(connectionCtx)
+	if err := registry.Bind(transport.mux); err != nil {
+		t.Fatalf("bind PTY namespace: %v", err)
+	}
+	t.Cleanup(transport.close)
+	return transport
+}
+
+func (p *ptyTransport) close() {
+	p.cancel()
+	_ = p.mux.Close(context.Background())
+}
+
+func (p *ptyTransport) dispatch(message *ptypb.ProtocolMessage) {
+	p.t.Helper()
+	handled, err := p.mux.Dispatch(aop.MustWrap("envelope", "", message), func(out *aop.Envelope) error {
+		reply := &ptypb.ProtocolMessage{}
+		if err := out.GetPayload().UnmarshalTo(reply); err != nil {
+			return err
+		}
+		p.messages <- reply
+		return nil
+	})
+	if err != nil || !handled {
+		p.t.Fatalf("dispatch PTY message: handled=%v err=%v", handled, err)
+	}
 }
 
 func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
@@ -33,37 +90,32 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 	defer cancel()
 
 	option := &cfg.Option{REPLMode: "fast"}
-	application := newTestApp(t, apppkg.Config{SkipEngines: true, Logger: telemetry.NopLogger()}, apppkg.AppServices{})
+	application := apptest.NewFixture(t, telemetry.NopLogger(), nil)
 
-	applicationSet := loadConsoleApplication(t, ctx, application)
-	defer applicationSet.Close(context.Background())
-	rt, err := agentext.New(agentext.Config{Application: application.App, Option: option, Logger: telemetry.NopLogger(),
+	rt := sessionext.New(agentsession.Config{
 		PrimarySessionID: MainREPLName,
 		Loop:             agent.StandardLoop{},
 	})
-	if err != nil {
-		t.Fatalf("runtime without provider: %v", err)
-	}
-
-	rtSet := harness.Set(t, extension.Entry{ID: "rt", Extension: rt})
+	rtSet := hosttest.Set(t, append(apptest.Entries(t, application), promptext.New(), loopext.New(agent.StandardLoop{}), rt)...)
 	if err := rtSet.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer rtSet.Close(context.Background())
 
-	repl, err := StartPersistent(rt.Runtime(), option, testSessionBindings(t, rt.Runtime()))
+	repl, err := StartPersistent(rt.Runtime(), application.Shell.Manager(), option, testSessionBindings(t, rt.Runtime()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer repl.Close()
-	mgr := bashManager(rt.Runtime().App().Bash)
+	mgr := application.Shell.Manager()
 	if mgr == nil {
 		t.Fatal("pty manager unavailable")
+		return
 	}
 
-	var initial pty.Info
+	var initial proc.Info
 	for _, info := range mgr.List() {
-		if info.State == pty.StateRunning && info.Kind == "repl" && info.Name == MainREPLName {
+		if info.State == proc.StateRunning && info.Kind == "repl" && info.Name == MainREPLName {
 			initial = info
 			break
 		}
@@ -71,20 +123,16 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 	if initial.ID == "" {
 		t.Fatal("main-repl was not created eagerly")
 	}
-	if initial.Name != MainREPLName || initial.Kind != "repl" || initial.State != pty.StateRunning {
+	if initial.Name != MainREPLName || initial.Kind != "repl" || initial.State != proc.StateRunning {
 		t.Fatalf("unexpected resident repl: %+v", initial)
 	}
 
-	messages := make(chan *ptypb.ProtocolMessage, 64)
-	router, err := newPTYRouter(rt.Runtime().App().Bash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer router.Close()
-
-	router.Handle(ctx, &ptypb.ProtocolMessage{Message: &ptypb.ProtocolMessage_Attach{Attach: &ptypb.Attach{
+	registry := loadPTYRegistry(t, ctx, application.Shell)
+	transport := newPTYTransport(t, ctx, registry, 64)
+	messages := transport.messages
+	transport.dispatch(&ptypb.ProtocolMessage{Message: &ptypb.ProtocolMessage_Attach{Attach: &ptypb.Attach{
 		StreamId: "term-repl", SessionId: initial.ID,
-	}}}, func(message *ptypb.ProtocolMessage) { messages <- message })
+	}}})
 	opened := waitForPTYMessage(t, messages, time.Second, func(message *ptypb.ProtocolMessage) bool {
 		if value := message.GetError(); value != nil {
 			t.Fatalf("unexpected pty error: %s", value.GetMessage())
@@ -95,9 +143,7 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 		t.Fatalf("transport created a second repl: got %s want %s", opened.GetAttached().GetSession().GetId(), initial.ID)
 	}
 
-	router.Handle(ctx, ptyInput("term-repl", "/status\n"), func(message *ptypb.ProtocolMessage) {
-		messages <- message
-	})
+	transport.dispatch(ptyInput("term-repl", "/status\n"))
 	waitForPTYMessage(t, messages, 3*time.Second, func(message *ptypb.ProtocolMessage) bool {
 		if value := message.GetError(); value != nil {
 			t.Fatalf("unexpected pty error: %s", value.GetMessage())
@@ -106,17 +152,13 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 	})
 
 	beforeExit, _ := mgr.Get(initial.ID)
-	router.Handle(ctx, ptyInput("term-repl", "/exit\n"), func(message *ptypb.ProtocolMessage) {
-		messages <- message
-	})
+	transport.dispatch(ptyInput("term-repl", "/exit\n"))
 	waitForCondition(t, 3*time.Second, func() bool {
 		info, ok := mgr.Get(initial.ID)
-		return ok && info.State == pty.StateRunning && info.OutputBytes > beforeExit.OutputBytes
+		return ok && info.State == proc.StateRunning && info.OutputBytes > beforeExit.OutputBytes
 	})
 
-	router.Handle(ctx, ptyInput("term-repl", "!tmux new-session -d -s webtask echo tmux_remote_ok\n"), func(message *ptypb.ProtocolMessage) {
-		messages <- message
-	})
+	transport.dispatch(ptyInput("term-repl", "!tmux new-session -d -s webtask echo tmux_remote_ok\n"))
 	waitForCondition(t, 3*time.Second, func() bool {
 		for _, info := range mgr.List() {
 			if info.Name == "webtask" {
@@ -126,24 +168,17 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 		return false
 	})
 
-	// Closing one transport Router only detaches its monitor. A new transport
+	// Ending one transport only releases its own monitor. A new transport
 	// must reuse the same process-owned session and buffered console.
-	router.Close()
-	if info, ok := mgr.Get(initial.ID); !ok || info.State != pty.StateRunning {
-		t.Fatalf("router close terminated resident repl: %+v ok=%v", info, ok)
+	transport.close()
+	if info, ok := mgr.Get(initial.ID); !ok || info.State != proc.StateRunning {
+		t.Fatalf("transport close terminated resident repl: %+v ok=%v", info, ok)
 	}
-	router2, err := newPTYRouter(rt.Runtime().App().Bash)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer router2.Close()
-	reconnected := make(chan *ptypb.ProtocolMessage, 16)
-	router2.Handle(ctx, &ptypb.ProtocolMessage{Message: &ptypb.ProtocolMessage_Attach{Attach: &ptypb.Attach{
+	second := newPTYTransport(t, ctx, registry, 16)
+	second.dispatch(&ptypb.ProtocolMessage{Message: &ptypb.ProtocolMessage_Attach{Attach: &ptypb.Attach{
 		StreamId: "term-repl-2", SessionId: initial.ID,
-	}}}, func(message *ptypb.ProtocolMessage) {
-		reconnected <- message
-	})
-	attached := waitForPTYMessage(t, reconnected, time.Second, func(message *ptypb.ProtocolMessage) bool {
+	}}})
+	attached := waitForPTYMessage(t, second.messages, time.Second, func(message *ptypb.ProtocolMessage) bool {
 		return message.GetAttached() != nil
 	})
 	if attached.GetAttached().GetSession().GetId() != initial.ID {
@@ -152,7 +187,7 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 
 	running := 0
 	for _, info := range mgr.List() {
-		if info.State == pty.StateRunning && info.Kind == "repl" && info.Name == MainREPLName {
+		if info.State == proc.StateRunning && info.Kind == "repl" && info.Name == MainREPLName {
 			running++
 		}
 	}
@@ -165,9 +200,9 @@ func TestConsoleOwnsPersistentMainREPLWithoutProvider(t *testing.T) {
 	repl.Close()
 	waitForCondition(t, time.Second, func() bool {
 		info, ok := mgr.Get(initial.ID)
-		return !ok || info.State != pty.StateRunning
+		return !ok || info.State != proc.StateRunning
 	})
-	session, err := rt.Runtime().OpenSession(ctx, agentext.SessionOptions{ID: "after-console"})
+	session, err := rt.Runtime().OpenSession(ctx, agentsession.SessionOptions{ID: "after-console"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,25 +215,19 @@ func TestEphemeralLocalREPLDoesNotCreateBufferedPTYConsole(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	application := newTestApp(t, apppkg.Config{SkipEngines: true, Logger: telemetry.NopLogger()}, apppkg.AppServices{})
+	application := apptest.NewFixture(t, telemetry.NopLogger(), nil)
 
-	applicationSet := loadConsoleApplication(t, ctx, application)
-	defer applicationSet.Close(context.Background())
-	rt, err := agentext.New(agentext.Config{Application: application.App, Option: &cfg.Option{REPLMode: "fast"}, Logger: telemetry.NopLogger(),
+	rt := sessionext.New(agentsession.Config{
 		PrimarySessionID: MainREPLName,
 		Loop:             agent.StandardLoop{},
 	})
-	if err != nil {
-		t.Fatalf("runtime without provider: %v", err)
-	}
-
-	rtSet := harness.Set(t, extension.Entry{ID: "rt", Extension: rt})
+	rtSet := hosttest.Set(t, append(apptest.Entries(t, application), promptext.New(), loopext.New(agent.StandardLoop{}), rt)...)
 	if err := rtSet.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer rtSet.Close(context.Background())
 
-	for _, info := range bashManager(rt.Runtime().App().Bash).List() {
+	for _, info := range application.Shell.Manager().List() {
 		if info.Kind == "repl" && info.Name == MainREPLName {
 			t.Fatalf("ephemeral local REPL was routed through buffered PTY: %+v", info)
 		}

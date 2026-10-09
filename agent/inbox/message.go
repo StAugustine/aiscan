@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 )
 
 type Origin string
@@ -27,7 +27,7 @@ const (
 
 type Attachment struct {
 	Type    string // "file", "skill", "raw"
-	Ref     string // e.g. "@/tmp/targets.txt", "@scan"
+	Ref     string // e.g. "@/tmp/input.txt", "@artifact"
 	Content string
 	Error   string
 }
@@ -36,6 +36,7 @@ type Message struct {
 	Message     *aop.Message
 	Origin      Origin
 	Priority    Priority
+	Interrupt   bool // Request the current consumer to yield after this message is admitted.
 	Attachments []Attachment
 	Meta        map[string]any
 	CreatedAt   time.Time

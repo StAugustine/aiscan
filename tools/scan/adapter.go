@@ -6,10 +6,8 @@ import (
 	"net/url"
 	"strings"
 
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/tools/scan/engine"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/tools/scan/engine"
 	sdktypes "github.com/chainreactors/sdk/pkg/types"
 	sdkzombie "github.com/chainreactors/sdk/zombie"
 	"github.com/chainreactors/utils"
@@ -17,12 +15,15 @@ import (
 	zombiepkg "github.com/chainreactors/zombie/pkg"
 )
 
-func (c *Command) runPortDiscoveryCapability(ctx context.Context, discovery discoveryOptions, profile profile, input target, emit func(event)) {
+func (c *Command) runPortDiscoveryCapability(ctx context.Context, flags flags, input target, emit func(event)) {
 	target, ok := input.(scanTarget)
 	if !ok {
 		return
 	}
-	ports := discovery.Ports
+	ports := flags.Ports
+	if ports == "" {
+		ports = defaultDiscoveryPorts(flags.Mode)
+	}
 	if target.Ports != "" {
 		ports = target.Ports
 	}
@@ -30,12 +31,12 @@ func (c *Command) runPortDiscoveryCapability(ctx context.Context, discovery disc
 	resultCh, err := engine.GogoScanStream(ctx, c.engines.Gogo, engine.GogoScanOptions{
 		Target:       target.Target,
 		Ports:        ports,
-		Threads:      discovery.Threads,
-		Timeout:      discovery.Timeout,
-		VersionLevel: discovery.Version,
-		Exploit:      discovery.Exploit,
+		Threads:      flags.Threads,
+		Timeout:      flags.Timeout,
+		VersionLevel: scanGogoVersionLevel,
+		Exploit:      scanGogoExploitMode,
 		Proxy:        c.proxyForContext(ctx),
-		Debug:        discovery.Debug,
+		Debug:        flags.Debug,
 		OnStats: func(stats sdktypes.Stats) {
 			emit(statsEvent(capGogoPortscan, stats))
 		},
@@ -51,17 +52,18 @@ func (c *Command) runPortDiscoveryCapability(ctx context.Context, discovery disc
 		if result == nil {
 			continue
 		}
-		emit(targetEvent(capGogoPortscan, target.Raw, newServiceTarget(target.Raw, result)))
-		deriveServiceResult(profile, capGogoPortscan, result, emit)
+		accepted := targetEvent(capGogoPortscan, serviceTarget{Result: result})
+		emit(accepted)
+		deriveServiceResult(flags.BroadPOC, capGogoPortscan, accepted, emit)
 	}
 }
 
-func (c *Command) runSprayCapability(ctx context.Context, flags flags, web webOptions, input target, source string, opts engine.SprayCheckOptions, emit func(event)) {
+func (c *Command) runSprayCapability(ctx context.Context, flags flags, input target, source string, opts engine.SprayCheckOptions, emit func(event)) {
 	target, ok := input.(webTarget)
 	if !ok || target.URL == "" {
 		return
 	}
-	opts = applyWebStrategyOptions(flags, web, opts)
+	opts = applyWebStrategyOptions(flags, opts)
 	opts.Proxy = c.proxyForContext(ctx)
 	opts.URLs = []string{target.URL}
 	opts.Host = target.HostHeader
@@ -86,32 +88,25 @@ func (c *Command) runSprayCapability(ctx context.Context, flags flags, web webOp
 		if result == nil {
 			continue
 		}
-		emit(targetEvent(source, target.Raw, newWebProbeTarget(target.Raw, source, target.HostHeader, result)))
+		emit(targetEvent(source, newWebProbeTarget(target.HostHeader, result)))
 	}
 }
 
-func applyWebStrategyOptions(flags flags, web webOptions, opts engine.SprayCheckOptions) engine.SprayCheckOptions {
-	opts.Dictionaries = append([]string(nil), web.Dictionaries...)
-	opts.Rules = append([]string(nil), web.Rules...)
-	opts.Word = web.Word
-	opts.DefaultDict = opts.DefaultDict || web.DefaultDict
-	opts.Advance = opts.Advance || web.Advance
+func applyWebStrategyOptions(flags flags, opts engine.SprayCheckOptions) engine.SprayCheckOptions {
+	opts.Dictionaries = append([]string(nil), flags.Dictionaries...)
+	opts.Rules = append([]string(nil), flags.Rules...)
+	opts.Word = flags.Word
+	opts.DefaultDict = opts.DefaultDict || flags.DefaultDict
+	opts.Advance = opts.Advance || flags.Advance
 	opts.ReconPlugin = true
 	opts.Threads = flags.SprayThreads
 	opts.Timeout = flags.Timeout
 	opts.Debug = flags.Debug
+	opts.Quiet = flags.JSON
 	return opts
 }
 
-func runWebResultAnalysisCapability(_ context.Context, profile profile, input target, emit func(event)) {
-	target, ok := input.(webProbeTarget)
-	if !ok || !reportableSprayResultForCapability(target.Result, target.Capability) {
-		return
-	}
-	deriveWebProbeResult(profile, target.Capability, target.Result, target.HostHeader, emit)
-}
-
-func (c *Command) runWeakpassCapability(ctx context.Context, flags flags, credentials credentialOptions, input target, emit func(event)) {
+func (c *Command) runWeakpassCapability(ctx context.Context, flags flags, input target, emit func(event)) {
 	target, ok := input.(weakpassTarget)
 	if !ok || target.Target.Service == "" || target.Target.Address() == ":" {
 		return
@@ -122,8 +117,8 @@ func (c *Command) runWeakpassCapability(ctx context.Context, flags flags, creden
 		Threads:   flags.ZombieThreads,
 		Timeout:   flags.Timeout,
 		Top:       flags.ZombieTop,
-		Users:     credentials.Users,
-		Passwords: credentials.Passwords,
+		Users:     append([]string(nil), flags.Users...),
+		Passwords: append([]string(nil), flags.Passwords...),
 		Proxy:     c.proxyForContext(ctx),
 		Debug:     flags.Debug,
 		OnStats: func(stats sdktypes.Stats) {
@@ -175,75 +170,79 @@ func (c *Command) runPOCCapability(ctx context.Context, flags flags, input targe
 			continue
 		}
 		record := result.TemplateResult(target.Target)
-		resultID := toolargs.ArtifactResultID("neutron", toolpb.ArtifactKindVuln, target.Target, record)
-		loot := bindLoot(vulnLoot(record), resultID, "neutron")
-		emit(artifactLootEvent(capNeutronPOC, loot, output.ArtifactResult{
-			ResultID: resultID,
-			Tool:     "neutron",
-			Kind:     toolpb.ArtifactKindVuln,
-			Target:   target.Target,
-			Data:     record,
-		}))
+		artifact, err := newArtifactResult("neutron", toolpb.ArtifactKindVuln, target.Target, record)
+		if err != nil {
+			emitError(emit, capNeutronPOC, "encode artifact: %v", err)
+			continue
+		}
+		loot := bindLoot(vulnLoot(record), artifact.ResultID, "neutron")
+		emit(artifactLootEvent(capNeutronPOC, loot, *artifact))
 	}
 }
 
-func deriveServiceResult(profile profile, source string, result *parsers.GOGOResult, emit func(event)) {
+func deriveServiceResult(broadPOC bool, source string, input event, emit func(event)) {
+	targetResult, ok := input.Target.(serviceTarget)
+	if !ok || input.Artifact == nil {
+		return
+	}
+	result := targetResult.Result
 	if result == nil {
 		return
 	}
-	if source == "" {
-		source = capGogoPortscan
-	}
-
 	fingers := parsers.FrameworkNames(result.Frameworks)
 	target := result.GetTarget()
 	if result.IsHttp() {
 		target = result.GetBaseURL()
-		emit(targetEvent(source, "", newWebTarget("", target, "")))
+		emit(targetEvent(source, newWebTarget(target, "")))
 	}
 	if len(fingers) > 0 {
-		resultID := toolargs.ArtifactResultID("gogo", toolpb.ArtifactKindService, result.GetTarget(), result)
+		resultID := input.Artifact.ResultID
 		emit(lootEvent(source, bindLoot(
 			fingerprintLoot(target, parsers.NormalizeNames(fingers), result.Frameworks.IsFocus()),
 			resultID,
 			"gogo",
 		)))
 	}
-	if len(fingers) > 0 || profile.AllowBroadPOC {
-		emit(targetEvent(source, "", newPOCTarget("", target, fingers)))
+	if len(fingers) > 0 || broadPOC {
+		emit(targetEvent(source, newPOCTarget(target, fingers)))
 	}
 	if zTarget, ok := zombieTargetFromGogo(result); ok {
-		emit(targetEvent(source, "", newWeakpassTarget("", zTarget)))
+		emit(targetEvent(source, newWeakpassTarget(zTarget)))
 	}
 }
 
-func (c *Command) runHTTPBasicAuthCapability(ctx context.Context, flags flags, input target, emit func(event)) {
-	target, ok := input.(webProbeTarget)
-	if !ok || !reportableSprayResultForCapability(target.Result, target.Capability) || target.Result.Status != 401 {
+func (c *Command) runHTTPBasicAuthCapability(ctx context.Context, flags flags, input event, emit func(event)) {
+	target, ok := input.Target.(webProbeTarget)
+	if !ok || !reportableSprayResultForCapability(target.Result, input.Source) || target.Result.Status != 401 {
 		return
 	}
 	zTarget, ok := basicAuthZombieTarget(ctx, target.Result.UrlString, target.HostHeader, flags.Timeout, c.proxyForContext(ctx))
 	if !ok {
 		return
 	}
-	emit(targetEvent(capHTTPBasicAuth, target.Raw, newWeakpassTarget(target.Raw, zTarget)))
+	emit(targetEvent(capHTTPBasicAuth, newWeakpassTarget(zTarget)))
 }
 
-func deriveWebProbeResult(profile profile, source string, result *parsers.SprayResult, hostHeader string, emit func(event)) {
+func deriveWebProbeResult(broadPOC bool, source string, input event, emit func(event)) {
+	targetResult, ok := input.Target.(webProbeTarget)
+	if !ok || input.Artifact == nil {
+		return
+	}
+	result := targetResult.Result
 	if !reportableSprayResult(result) || result.UrlString == "" {
 		return
 	}
 	fingers := parsers.FrameworkNames(result.Frameworks)
 	if len(fingers) > 0 {
-		resultID := toolargs.ArtifactResultID("spray", toolpb.ArtifactKindWeb, result.UrlString, result)
+		resultID := input.Artifact.ResultID
 		emit(lootEvent(source, bindLoot(
 			fingerprintLoot(result.UrlString, parsers.NormalizeNames(fingers), result.Frameworks.IsFocus()),
 			resultID,
 			"spray",
 		)))
 	}
-	if result.Status > 0 && (len(fingers) > 0 || profile.AllowBroadPOC) {
-		emit(targetEvent(source, "", newPOCTarget("", result.UrlString, fingers)))
+	if result.Status > 0 && (len(fingers) > 0 || broadPOC) {
+		emit(targetEvent(source, newPOCTarget(result.UrlString, fingers)))
 	}
 }
 
@@ -329,15 +328,13 @@ func deriveWeakpassResult(source string, result *parsers.ZombieResult, emit func
 		return
 	}
 	target := result.Address()
-	resultID := toolargs.ArtifactResultID("zombie", toolpb.ArtifactKindWeakpass, target, result)
-	loot := bindLoot(weakpassLoot(result), resultID, "zombie")
-	emit(artifactLootEvent(source, loot, output.ArtifactResult{
-		ResultID: resultID,
-		Tool:     "zombie",
-		Kind:     toolpb.ArtifactKindWeakpass,
-		Target:   target,
-		Data:     result,
-	}))
+	artifact, err := newArtifactResult("zombie", toolpb.ArtifactKindWeakpass, target, result)
+	if err != nil {
+		emitError(emit, source, "encode artifact: %v", err)
+		return
+	}
+	loot := bindLoot(weakpassLoot(result), artifact.ResultID, "zombie")
+	emit(artifactLootEvent(source, loot, *artifact))
 }
 
 func zombieTargetFromGogo(result *parsers.GOGOResult) (sdkzombie.Target, bool) {

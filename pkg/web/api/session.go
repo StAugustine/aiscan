@@ -10,8 +10,9 @@ import (
 	"strings"
 	"sync"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
+	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -32,7 +33,7 @@ type RequestLedger interface {
 
 type SessionStore interface {
 	RequestLedger
-	ListSessionPage(context.Context, int, int, bool) ([]*types.SessionRecord, bool, error)
+	ListSessionPage(context.Context, int, int, *types.ListSessionsRequest) ([]*types.SessionRecord, bool, error)
 	GetSession(context.Context, string) (*types.SessionRecord, error)
 	CreateSession(context.Context, *types.SessionRecord) error
 	UpdateSession(context.Context, *types.SessionRecord) error
@@ -46,7 +47,7 @@ type SessionStore interface {
 // event delivery.
 type SessionRuntime interface {
 	AgentInfo(string) (string, bool)
-	GetScan(context.Context, string) (*types.Scan, error)
+	GetScan(context.Context, string) (*scanpb.Scan, error)
 	OpenAgentSession(context.Context, string, *aop.OpenSessionRequest) error
 	CloseAgentSession(context.Context, string, string, *aop.CloseSessionRequest) (bool, error)
 	StartAgentTurn(string, *aop.RunTurnRequest)
@@ -59,11 +60,11 @@ type SessionRuntime interface {
 }
 
 type Sessions struct {
-	store         SessionStore
-	runtime       SessionRuntime
-	newID         func() string
-	managementMu  sync.Mutex
-	applicationMu sync.Mutex
+	store        SessionStore
+	runtime      SessionRuntime
+	newID        func() string
+	operationsMu sync.Mutex
+	operations   map[string]*operationGate
 }
 
 func NewSessions(store SessionStore, runtime SessionRuntime, newID func() string) *Sessions {
@@ -89,13 +90,65 @@ func (s *Sessions) ListSessions(ctx context.Context, request *types.ListSessions
 	if limit == 0 {
 		limit = 100
 	}
-	sessions, more, err := s.store.ListSessionPage(ctx, offset, limit, request.IncludeClosed)
+	sessions, more, err := s.store.ListSessionPage(ctx, offset, limit, request)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)
 	}
 	response := &types.ListSessionsResponse{Sessions: sessions}
 	if more {
 		response.NextCursor = strconv.Itoa(offset + len(sessions))
+	}
+	return response, nil
+}
+
+// UpdateSession changes presentation metadata and works while the execution node is offline.
+func (s *Sessions) UpdateSession(ctx context.Context, request *types.UpdateSessionRequest) (*types.UpdateSessionResponse, error) {
+	if s == nil || s.store == nil {
+		return nil, Errorf(CodeFailedPrecondition, "session store is unavailable")
+	}
+	if request == nil || request.RequestId == "" || request.SessionId == "" {
+		return nil, Errorf(CodeInvalidArgument, "request_id and session_id are required")
+	}
+	release, err := s.lockOperations(ctx, "request:"+request.RequestId, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	replay := new(types.UpdateSessionResponse)
+	hash, found, conflict, err := BeginRequest(ctx, s.store, "UpdateSession", request.RequestId, request, replay)
+	if err != nil {
+		return nil, err
+	}
+	if found {
+		return replay, nil
+	}
+	if conflict {
+		return nil, Errorf(CodeAlreadyExists, "request_id conflicts with another request")
+	}
+	record, err := s.store.GetSession(ctx, request.SessionId)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, Errorf(CodeNotFound, "session not found")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if request.Title != nil {
+		title := strings.TrimSpace(request.GetTitle())
+		if title == "" || len([]rune(title)) > 200 {
+			return nil, Errorf(CodeInvalidArgument, "title must contain 1 to 200 characters")
+		}
+		record.Session.Title = title
+	}
+	if request.Archived != nil {
+		record.Archived = request.GetArchived()
+	}
+	record.UpdatedAt = timestamppb.Now()
+	if err := s.store.UpdateSession(ctx, record); err != nil {
+		return nil, err
+	}
+	response := &types.UpdateSessionResponse{RequestId: request.RequestId, Outcome: &types.UpdateSessionResponse_Accepted{Accepted: record}}
+	if err := FinishRequest(ctx, s.store, "UpdateSession", request.RequestId, hash, response); err != nil {
+		return nil, err
 	}
 	return response, nil
 }
@@ -124,8 +177,11 @@ func (s *Sessions) OpenSession(ctx context.Context, requestID string, request *a
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedOpen("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+strings.TrimSpace(request.SessionId))
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.OpenSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "OpenSession", requestID, request, replayed)
@@ -190,6 +246,9 @@ func (s *Sessions) OpenSession(ctx context.Context, requestID string, request *a
 	if scanID != "" {
 		if _, err := s.runtime.GetScan(ctx, scanID); err != nil {
 			cleanup()
+			if errors.Is(err, ErrScanConsoleDisabled) {
+				return finish(rejectedOpen(string(CodeFailedPrecondition), err.Error()))
+			}
 			return finish(rejectedOpen("NOT_FOUND", "scan not found"))
 		}
 		if err := s.store.LinkScanToSession(ctx, id, scanID); err != nil {
@@ -216,8 +275,11 @@ func (s *Sessions) RunTurn(ctx context.Context, requestID string, request *aop.R
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedRun("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.RunTurnResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "RunTurn", requestID, request, replayed)
@@ -289,8 +351,11 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedCancel("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.CancelTurnResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "CancelTurn", requestID, request, replayed)
@@ -316,8 +381,24 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 		if errors.Is(err, sql.ErrNoRows) {
 			return finish(rejectedCancel("NOT_FOUND", "session not found"))
 		}
-		if errors.Is(err, ErrTurnNotFound) {
-			return finish(rejectedCancel("NOT_FOUND", "turn not found"))
+		if errors.Is(err, ErrTurnNotFound) || ErrorCode(err) == CodeUnavailable {
+			// Cancellation is idempotent from the UI's perspective. A fast
+			// provider failure can publish TurnEnded between the button press and
+			// the control request, so the runtime quite correctly reports that no
+			// run is active anymore. Treat the durable terminal as success and
+			// let the client converge its busy state.
+			ended, lookupErr := s.turnEnded(ctx, request.SessionId, request.TurnId)
+			if lookupErr != nil {
+				return nil, fmt.Errorf("check turn state: %w", lookupErr)
+			}
+			if ended {
+				return finish(&aop.CancelTurnResponse{Outcome: &aop.CancelTurnResponse_Accepted{Accepted: &aop.TurnReceipt{
+					SessionId: request.SessionId, TurnId: request.TurnId, State: "completed",
+				}}})
+			}
+			if errors.Is(err, ErrTurnNotFound) {
+				return finish(rejectedCancel("NOT_FOUND", "turn not found"))
+			}
 		}
 		return nil, fmt.Errorf("cancel turn: %w", err)
 	}
@@ -328,6 +409,35 @@ func (s *Sessions) CancelTurn(ctx context.Context, requestID string, request *ao
 	}}})
 }
 
+func (s *Sessions) turnEnded(ctx context.Context, sessionID, turnID string) (bool, error) {
+	if indexed, ok := s.store.(interface {
+		HasTurnEnded(context.Context, string, string) (bool, error)
+	}); ok {
+		return indexed.HasTurnEnded(ctx, sessionID, turnID)
+	}
+	items, err := s.store.ListAOPEventsAfter(ctx, sessionID, 0, 0)
+	if err != nil {
+		return false, err
+	}
+	for index := len(items) - 1; index >= 0; index-- {
+		item := items[index]
+		if item == nil || item.Event == nil || item.Event.TurnId != turnID {
+			continue
+		}
+		event := item.Event
+		if event.SessionId != "" && event.SessionId != sessionID {
+			continue
+		}
+		if event.GetTurnEnded() != nil {
+			return true, nil
+		}
+		if event.GetTurnStarted() != nil {
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Sessions) CloseSession(ctx context.Context, requestID string, request *aop.CloseSessionRequest) (*aop.CloseSessionResponse, error) {
 	if s == nil || s.store == nil || s.runtime == nil {
 		return nil, Errorf(CodeFailedPrecondition, "session service is unavailable")
@@ -335,8 +445,11 @@ func (s *Sessions) CloseSession(ctx context.Context, requestID string, request *
 	if request == nil || strings.TrimSpace(requestID) == "" {
 		return rejectedClose("INVALID_ARGUMENT", "envelope id is required"), nil
 	}
-	s.applicationMu.Lock()
-	defer s.applicationMu.Unlock()
+	release, err := s.lockOperations(ctx, "request:"+requestID, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	replayed := new(aop.CloseSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "CloseSession", requestID, request, replayed)
@@ -383,7 +496,7 @@ func (s *Sessions) CloseSession(ctx context.Context, requestID string, request *
 	if !connected {
 		s.runtime.BroadcastAOPEvent(request.SessionId, &aop.Event{
 			SessionId: request.SessionId,
-			Emitter:   "aiscan.web",
+			Emitter:   "cyber.web",
 			Payload:   &aop.Event_SessionEnded{SessionEnded: &aop.SessionEnded{Reason: request.Reason}},
 		})
 	}
@@ -397,8 +510,11 @@ func (s *Sessions) ResetSession(ctx context.Context, request *types.ResetSession
 	if request == nil || strings.TrimSpace(request.RequestId) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return rejectedReset(request, "INVALID_ARGUMENT", "request_id and session_id are required"), nil
 	}
-	s.managementMu.Lock()
-	defer s.managementMu.Unlock()
+	release, err := s.lockOperations(ctx, "management:"+request.SessionId, "request:"+request.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	replayed := new(types.ResetSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "ResetSession", request.RequestId, request, replayed)
 	if err != nil {
@@ -457,8 +573,11 @@ func (s *Sessions) DeleteSession(ctx context.Context, request *types.DeleteSessi
 	if request == nil || strings.TrimSpace(request.RequestId) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return rejectedDelete(request, "INVALID_ARGUMENT", "request_id and session_id are required"), nil
 	}
-	s.managementMu.Lock()
-	defer s.managementMu.Unlock()
+	release, err := s.lockOperations(ctx, "management:"+request.SessionId, "request:"+request.RequestId)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	replayed := new(types.DeleteSessionResponse)
 	hash, found, conflict, err := BeginRequest(ctx, s.store, "DeleteSession", request.RequestId, request, replayed)
 	if err != nil {
@@ -483,6 +602,11 @@ func (s *Sessions) DeleteSession(ctx context.Context, request *types.DeleteSessi
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockOperations(ctx, "session:"+request.SessionId)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	if err := s.runtime.DeleteSession(ctx, request.SessionId); err != nil {
 		return nil, err
 	}
@@ -628,7 +752,7 @@ func openSessionScanID(request *aop.OpenSessionRequest) (string, error) {
 		return "", nil
 	}
 	for _, extension := range request.Extensions {
-		link := new(types.SessionBinding)
+		link := new(scanpb.SessionBinding)
 		if extension == nil || !extension.MessageIs(link) {
 			continue
 		}

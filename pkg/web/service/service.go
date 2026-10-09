@@ -9,50 +9,52 @@ import (
 	"sync"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/extension"
-	profile "github.com/chainreactors/aiscan/pkg/profile"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	web "github.com/chainreactors/aiscan/pkg/web"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
+	"github.com/chainreactors/cyber/agent/provider"
+	"github.com/chainreactors/cyber/core/extension"
+	types "github.com/chainreactors/cyber/core/types"
+	"github.com/chainreactors/cyber/pkg/config"
+	profile "github.com/chainreactors/cyber/pkg/profile"
+	web "github.com/chainreactors/cyber/pkg/web"
+	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-type ServiceConfig struct {
-	RegisterApplicationNamespaces func(*aop.NamespaceMux) error
-	ConfigAPI                     managementapi.ConfigOptions
-	Store                         *SQLiteStore
-	Profile                       profile.Application
-	ConfigStore                   ConfigStore
-	// BuildProfile returns a fresh candidate, including partial results on error.
-	// Service owns every returned candidate and its cleanup.
-	BuildProfile  func(ctx context.Context, prepared *PreparedConfig) (profile.Application, error)
-	AgentPool     *AgentPool
-	Artifacts     managementapi.ArtifactImporter
+// ScanServiceConfig enables the scan console. A nil Scans field disables it:
+// no scan routes, no scan dispatch namespace, and no session scan bindings.
+type ScanServiceConfig struct {
 	MaxConcurrent int
 	ScanTimeout   time.Duration
-	AccessKey     string
+}
+
+type ServiceConfig struct {
+	ConfigAPI   managementapi.ConfigOptions
+	Store       *SQLiteStore
+	Profile     profile.Profile
+	ConfigStore ConfigStore
+	// BuildProfile returns a fresh candidate, including partial results on error.
+	// Service owns every returned candidate and its cleanup.
+	BuildProfile func(ctx context.Context, prepared *PreparedConfig) (profile.Profile, error)
+	Scans        *ScanServiceConfig
+	AccessKey    string
+	RuntimeLLM   func() provider.ProviderConfig
+	Capabilities []Capability
 }
 
 type Service struct {
-	applicationNamespaces func(*aop.NamespaceMux) error
+	workContext context.Context
+	stopWork    context.CancelFunc
+	work        sync.WaitGroup
+	workDone    chan struct{}
 	// configGate serializes update/activation with shutdown. Service owns both
 	// candidate and published profiles throughout the transaction.
 	configGate   chan struct{}
 	configStore  ConfigStore
-	buildProfile func(context.Context, *PreparedConfig) (profile.Application, error)
-	pending      profile.Application
+	buildProfile func(context.Context, *PreparedConfig) (profile.Profile, error)
+	runtimeLLM   func() provider.ProviderConfig
+	pending      profile.Profile
 	store        *SQLiteStore
 	appMu        sync.Mutex
-	profile      profile.Application
-	// profiles owns the current and retired profiles and counts active request leases.
-	// Entries survive cleanup timeouts; the profile itself owns lifecycle state.
-	profiles map[profile.Application]int
-	// profileClose serializes release and error collection as one transaction.
-	profileClose chan struct{}
-	appChanged   chan struct{}
-	appError     error
+	profile      profile.Profile
 	closing      bool
 	api          *managementapi.API
 	auth         *Auth
@@ -65,66 +67,67 @@ type Service struct {
 	cancels      map[string]context.CancelFunc
 	scanNodeIDs  map[string]string
 	taskSessions map[string]string // taskID → sessionID
-	taskNodeIDs  map[string]string // taskID → nodeID
-	taskCanceled map[string]bool
 
-	eventMu    sync.Mutex
-	sessionSeq map[string]uint64
-	endedTurns map[string]bool
+	eventMu      sync.Mutex
+	eventState   map[string]*sessionEventState
+	capabilities []Capability
 }
 
 func NewService(cfg ServiceConfig) *Service {
-	maxConcurrent := cfg.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 3
-	}
-	timeout := cfg.ScanTimeout
-	if timeout <= 0 {
-		timeout = 10 * time.Minute
-	}
+	workContext, stopWork := context.WithCancel(context.Background())
 	svc := &Service{
-		applicationNamespaces: cfg.RegisterApplicationNamespaces,
-		configGate:            make(chan struct{}, 1),
-		configStore:           cfg.ConfigStore,
-		buildProfile:          cfg.BuildProfile,
-		store:                 cfg.Store,
-		profiles:              make(map[profile.Application]int),
-		profileClose:          make(chan struct{}, 1),
-		appChanged:            make(chan struct{}),
-		agents:                cfg.AgentPool,
-		hub:                   NewHub(),
-		sem:                   make(chan struct{}, maxConcurrent),
-		timeout:               timeout,
-		auth:                  NewAuth(cfg.AccessKey),
-		cancels:               make(map[string]context.CancelFunc),
-		scanNodeIDs:           make(map[string]string),
-		taskSessions:          make(map[string]string),
-		taskNodeIDs:           make(map[string]string),
-		taskCanceled:          make(map[string]bool),
-		sessionSeq:            make(map[string]uint64),
-		endedTurns:            make(map[string]bool),
+		workContext: workContext, stopWork: stopWork,
+		configGate:   make(chan struct{}, 1),
+		configStore:  cfg.ConfigStore,
+		buildProfile: cfg.BuildProfile,
+		runtimeLLM:   cfg.RuntimeLLM,
+		store:        cfg.Store,
+		hub:          NewHub(),
+		auth:         NewAuth(cfg.AccessKey),
+		cancels:      make(map[string]context.CancelFunc),
+		scanNodeIDs:  make(map[string]string),
+		taskSessions: make(map[string]string),
+		eventState:   make(map[string]*sessionEventState),
+		capabilities: append([]Capability(nil), cfg.Capabilities...),
 	}
-	if !profile.IsNil(cfg.Profile) {
+	if cfg.Profile != nil {
 		svc.profile = cfg.Profile
-		svc.profiles[cfg.Profile] = 0
 	}
-	configAPI := managementapi.NewConfig(svc, cfg.ConfigAPI)
+	configOptions := cfg.ConfigAPI
+	configOptions.RuntimeLLM = svc.runtimeLLMConfig
+	configAPI := managementapi.NewConfig(svc, configOptions)
 	svc.api = &managementapi.API{
 		Sessions:  managementapi.NewSessions(cfg.Store, svc, generateID),
 		Config:    configAPI,
-		Scans:     managementapi.NewScans(svc, svc.hub),
-		SCO:       managementapi.NewSCO(cfg.Store, cfg.Artifacts),
+		Artifacts: managementapi.NewArtifacts(cfg.Store),
 		Status:    svc,
 		ServerURL: "/",
 	}
-	if cfg.AgentPool != nil {
-		svc.api.Agents = cfg.AgentPool
-		cfg.AgentPool.SetSessionLookup(svc)
+	if cfg.Scans != nil {
+		maxConcurrent := cfg.Scans.MaxConcurrent
+		if maxConcurrent <= 0 {
+			maxConcurrent = 3
+		}
+		timeout := cfg.Scans.ScanTimeout
+		if timeout <= 0 {
+			timeout = 10 * time.Minute
+		}
+		svc.sem = make(chan struct{}, maxConcurrent)
+		svc.timeout = timeout
+		svc.api.Scans = managementapi.NewScans(svc, svc.hub)
 	}
 	return svc
 }
 
 func (s *Service) Hub() *Hub { return s.hub }
+
+// Capabilities returns the immutable capability set selected at startup.
+func (s *Service) Capabilities() []Capability {
+	if s == nil {
+		return nil
+	}
+	return append([]Capability(nil), s.capabilities...)
+}
 
 func (s *Service) SetAgentPool(pool *AgentPool) {
 	s.agents = pool
@@ -139,7 +142,7 @@ func (s *Service) SetAgentPool(pool *AgentPool) {
 		return
 	}
 	pool.SetSessionLookup(s)
-	pool.config = s.api.Config.Distribute
+	pool.config = s.nodeConfig
 }
 
 func (s *Service) Close(ctx context.Context) (resultErr error) {
@@ -157,56 +160,37 @@ func (s *Service) Close(ctx context.Context) (resultErr error) {
 	}
 	defer func() { <-s.configGate }()
 	s.appMu.Lock()
-	s.closing = true
-	s.profile = nil
-	s.applicationChangedLocked()
-	s.appMu.Unlock()
-	defer func() {
-		s.appMu.Lock()
-		resultErr = errors.Join(resultErr, s.appError)
-		s.appError = nil
-		s.appMu.Unlock()
-	}()
-	s.mu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(s.cancels))
-	for _, cancel := range s.cancels {
-		cancels = append(cancels, cancel)
+	if !s.closing {
+		s.stopWork()
 	}
-	s.mu.Unlock()
-	for _, cancel := range cancels {
-		cancel()
+	s.closing = true
+	if s.workDone == nil {
+		s.workDone = make(chan struct{})
+		go func() { s.work.Wait(); close(s.workDone) }()
+	}
+	p := s.profile
+	s.appMu.Unlock()
+	select {
+	case <-s.workDone:
+	case <-ctx.Done():
+		return errors.Join(extension.ErrCloseIncomplete, ctx.Err())
 	}
 	resultErr = s.closePending(ctx)
-	for {
-		s.appMu.Lock()
-		remaining := len(s.profiles)
-		changed := s.appChanged
-		var ready []profile.Application
-		for p, refs := range s.profiles {
-			if refs == 0 {
-				ready = append(ready, p)
-			}
-		}
-		s.appMu.Unlock()
-		if remaining == 0 {
-			return resultErr
-		}
-		if len(ready) > 0 {
-			var incomplete error
-			for _, ref := range ready {
-				incomplete = errors.Join(incomplete, s.closeApplication(ctx, ref))
-			}
-			if incomplete != nil {
-				return errors.Join(resultErr, incomplete)
-			}
-			continue
-		}
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return errors.Join(resultErr, extension.ErrCloseIncomplete, ctx.Err())
+	if p != nil {
+		err := p.Close(ctx)
+		resultErr = errors.Join(resultErr, err)
+		if !errors.Is(err, extension.ErrCloseIncomplete) {
+			s.appMu.Lock()
+			s.profile = nil
+			s.appMu.Unlock()
 		}
 	}
+	for i := len(s.capabilities) - 1; i >= 0; i-- {
+		if s.capabilities[i] != nil {
+			resultErr = errors.Join(resultErr, s.capabilities[i].Close(ctx))
+		}
+	}
+	return resultErr
 }
 
 // API exposes the existing business service composition to transport adapters.
@@ -237,18 +221,20 @@ func generateID() string {
 func nowProto() *timestamppb.Timestamp { return timestamppb.New(time.Now()) }
 
 func (s *Service) Status() *types.SystemStatus {
-	app, release := s.acquireApp()
-	provider, providerConfig := app.ProviderState()
-	status := &types.SystemStatus{
-		Version:      config.Version,
-		LlmAvailable: provider != nil,
-	}
-	if app != nil {
+	providers := s.providers()
+	status := &types.SystemStatus{Version: config.Version}
+	if providers != nil {
+		model, providerConfig := providers.Current()
+		status.LlmAvailable = model != nil
 		status.LlmProvider = providerConfig.Provider
 		status.LlmModel = providerConfig.Model
 		status.LlmApiKeyConfigured = strings.TrimSpace(providerConfig.APIKey) != ""
 	}
-	release()
+	if providers == nil {
+		effective := s.runtimeLLMConfig()
+		status.LlmProvider, status.LlmModel = effective.Provider, effective.Model
+		status.LlmApiKeyConfigured = strings.TrimSpace(effective.APIKey) != ""
+	}
 	if response, err := s.api.Config.GetConfig(context.Background(), &types.GetConfigRequest{}); err == nil {
 		view := response.GetConfig()
 		status.ConfigPath = view.GetPath()
@@ -264,4 +250,14 @@ func (s *Service) Status() *types.SystemStatus {
 		}
 	}
 	return status
+}
+
+func (s *Service) beginWork() (context.Context, bool) {
+	s.appMu.Lock()
+	defer s.appMu.Unlock()
+	if s.closing || s.workContext.Err() != nil {
+		return nil, false
+	}
+	s.work.Add(1)
+	return s.workContext, true
 }

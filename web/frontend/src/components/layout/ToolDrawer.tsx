@@ -1,4 +1,5 @@
-import type { ComponentProps, ComponentType, ReactNode } from 'react'
+import { useRef, type ComponentProps, type ComponentType, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@cyber/ui'
 import { cn } from '@cyber/theme'
 
@@ -32,19 +33,42 @@ export function ToolDrawer({
   bodyClassName,
   contentProps,
 }: ToolDrawerProps) {
-  const { onInteractOutside, ...restContentProps } = contentProps ?? {}
+  const { onInteractOutside, onOpenAutoFocus, onCloseAutoFocus, ...restContentProps } = contentProps ?? {}
+  const returnFocus = useRef<HTMLElement | null>(null)
+  const contentElement = useRef<HTMLElement | null>(null)
+  const { t } = useTranslation('app')
 
   return (
     <Sheet open={open} modal={false} onOpenChange={(next) => { if (!next) onClose() }}>
       <SheetContent
         side="right"
+        closeLabel={t('closePanel')}
         className={cn(
-          'flex w-full flex-col gap-0 border-l border-border/70 bg-background p-0 sm:max-w-none',
+          'tool-drawer flex w-full flex-col gap-0 border-l border-border/70 bg-background p-0 sm:max-w-none',
           'md:w-[75vw] md:min-w-[760px] md:max-w-[96rem]',
           drawerTop,
           drawerHeight,
         )}
         overlayClassName={drawerTop}
+        onOpenAutoFocus={(event) => {
+          returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+          contentElement.current = event.target instanceof HTMLElement ? event.target : null
+          onOpenAutoFocus?.(event)
+          if (!event.defaultPrevented && contentElement.current) {
+            // A toolbar tooltip would consume the first Escape on entry.
+            event.preventDefault()
+            contentElement.current.focus()
+          }
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          const active = document.activeElement
+          if (!event.defaultPrevented && returnFocus.current?.isConnected
+            && (active === document.body || contentElement.current?.contains(active))) {
+            event.preventDefault()
+            returnFocus.current.focus()
+          }
+        }}
         onInteractOutside={(event) => {
           const target = event.target
           if (target instanceof Element && target.closest('[data-tool-drawer-trigger]')) {

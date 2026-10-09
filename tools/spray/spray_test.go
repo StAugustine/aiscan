@@ -9,31 +9,69 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	sdkspray "github.com/chainreactors/sdk/spray"
 	spraypkg "github.com/chainreactors/spray/pkg"
 	"github.com/chainreactors/utils/parsers"
 )
 
 func TestWithDefaultNoBarAppendsFlag(t *testing.T) {
-	got := withDefaultNoBar([]string{"-u", "http://127.0.0.1", "--finger"})
+	got := withDefaultBoolFlag([]string{"-u", "http://127.0.0.1", "--finger"}, "--no-bar")
 	want := []string{"-u", "http://127.0.0.1", "--finger", "--no-bar"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("withDefaultNoBar() = %#v, want %#v", got, want)
 	}
 }
 
+func TestSprayHelpIsReadable(t *testing.T) {
+	help := New(nil).Usage()
+	for _, required := range []string{
+		"Usage:", "Input Options:", "Plugin Options:", "Request Options:",
+		"--poc", "--poc-config", "--client-fingerprint", "tls-random",
+		"custom poc template directory",
+	} {
+		if !strings.Contains(help, required) {
+			t.Errorf("help is missing %q", required)
+		}
+	}
+	for number, line := range strings.Split(help, "\n") {
+		if len(line) > helpWidth {
+			t.Errorf("help line %d is %d columns wide: %q", number+1, len(line), line)
+		}
+		if len(line)-len(strings.TrimLeft(line, " ")) > helpDescription {
+			t.Errorf("help line %d has excessive indentation: %q", number+1, line)
+		}
+	}
+}
+
+func TestSprayHelpExecutionMatchesUsage(t *testing.T) {
+	command := New(nil)
+	for _, flag := range []string{"-h", "--help"} {
+		t.Run(flag, func(t *testing.T) {
+			var output bytes.Buffer
+			_, err := command.Run(context.Background(), &coretool.Execution{Args: []string{flag}, Stdout: &output})
+			if err != nil {
+				t.Fatalf("Run(%q): %v", flag, err)
+			}
+			if got, want := output.String(), command.Usage(); got != want {
+				t.Fatalf("Run(%q) help differs from Usage()", flag)
+			}
+		})
+	}
+}
+
 func TestWithDefaultNoBarKeepsExplicitFlag(t *testing.T) {
 	args := []string{"-u", "http://127.0.0.1", "--no-bar=false"}
-	got := withDefaultNoBar(args)
+	got := withDefaultBoolFlag(args, "--no-bar")
 	if !reflect.DeepEqual(got, args) {
 		t.Fatalf("withDefaultNoBar() = %#v, want %#v", got, args)
 	}
 }
 
 func TestWithDefaultNoStatAppendsFlag(t *testing.T) {
-	got := withDefaultNoStat([]string{"-u", "http://127.0.0.1", "--finger"})
+	got := withDefaultBoolFlag([]string{"-u", "http://127.0.0.1", "--finger"}, "--no-stat")
 	want := []string{"-u", "http://127.0.0.1", "--finger", "--no-stat"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("withDefaultNoStat() = %#v, want %#v", got, want)
@@ -42,7 +80,7 @@ func TestWithDefaultNoStatAppendsFlag(t *testing.T) {
 
 func TestWithDefaultNoStatKeepsExplicitFlag(t *testing.T) {
 	args := []string{"-u", "http://127.0.0.1", "--no-stat=false"}
-	got := withDefaultNoStat(args)
+	got := withDefaultBoolFlag(args, "--no-stat")
 	if !reflect.DeepEqual(got, args) {
 		t.Fatalf("withDefaultNoStat() = %#v, want %#v", got, args)
 	}
@@ -92,10 +130,7 @@ func TestWriteResultSupportsTextAndJSON(t *testing.T) {
 
 func TestResolveRelativePathsOnlyRewritesSprayFileFlags(t *testing.T) {
 	dir := t.TempDir()
-	cmd := New(nil)
-	cmd.SetWorkDir(dir)
-
-	got := cmd.resolveRelativePaths([]string{
+	got := toolargs.ResolveRelativePaths([]string{
 		"-l", "targets.txt",
 		"-w", "admin{?ld#2}",
 		"-o", "full",
@@ -111,7 +146,7 @@ func TestResolveRelativePathsOnlyRewritesSprayFileFlags(t *testing.T) {
 		"-c", "spray.yaml",
 		"--config=custom.yaml",
 		"--extract-config", "extract.yaml",
-	})
+	}, sprayFileFlags, dir)
 	want := []string{
 		"-l", filepath.Join(dir, "targets.txt"),
 		"-w", "admin{?ld#2}",
@@ -151,7 +186,7 @@ func TestExecuteInstallsResourceProviderBeforePrint(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	_, err = New(engine).Run(context.Background(), &commands.Execution{Args: []string{"--print"}, Stdout: &output, Stderr: &output})
+	_, err = New(engine).Run(context.Background(), &coretool.Execution{Args: []string{"--print"}, Stdout: &output, Stderr: &output})
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -165,7 +200,7 @@ func TestExecuteDebugActivatesTelemetryLogger(t *testing.T) {
 	cmd := New(nil).WithLogger(telemetry.NewLogger(telemetry.LogConfig{Output: &logs}))
 
 	var output bytes.Buffer
-	if _, err := cmd.Run(context.Background(), &commands.Execution{Args: []string{"--debug", "--help"}, Stdout: &output, Stderr: &output}); err != nil {
+	if _, err := cmd.Run(context.Background(), &coretool.Execution{Args: []string{"--debug", "--help"}, Stdout: &output, Stderr: &output}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if got := logs.String(); !strings.Contains(got, "● spray debug enabled") {

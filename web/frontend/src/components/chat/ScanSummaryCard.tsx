@@ -1,49 +1,66 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, AlertTriangle, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@cyber/ui'
-import { fetchScanReport, type SCONode } from '../../api'
+import { getScan, ScanStatus, type Scan, type SCONode } from '../../api'
+import { cstxFailures, listSCONodes, retryCSTXFailures, subscribeCSTXChanges, syncCSTXArtifacts } from '../../lib/cstx-runtime'
 import { buildSCOModel } from '@cyber/cstx-easm'
 import { buildFindingsFromSCO } from '../../lib/scan-result'
 import { MarkdownContent } from '@/markdown'
 import AssetResultView from '../AssetResultView'
 import FindingsPanel from '../FindingsPanel'
+import { buildCSTXMarkdownReport } from '../../lib/scan-report'
 
 interface Props {
   scanID: string
-  nodes: SCONode[]
 }
 
-export default function ScanSummaryCard({ scanID, nodes }: Props) {
+export default function ScanSummaryCard({ scanID }: Props) {
   const { t } = useTranslation('scan')
   const { t: tf, i18n } = useTranslation('findings')
+  const [nodes, setNodes] = useState<SCONode[]>([])
   const model = useMemo(() => buildSCOModel(nodes), [nodes])
   const findings = useMemo(() => buildFindingsFromSCO(model), [model])
   const [tab, setTab] = useState('assets')
-  const [reportMd, setReportMd] = useState('')
-  const [reportLoadedKey, setReportLoadedKey] = useState('')
-  const lang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en'
-  const reportKey = `${scanID}:${lang}`
-
+  const [scan, setScan] = useState<Scan>()
+  const [failure, setFailure] = useState('')
+  const [loading, setLoading] = useState(true)
   useEffect(() => {
-    if (tab !== 'report' || reportLoadedKey === reportKey) return
-    setReportMd('')
-    let cancelled = false
-    fetchScanReport(scanID, lang)
-      .then((md) => { if (!cancelled) { setReportMd(md); setReportLoadedKey(reportKey) } })
-      .catch(() => { if (!cancelled) { setReportMd(''); setReportLoadedKey(reportKey) } })
-    return () => { cancelled = true }
-  }, [tab, scanID, lang, reportKey, reportLoadedKey])
-
-  const reportLoading = tab === 'report' && reportLoadedKey !== reportKey
+    let active = true
+    let initializing = true
+    setLoading(true)
+    setScan(undefined)
+    setNodes([])
+    const load = async () => {
+      try {
+        const [record, errors, { items }] = await Promise.all([getScan(scanID), cstxFailures(scanID), listSCONodes({ scanId: scanID })])
+        if (active) { setScan(record); setNodes(items); setFailure(errors.map((error) => error.error).join('; ')) }
+      } catch (error) { if (active) setFailure(String(error)) }
+      finally { if (active) setLoading(false) }
+    }
+    const unsubscribe = subscribeCSTXChanges(() => { if (!initializing) void load() })
+    void (async () => {
+      let syncError = ''
+      try { await syncCSTXArtifacts() } catch (error) { syncError = String(error) }
+      initializing = false
+      if (!active) return
+      await load()
+      if (active && syncError) setFailure(syncError)
+    })()
+    return () => { active = false; unsubscribe() }
+  }, [scanID])
+  const complete = !loading && !failure && scan?.status === ScanStatus.COMPLETED
+  const statusLabel = loading ? t('resultsLoading') : failure ? t('resultsIncomplete') : scan?.status === ScanStatus.CANCELED ? t('scanCanceled') : scan?.status === ScanStatus.FAILED ? t('scanFailed') : complete ? t('scanComplete') : t('resultsLoading')
+  const lang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en'
+  const reportMd = useMemo(() => buildCSTXMarkdownReport(scanID, nodes, lang), [scanID, nodes, lang])
 
   return (
     <section className="overflow-hidden rounded-lg border border-border/80 bg-card">
       <header className="flex items-start justify-between gap-4 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0 text-success" />
-            <h3 className="text-sm font-semibold text-foreground">{t('scanComplete')}</h3>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : complete ? <CheckCircle2 className="h-4 w-4 text-success" /> : <AlertTriangle className="h-4 w-4 text-warning" />}
+            <h3 className="text-sm font-semibold text-foreground">{statusLabel}</h3>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-6 text-[11px] text-muted-foreground">
             <span>{tf('detailSummary', { targets: model.metrics.ips, services: model.metrics.ports })}</span>
@@ -56,10 +73,11 @@ export default function ScanSummaryCard({ scanID, nodes }: Props) {
         )}
       </header>
 
+      {(failure || scan?.error) && <div role="alert" className="px-4 pb-3 text-xs text-warning">{failure || scan?.error}{failure && <button className="ml-2 underline" onClick={() => void syncCSTXArtifacts().then(() => retryCSTXFailures()).catch((error) => setFailure(String(error)))}>{t('retryParsing')}</button>}</div>}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto w-full justify-start rounded-none border-y border-border/60 bg-transparent px-4 py-0">
           <ResultTab value="assets">{tf('assets')}</ResultTab>
-          {findings.length > 0 && (
+          {(
             <ResultTab value="findings">
               {tf('findings')}
               <span className="ml-1 tabular-nums text-muted-foreground">{findings.length}</span>
@@ -71,19 +89,15 @@ export default function ScanSummaryCard({ scanID, nodes }: Props) {
         <TabsContent value="assets" className="mt-0 p-4 sm:p-5">
           <AssetResultView model={model} anchorPrefix={scanID} />
         </TabsContent>
-        {findings.length > 0 && (
+        {(
           <TabsContent value="findings" className="mt-0 p-4 sm:p-5">
             <FindingsPanel findings={findings} />
           </TabsContent>
         )}
         <TabsContent value="report" className="mt-0 p-4 sm:p-5">
-          {reportLoading ? (
-            <div role="status" className="py-4 text-sm text-muted-foreground">{tf('loadingReport')}</div>
-          ) : (
-            <div className="prose prose-sm max-w-none dark:prose-invert">
-              <MarkdownContent content={reportMd || tf('noReportAvailable')} />
-            </div>
-          )}
+          <div className="prose prose-sm max-w-none dark:prose-invert">
+            <MarkdownContent content={reportMd || tf('noReportAvailable')} />
+          </div>
         </TabsContent>
       </Tabs>
     </section>

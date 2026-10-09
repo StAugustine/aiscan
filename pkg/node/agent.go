@@ -3,173 +3,258 @@ package node
 import (
 	"context"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
-	"github.com/chainreactors/aiscan/agent"
-	aop "github.com/chainreactors/aiscan/aop"
-	filepb "github.com/chainreactors/aiscan/aop/file"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	"github.com/chainreactors/aiscan/pkg/console"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	profile "github.com/chainreactors/aiscan/pkg/profile"
-	"github.com/chainreactors/aiscan/pkg/terminal"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	filepb "github.com/chainreactors/cyber/aop/file"
+	"github.com/chainreactors/cyber/core/telemetry"
+	types "github.com/chainreactors/cyber/core/types"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/console"
+	profile "github.com/chainreactors/cyber/pkg/profile"
 )
 
-func RunWebSocket(ctx context.Context, factory profile.Factory, option *cfg.Option, logger telemetry.Logger) error {
-	return runRemoteAgent(ctx, factory, option, logger)
+func RunWebSocket(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger) error {
+	return RunWebSocketWithCapabilities(ctx, newProfile, option, logger)
 }
 
-func runRemoteAgent(ctx context.Context, factory profile.Factory, option *cfg.Option, logger telemetry.Logger) error {
-	if err := resolveRemoteAgentURLs(option); err != nil {
-		return err
+// RunWebSocketWithCapabilities is the profile-aware transport entry point.
+// Capabilities travel in the enrollment hello and remain independent of the
+// core node protocol.
+func RunWebSocketWithCapabilities(ctx context.Context, newProfile func(profile.Request) (profile.Profile, error), option *cfg.Option, logger telemetry.Logger, capabilities ...string) error {
+	if err := cfg.ResolveAgentServerURLs(option); err != nil {
+		return fmt.Errorf("resolve remote agent URLs: %w", err)
 	}
 	nodeID, err := webNodeID(option)
 	if err != nil {
 		return err
 	}
-
-	features := apppkg.RuntimeFeatures{
-		ProviderEnabled: true, ProviderOptional: true, ToolsEnabled: true, AIEnabled: true,
+	if newProfile == nil {
+		return fmt.Errorf("profile constructor is required")
 	}
-	product, err := factory.Build(profile.Request{
-		Option: option, Features: features, Logger: logger,
-		Runtime: &agentext.Config{PrimarySessionID: console.MainREPLName, Loop: agent.StandardLoop{}},
-	})
-	if err != nil {
-		return err
+	if logger == nil {
+		logger = telemetry.NopLogger()
 	}
-	if err := product.Load(ctx); err != nil {
-		_ = product.Close(context.Background())
-		return err
-	}
-	defer product.Close(context.Background())
-	application, err := product.App()
-	if err != nil {
-		return err
-	}
-	_, providerConfig := application.ProviderState()
-	apppkg.ApplyResolvedProviderOptions(option, providerConfig)
-	rt, err := product.Runtime()
-	if err != nil {
-		return err
-	}
-	repl, err := console.StartPersistent(rt, option, product.ConsoleBindings())
-	if err != nil {
-		return err
-	}
-	defer repl.Close()
-
-	chatHandler := &chatAgentHandler{
-		rt:     rt,
-		app:    application,
-		option: option,
-		logger: logger,
-		ready:  make(chan struct{}),
-		status: product.AgentStatus,
-	}
-
-	connectionDone := make(chan struct{})
-	go func() {
-		defer close(connectionDone)
-		_ = application.WaitEngines(ctx)
-		dialURL, _ := SplitAccessKey(option.ServerURL)
-		logger.Debugf("websocket transport connection to %s", dialURL)
-
-		connection := connectionConfig{
-			ServerURL:                  option.ServerURL,
-			Name:                       rt.NodeName(),
-			Registry:                   application.Commands,
-			Executor:                   application.Tools,
-			Agent:                      rt,
-			Control:                    rt,
-			Progress:                   application.Progress,
-			Hooks:                      application.Hooks,
-			Logger:                     logger,
-			Chat:                       chatHandler,
-			NodeID:                     nodeID,
-			Runtime:                    agentext.DefaultRuntimeInfo(),
-			Status:                     product.AgentStatus,
-			ExtraCapabilities:          product.Capabilities(),
-			Menu:                       rt.CommandCatalog,
-			PTYRouter:                  func() (*terminal.Router, error) { return NewPTYRouter(application.Bash), nil },
-			Bash:                       application.Bash,
-			RegisterResourceNamespaces: product.RegisterResourceNamespaces,
+	build := func(options *cfg.Option, mode profile.ProviderMode) (profile.Profile, error) {
+		p, err := newProfile(profile.Request{Option: options, ProviderMode: mode, Logger: logger, Session: &agentsession.Config{PrimarySessionID: console.MainREPLName, Loop: agent.StandardLoop{}}})
+		if err == nil && p == nil {
+			err = fmt.Errorf("profile constructor returned nil")
 		}
-		_ = connect(ctx, connection)
-	}()
-
-	if provider, _ := application.ProviderState(); provider == nil {
-		select {
-		case <-chatHandler.ready:
-		case <-ctx.Done():
-			<-connectionDone
-			return nil
+		if err == nil {
+			err = p.Load(ctx)
 		}
+		if err == nil {
+			_, err = p.Runtime()
+		}
+		if err == nil {
+			_, err = p.Processes()
+		}
+		if err != nil {
+			if p != nil {
+				_ = p.Close(context.Background())
+			}
+			return nil, err
+		}
+		return p, nil
 	}
-	if provider, _ := application.ProviderState(); provider == nil {
-		logger.Warnf("no LLM provider configured; remote REPL and PTY are available, autonomous agent loop is disabled")
-		<-ctx.Done()
-		<-connectionDone
-		return nil
-	}
-
-	task, err := webAgentTask(option)
+	// Enroll without initializing or probing a local model. Only a server
+	// configuration can enable the provider and release the startup task.
+	current, err := build(option, profile.ProviderDisabled)
 	if err != nil {
 		return err
 	}
-	if task == "" {
-		logger.Infof("remote transport connected; remote REPL and PTY are available")
-		<-ctx.Done()
-		<-connectionDone
-		return nil
-	}
-
-	_, err = rt.EnsureSession(agentext.SessionOptions{ID: "startup"})
+	defer func() { _ = current.Close(context.Background()) }()
+	currentOption := option
+	currentConfig, err := cfg.SharedFromOption(currentOption)
 	if err != nil {
 		return err
 	}
-	run, err := rt.RunSession(ctx, "startup", agentext.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}})
-	if err == nil {
-		_, err = run.Wait()
+	configured := false
+	started := false
+	for {
+		var candidate profile.Profile
+		var candidateOption *cfg.Option
+		var candidateConfig *types.DistributeConfig
+		err := func() error {
+			connectionCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			rt, err := current.Runtime()
+			if err != nil {
+				return err
+			}
+			processes, err := current.Processes()
+			if err != nil {
+				return err
+			}
+			repl, err := console.StartPersistent(rt, processes, currentOption, current.ConsoleBindings())
+			if err != nil {
+				return err
+			}
+			defer repl.Close()
+			progress, err := current.Progress()
+			if err != nil {
+				return err
+			}
+			events, err := current.Events()
+			if err != nil {
+				return err
+			}
+			startTask := func() error {
+				if started {
+					return nil
+				}
+				providers, err := current.Providers()
+				if err != nil {
+					return err
+				}
+				if active, _ := providers.Current(); active == nil {
+					return nil
+				}
+				task, err := webAgentTask(option)
+				if err != nil {
+					return err
+				}
+				if task != "" {
+					if _, err := rt.EnsureSession(agentsession.SessionOptions{ID: "startup"}); err != nil {
+						return err
+					}
+					if _, err := rt.RunSession(connectionCtx, "startup", agentsession.RunInput{TurnID: "startup", Content: []*aop.Content{aop.Text(task)}}); err != nil {
+						return err
+					}
+				}
+				started = true
+				return nil
+			}
+			// Graph changes prepare a complete candidate; provider-only changes
+			// are applied in place so sessions retain their conversation history.
+			reload := func(distributed *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
+				nextOption, err := cfg.ResolveDistributedRuntime(distributed, option)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				nextConfig, err := cfg.SharedFromOption(nextOption)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				unchanged := proto.Equal(currentConfig, nextConfig)
+				if configured && unchanged {
+					currentOption = nextOption
+					return reloadStatus(current)
+				}
+				if mode, onlyMode := cfg.GuardrailModeChange(currentConfig, nextConfig); configured && onlyMode {
+					if target, ok := current.(interface{ SetGuardrailMode(string) error }); ok {
+						if err := target.SetGuardrailMode(mode); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						currentOption, currentConfig = nextOption, nextConfig
+						return reloadStatus(current)
+					}
+				}
+				// Rebuilding a profile for a model/API update cancels live runs and
+				// drops their in-memory transcript. Delegate to the provider owner;
+				// active turns keep their provider snapshot and later turns use the
+				// new one.
+				before, after := proto.CloneOf(currentConfig), proto.CloneOf(nextConfig)
+				before.Llm, after.Llm = nil, nil
+				// A node enrolls with its provider deliberately disabled. The first
+				// server config therefore has to build a provider-owned profile when
+				// the only graph change is the LLM section and the profile has no
+				// in-place reload hook. Profiles that do provide the hook can still
+				// activate their first provider without a rebuild.
+				if !unchanged && proto.Equal(before, after) {
+					if reloader, ok := current.(interface {
+						ReloadProvider(context.Context, agent.ProviderConfig) error
+					}); ok {
+						if reloadErr := reloader.ReloadProvider(connectionCtx, cfg.ProviderConfig(nextOption)); reloadErr != nil {
+							return &types.ReloadResult{Error: reloadErr.Error()}, nil
+						}
+						currentOption, currentConfig, configured = nextOption, nextConfig, true
+						if err := startTask(); err != nil {
+							return &types.ReloadResult{Error: err.Error()}, nil
+						}
+						return reloadStatus(current)
+					}
+					if configured {
+						return &types.ReloadResult{Error: "provider extension does not support live configuration; restart the node to apply it"}, nil
+					}
+				}
+				mode := profile.ProviderOptional
+				if len(distributed.GetLlm().GetProviders()) == 0 {
+					mode = profile.ProviderDisabled
+				}
+				next, err := build(nextOption, mode)
+				if err != nil {
+					return &types.ReloadResult{Error: err.Error()}, nil
+				}
+				result, status := reloadStatus(next)
+				if status.GetConfigError() != "" {
+					result.Ok = false
+					result.Error = status.ConfigError
+				}
+				if !result.Ok {
+					_ = next.Close(context.Background())
+					return result, nil
+				}
+				candidate, candidateOption, candidateConfig = next, nextOption, nextConfig
+				return result, status
+			}
+			commit := func() {
+				if candidate != nil {
+					cancel()
+				}
+			}
+			if err := startTask(); err != nil {
+				return err
+			}
+			return connect(connectionCtx, connectionConfig{
+				ServerURL: option.ServerURL, Name: rt.NodeName(), Executor: rt.Tools(), Events: events,
+				Progress: progress, Logger: logger, Upload: uploadNodeFile, ReloadConfig: reload, CommitReload: commit, NodeID: nodeID, Runtime: DefaultRuntimeInfo(),
+				Capabilities: capabilities,
+				Status:       current.AgentStatus, Menu: func() []*types.CommandSpec { return CommandSpecs(rt) }, RegisterNamespaces: current.RegisterNamespaces,
+			})
+		}()
+		if candidate == nil {
+			return err
+		}
+		if err := current.Close(context.Background()); err != nil {
+			logger.Warnf("close previous profile: %v", err)
+		}
+		current, currentOption, currentConfig, configured = candidate, candidateOption, candidateConfig, true
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		logger.Infof("configuration activated; previous profile and connections closed")
 	}
-	_ = rt.CloseSession(context.Background(), "startup", agentext.SessionCloseCompleted)
-
-	<-connectionDone
-	return err
 }
 
-func resolveRemoteAgentURLs(option *cfg.Option) error {
-	if option == nil {
-		return fmt.Errorf("web node configuration is required")
+func reloadStatus(p profile.Profile) (*types.ReloadResult, *aop.AgentStatus) {
+	providers, err := p.Providers()
+	if err != nil {
+		return &types.ReloadResult{Error: err.Error()}, nil
 	}
-	if err := cfg.ResolveAgentServerURLs(option); err != nil {
-		return fmt.Errorf("resolve remote agent URLs: %w", err)
+	active, resolved := providers.Current()
+	result := &types.ReloadResult{Ok: true, Model: resolved.Model}
+	if active != nil {
+		result.Provider = active.Name()
 	}
-	return nil
+	return result, p.AgentStatus()
 }
 
-// ---------------------------------------------------------------------------
-// chatAgentHandler implements the connection's upload and config-reload hooks.
-// AOP core/command handlers are registered on the existing connection mux.
-// ---------------------------------------------------------------------------
-
-type chatAgentHandler struct {
-	rt        *agentext.Runtime
-	app       *apppkg.App
-	option    *cfg.Option
-	logger    telemetry.Logger
-	ready     chan struct{}
-	readyOnce sync.Once
-	status    func() *aop.AgentStatus
+func sameSharedConfig(current, next *cfg.Option) bool {
+	before, err := cfg.SharedFromOption(current)
+	if err != nil {
+		return false
+	}
+	after, err := cfg.SharedFromOption(next)
+	return err == nil && proto.Equal(before, after)
 }
 
-func (h *chatAgentHandler) Upload(req *filepb.UploadRequest) (*filepb.Result, error) {
+func uploadNodeFile(req *filepb.UploadRequest) (*filepb.Result, error) {
 	if req == nil {
 		return nil, fmt.Errorf("upload request is required")
 	}
@@ -177,7 +262,7 @@ func (h *chatAgentHandler) Upload(req *filepb.UploadRequest) (*filepb.Result, er
 	if filename == "." || filename == "" {
 		filename = "upload"
 	}
-	dir := filepath.Join(os.TempDir(), "aiscan-uploads")
+	dir := filepath.Join(os.TempDir(), "cyber-uploads")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -186,25 +271,6 @@ func (h *chatAgentHandler) Upload(req *filepb.UploadRequest) (*filepb.Result, er
 		return nil, err
 	}
 	return &filepb.Result{Filename: filename, Path: dest, Size: int64(len(req.Data))}, nil
-}
-
-func (h *chatAgentHandler) ReloadConfig(config *types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus) {
-	defer h.readyOnce.Do(func() {
-		if h.ready != nil {
-			close(h.ready)
-		}
-	})
-	provider, model, err := agentext.ReloadConfig(config, h.rt, h.option, h.logger)
-	result := &types.ReloadResult{Ok: err == nil, Model: model}
-	if err != nil {
-		result.Error = err.Error()
-		return result, nil
-	}
-	result.Provider = provider.Name()
-	if h.status != nil {
-		return result, h.status()
-	}
-	return result, agentext.AgentStatus(h.app)
 }
 
 // ---------------------------------------------------------------------------

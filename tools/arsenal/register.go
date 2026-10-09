@@ -1,17 +1,15 @@
 package arsenal
 
 import (
-	"github.com/chainreactors/aiscan/pkg/commands"
+	crtm "github.com/chainreactors/crtm/pkg"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
-func NewCommand(directory string) (commands.Command, error) {
-	cmd, err := NewArsenalCommand(directory)
-	if err != nil {
-		return commands.Command{}, err
-	}
-	return commands.Command{
+func NewCommand(mgr *crtm.Manager) coretool.Command {
+	cmd := &command{mgr: mgr}
+	return coretool.Command{
 		Name: cmd.Name(), Usage: cmd.Usage(),
-		DescriptionPath: "aiscan://skills/aiscan/okf/runtime/arsenal.md",
+		DescriptionPath: "cyber://skills/runtime/arsenal.md",
 		Run:             cmd.Run,
-	}, nil
+	}
 }

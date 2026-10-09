@@ -2,18 +2,24 @@ package service
 
 import (
 	"context"
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"errors"
+	"google.golang.org/protobuf/proto"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	types "github.com/chainreactors/cyber/core/types"
+	webpkg "github.com/chainreactors/cyber/pkg/web"
+	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
-func waitScanStatus(t *testing.T, store *SQLiteStore, id string, want types.ScanStatus) *types.Scan {
+func waitScanStatus(t *testing.T, store *SQLiteStore, id string, want scanpb.ScanStatus) *scanpb.Scan {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -28,14 +34,80 @@ func waitScanStatus(t *testing.T, store *SQLiteStore, id string, want types.Scan
 	return nil
 }
 
+func TestSubmitScanWithoutNodeRejectsBeforeCreatingRecord(t *testing.T) {
+	for _, withPool := range []bool{false, true} {
+		name := "nil-pool"
+		if withPool {
+			name = "empty-pool"
+		}
+		t.Run(name, func(t *testing.T) {
+			store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
+			if withPool {
+				svc.SetAgentPool(NewAgentPool(svc.Hub(), nil))
+			}
+			response, err := svc.api.Scans.SubmitScan(context.Background(), &scanpb.SubmitScanRequest{
+				RequestId: "no-node", Target: "http://127.0.0.1:8080", Mode: "quick",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if response.RequestId != "no-node" || response.GetRejected().GetCode() != "FAILED_PRECONDITION" || response.GetRejected().GetMessage() != ErrScanUnavailable.Error() {
+				t.Fatalf("unexpected receipt: %v", response)
+			}
+			scans, err := svc.ListScans(context.Background())
+			if err != nil || len(scans) != 0 {
+				t.Fatalf("rejected scan persisted: scans=%v err=%v", scans, err)
+			}
+			// Invalid input must still be reported as an argument error.
+			response, err = svc.api.Scans.SubmitScan(context.Background(), &scanpb.SubmitScanRequest{
+				RequestId: "bad-target", Target: "", Mode: "quick",
+			})
+			if err != nil || response.GetRejected().GetCode() != "INVALID_ARGUMENT" {
+				t.Fatalf("invalid target receipt=%v err=%v", response, err)
+			}
+		})
+	}
+}
+
+func TestQueuedScanLosingNodeFailsWithoutLocalFallback(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{MaxConcurrent: 1, ScanTimeout: time.Minute}})
+	pool := NewAgentPool(svc.Hub(), nil)
+	svc.SetAgentPool(pool)
+	agent, _ := newFakeAgent("departing-node", 1)
+	pool.register(agent)
+
+	// Hold the execution slot until the only node has disconnected.
+	svc.sem <- struct{}{}
+	scan, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", nil)
+	pool.unregister(agent)
+	<-svc.sem
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed := waitScanStatus(t, store, scan.Id, scanpb.ScanStatus_SCAN_STATUS_FAILED)
+	if failed.Error != ErrScanUnavailable.Error() {
+		t.Fatalf("node loss error = %q", failed.Error)
+	}
+}
+
 func TestCancelRemoteScanStopsAgentAndPreservesCanceledStatus(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	svc := NewService(ServiceConfig{Store: store, MaxConcurrent: 1, ScanTimeout: time.Minute})
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{MaxConcurrent: 1, ScanTimeout: time.Minute}})
 	pool := NewAgentPool(svc.Hub(), nil)
 	svc.SetAgentPool(pool)
 
@@ -44,7 +116,7 @@ func TestCancelRemoteScanStopsAgentAndPreservesCanceledStatus(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 	waitAgents(t, pool, 1)
 
-	scan, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", false, false, false)
+	scan, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +128,7 @@ func TestCancelRemoteScanStopsAgentAndPreservesCanceledStatus(t *testing.T) {
 	if message := unwrapEnvelope(t, callEnvelope); message.(*toolpb.ProtocolMessage).GetCall() == nil {
 		t.Fatalf("scan dispatch = %+v", message)
 	}
-	waitScanStatus(t, store, scan.Id, types.ScanStatus_SCAN_STATUS_RUNNING)
+	waitScanStatus(t, store, scan.Id, scanpb.ScanStatus_SCAN_STATUS_RUNNING)
 
 	if err := svc.CancelScan(scan.Id); err != nil {
 		t.Fatal(err)
@@ -67,7 +139,7 @@ func TestCancelRemoteScanStopsAgentAndPreservesCanceledStatus(t *testing.T) {
 		t.Fatalf("cancel envelope = %+v", cancel)
 	}
 
-	waitScanStatus(t, store, scan.Id, types.ScanStatus_SCAN_STATUS_CANCELED)
+	waitScanStatus(t, store, scan.Id, scanpb.ScanStatus_SCAN_STATUS_CANCELED)
 	deadline := time.Now().Add(time.Second)
 	for len(svc.sem) != 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -81,19 +153,19 @@ func TestCancelRemoteScanStopsAgentAndPreservesCanceledStatus(t *testing.T) {
 		SessionId: scan.Id, TurnId: scan.Id, Payload: &aop.Event_ToolResult{ToolResult: &aop.ToolResult{CallId: scan.Id}},
 	}}}))
 	time.Sleep(20 * time.Millisecond)
-	if got, err := store.Get(context.Background(), scan.Id); err != nil || got.Status != types.ScanStatus_SCAN_STATUS_CANCELED {
+	if got, err := store.Get(context.Background(), scan.Id); err != nil || got.Status != scanpb.ScanStatus_SCAN_STATUS_CANCELED {
 		t.Fatalf("late result changed canceled scan: scan=%+v err=%v", got, err)
 	}
 }
 
 func TestCancelQueuedScanDoesNotWaitForConcurrencySlot(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	svc := NewService(ServiceConfig{Store: store, MaxConcurrent: 1, ScanTimeout: time.Minute})
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{MaxConcurrent: 1, ScanTimeout: time.Minute}})
 	pool := NewAgentPool(svc.Hub(), nil)
 	svc.SetAgentPool(pool)
 	srv, _ := setupTestServerWithPool(t, svc, pool)
@@ -101,29 +173,29 @@ func TestCancelQueuedScanDoesNotWaitForConcurrencySlot(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close() })
 	waitAgents(t, pool, 1)
 
-	running, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", false, false, false)
+	running, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = readHubEnvelope(t, conn)
-	waitScanStatus(t, store, running.Id, types.ScanStatus_SCAN_STATUS_RUNNING)
+	waitScanStatus(t, store, running.Id, scanpb.ScanStatus_SCAN_STATUS_RUNNING)
 
-	queued, err := svc.SubmitScan(context.Background(), "127.0.0.2", "quick", false, false, false)
+	queued, err := svc.SubmitScan(context.Background(), "127.0.0.2", "quick", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitScanStatus(t, store, queued.Id, types.ScanStatus_SCAN_STATUS_QUEUED)
+	waitScanStatus(t, store, queued.Id, scanpb.ScanStatus_SCAN_STATUS_QUEUED)
 	if err := svc.CancelScan(queued.Id); err != nil {
 		t.Fatal(err)
 	}
-	waitScanStatus(t, store, queued.Id, types.ScanStatus_SCAN_STATUS_CANCELED)
+	waitScanStatus(t, store, queued.Id, scanpb.ScanStatus_SCAN_STATUS_CANCELED)
 
 	if err := svc.CancelScan(running.Id); err != nil {
 		t.Fatal(err)
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 	_ = readHubEnvelope(t, conn)
-	waitScanStatus(t, store, running.Id, types.ScanStatus_SCAN_STATUS_CANCELED)
+	waitScanStatus(t, store, running.Id, scanpb.ScanStatus_SCAN_STATUS_CANCELED)
 }
 
 type controlledDeadlineContext struct {
@@ -149,21 +221,21 @@ func (c *controlledDeadlineContext) Err() error {
 func (c *controlledDeadlineContext) expire() { close(c.done) }
 
 func TestRemoteScanTimeoutCancelsAgentAndFailsScan(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	svc := NewService(ServiceConfig{Store: store, MaxConcurrent: 1})
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{MaxConcurrent: 1}})
 	pool := NewAgentPool(svc.Hub(), nil)
 	svc.SetAgentPool(pool)
-	agent := newFakeAgent("timeout-agent", 1)
+	agent, sent := newFakeAgent("timeout-agent", 1)
 	pool.register(agent)
 
-	scan := &types.Scan{
+	scan := &scanpb.Scan{
 		Id: "timeout-scan", Target: "127.0.0.1", Mode: "quick",
-		Status: types.ScanStatus_SCAN_STATUS_RUNNING, CreatedAt: nowProto(), UpdatedAt: nowProto(),
+		Status: scanpb.ScanStatus_SCAN_STATUS_RUNNING, CreatedAt: nowProto(), UpdatedAt: nowProto(),
 	}
 	if err := store.Create(context.Background(), scan); err != nil {
 		t.Fatal(err)
@@ -179,7 +251,7 @@ func TestRemoteScanTimeoutCancelsAgentAndFailsScan(t *testing.T) {
 
 	var call *aop.Envelope
 	select {
-	case call = <-agent.sendCh:
+	case call = <-sent:
 	case <-time.After(time.Second):
 		t.Fatal("agent did not receive scan dispatch")
 	}
@@ -190,7 +262,7 @@ func TestRemoteScanTimeoutCancelsAgentAndFailsScan(t *testing.T) {
 	ctx.expire()
 	var cancel *aop.Envelope
 	select {
-	case cancel = <-agent.sendCh:
+	case cancel = <-sent:
 	case <-time.After(time.Second):
 		t.Fatal("agent did not receive timeout cancellation")
 	}
@@ -206,28 +278,28 @@ func TestRemoteScanTimeoutCancelsAgentAndFailsScan(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed-out remote scan did not return")
 	}
-	failed := waitScanStatus(t, store, scanID, types.ScanStatus_SCAN_STATUS_FAILED)
+	failed := waitScanStatus(t, store, scanID, scanpb.ScanStatus_SCAN_STATUS_FAILED)
 	if failed.Error != "scan timed out" {
 		t.Fatalf("timeout error = %q", failed.Error)
 	}
 }
 
 func TestRemoteScanExpiredBeforeDispatchFailsScan(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	svc := NewService(ServiceConfig{Store: store, MaxConcurrent: 1})
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{MaxConcurrent: 1}})
 	pool := NewAgentPool(svc.Hub(), nil)
 	svc.SetAgentPool(pool)
-	agent := newFakeAgent("timeout-agent", 1)
+	agent, sent := newFakeAgent("timeout-agent", 1)
 	pool.register(agent)
 
-	scan := &types.Scan{
+	scan := &scanpb.Scan{
 		Id: "expired-scan", Target: "127.0.0.1", Mode: "quick",
-		Status: types.ScanStatus_SCAN_STATUS_RUNNING, CreatedAt: nowProto(), UpdatedAt: nowProto(),
+		Status: scanpb.ScanStatus_SCAN_STATUS_RUNNING, CreatedAt: nowProto(), UpdatedAt: nowProto(),
 	}
 	if err := store.Create(context.Background(), scan); err != nil {
 		t.Fatal(err)
@@ -236,12 +308,12 @@ func TestRemoteScanExpiredBeforeDispatchFailsScan(t *testing.T) {
 	ctx.expire()
 	svc.runScanViaAgent(ctx, scan)
 
-	failed := waitScanStatus(t, store, scan.Id, types.ScanStatus_SCAN_STATUS_FAILED)
+	failed := waitScanStatus(t, store, scan.Id, scanpb.ScanStatus_SCAN_STATUS_FAILED)
 	if failed.Error != "scan timed out" {
 		t.Fatalf("timeout error = %q", failed.Error)
 	}
 	select {
-	case msg := <-agent.sendCh:
+	case msg := <-sent:
 		t.Fatalf("expired scan was dispatched: %+v", msg)
 	default:
 	}
@@ -250,8 +322,8 @@ func TestRemoteScanExpiredBeforeDispatchFailsScan(t *testing.T) {
 func setupTestServerWithPool(t *testing.T, svc *Service, pool *AgentPool) (*httptest.Server, *AgentPool) {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc(ApplicationWebSocketPath, svc.HandleApplicationWebSocket)
-	mux.HandleFunc(NodeWebSocketPath, pool.HandleNodeWebSocket)
+	mux.Handle(ApplicationWebSocketPath, svc.ApplicationWebSocketHandler())
+	mux.Handle(NodeWebSocketPath, svc.NodeWebSocketHandler())
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, pool
@@ -259,27 +331,27 @@ func setupTestServerWithPool(t *testing.T, svc *Service, pool *AgentPool) (*http
 
 func TestCancelTaskQueuesBehindFullSendChannel(t *testing.T) {
 	pool := NewAgentPool(NewHub(), nil)
-	remote := newFakeAgent("agent-1", 1)
+	remote, sent := newFakeAgent("agent-1", 1)
 	remote.toolCalls = map[string]struct{}{"scan-1": {}}
-	remote.tasks["scan-1"] = make(chan taskResult, 1)
-	remote.sendCh <- aop.MustWrap("busy", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}}) // saturate the buffer
+	remote.tasks["scan-1"] = make(chan proto.Message, 1)
+	sent <- aop.MustWrap("busy", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}}) // saturate the buffer
 	pool.agents[remote.nodeID] = remote
 
 	canceled := make(chan error, 1)
-	go func() { canceled <- pool.CancelTask(remote.nodeID, "scan-1") }()
+	go func() { canceled <- pool.CancelTask(remote.nodeID, "scan-1", "") }()
 	select {
 	case <-canceled:
 		t.Fatal("cancellation bypassed the full send channel")
 	case <-time.After(50 * time.Millisecond):
 	}
-	if first := <-remote.sendCh; first.GetId() != "busy" {
+	if first := <-sent; first.GetId() != "busy" {
 		t.Fatalf("first envelope = %+v", first)
 	}
 	if err := <-canceled; err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case envelope := <-remote.sendCh:
+	case envelope := <-sent:
 		message, err := aop.Unwrap(envelope)
 		if err != nil {
 			t.Fatal(err)
@@ -294,15 +366,15 @@ func TestCancelTaskQueuesBehindFullSendChannel(t *testing.T) {
 
 func TestCancelTaskWaitsForSaturatedSendChannel(t *testing.T) {
 	pool := NewAgentPool(NewHub(), nil)
-	remote := newFakeAgent("agent-1", 1)
+	remote, sent := newFakeAgent("agent-1", 1)
 	remote.toolCalls = map[string]struct{}{"scan-1": {}}
-	resultCh := make(chan taskResult, 1)
+	resultCh := make(chan proto.Message, 1)
 	remote.tasks["scan-1"] = resultCh
-	remote.sendCh <- aop.MustWrap("reload", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}})
+	sent <- aop.MustWrap("reload", "", &types.ReloadProtocolMessage{Message: &types.ReloadProtocolMessage_Request{Request: &types.ReloadRequest{}}})
 	pool.agents[remote.nodeID] = remote
 
 	canceled := make(chan error, 1)
-	go func() { canceled <- pool.CancelTask(remote.nodeID, "scan-1") }()
+	go func() { canceled <- pool.CancelTask(remote.nodeID, "scan-1", "") }()
 	select {
 	case _, ok := <-resultCh:
 		if ok {
@@ -312,12 +384,12 @@ func TestCancelTaskWaitsForSaturatedSendChannel(t *testing.T) {
 		t.Fatal("cancellation did not converge the pending task")
 	}
 
-	<-remote.sendCh // drain the reload so the cancel can enqueue
+	<-sent // drain the reload so the cancel can enqueue
 	if err := <-canceled; err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case envelope := <-remote.sendCh:
+	case envelope := <-sent:
 		message, err := aop.Unwrap(envelope)
 		if err != nil {
 			t.Fatal(err)
@@ -331,17 +403,17 @@ func TestCancelTaskWaitsForSaturatedSendChannel(t *testing.T) {
 }
 
 func TestCompleteScanCannotOverwriteCanceledScan(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	scan := &types.Scan{Id: "scan-canceled", Target: "127.0.0.1", Mode: "quick", Status: types.ScanStatus_SCAN_STATUS_CANCELED, CreatedAt: nowProto(), UpdatedAt: nowProto()}
+	scan := &scanpb.Scan{Id: "scan-canceled", Target: "127.0.0.1", Mode: "quick", Status: scanpb.ScanStatus_SCAN_STATUS_CANCELED, CreatedAt: nowProto(), UpdatedAt: nowProto()}
 	if err := store.Create(context.Background(), scan); err != nil {
 		t.Fatal(err)
 	}
 
-	svc := NewService(ServiceConfig{Store: store})
+	svc := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
 	changed, err := svc.completeScan(context.Background(), scan)
 	if err != nil {
 		t.Fatal(err)
@@ -353,23 +425,23 @@ func TestCompleteScanCannotOverwriteCanceledScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != types.ScanStatus_SCAN_STATUS_CANCELED || strings.TrimSpace(stored.Report) != "" {
+	if stored.Status != scanpb.ScanStatus_SCAN_STATUS_CANCELED {
 		t.Fatalf("canceled scan was mutated: %+v", stored)
 	}
 }
 
 func TestCancelCompletedScanReturnsConflictAndPreservesStatus(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	scan := &types.Scan{
+	scan := &scanpb.Scan{
 		Id:        "scan-completed",
 		Target:    "127.0.0.1",
 		Mode:      "quick",
-		Status:    types.ScanStatus_SCAN_STATUS_COMPLETED,
+		Status:    scanpb.ScanStatus_SCAN_STATUS_COMPLETED,
 		CreatedAt: nowProto(),
 		UpdatedAt: nowProto(),
 	}
@@ -377,8 +449,8 @@ func TestCancelCompletedScanReturnsConflictAndPreservesStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	service := NewService(ServiceConfig{Store: store})
-	response, err := service.api.Scans.CancelScan(context.Background(), &types.CancelScanRequest{
+	service := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
+	response, err := service.api.Scans.CancelScan(context.Background(), &scanpb.CancelScanRequest{
 		RequestId: "cancel-completed", ScanId: scan.Id,
 	})
 	if err != nil {
@@ -391,20 +463,20 @@ func TestCancelCompletedScanReturnsConflictAndPreservesStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != types.ScanStatus_SCAN_STATUS_COMPLETED {
+	if stored.Status != scanpb.ScanStatus_SCAN_STATUS_COMPLETED {
 		t.Fatalf("completed scan status = %s; want COMPLETED", stored.Status)
 	}
 }
 
 func TestCancelMissingScanReturnsNotFound(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	service := NewService(ServiceConfig{Store: store})
-	response, err := service.api.Scans.CancelScan(context.Background(), &types.CancelScanRequest{
+	service := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
+	response, err := service.api.Scans.CancelScan(context.Background(), &scanpb.CancelScanRequest{
 		RequestId: "cancel-missing", ScanId: "missing",
 	})
 	if err != nil {
@@ -464,5 +536,58 @@ func TestValidateMode(t *testing.T) {
 		if got != tt.want && !tt.wantErr {
 			t.Errorf("ValidateMode(%q) = %q, want %q", tt.input, got, tt.want)
 		}
+	}
+}
+
+// A host built without the scan console mounts no scan surface: no API, no
+// routes, no execution, and session scan bindings are refused.
+func TestScanConsoleDisabledContract(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc := NewService(ServiceConfig{Store: store})
+	defer svc.Close(context.Background())
+	if svc.api.Scans != nil {
+		t.Fatal("scan API mounted without scan configuration")
+	}
+	for _, route := range webpkg.ManagementRoutes(svc) {
+		if strings.Contains(route.Pattern, "Scan") {
+			t.Fatalf("scan route mounted without the scan console: %s", route.Pattern)
+		}
+	}
+	if _, err := svc.SubmitScan(context.Background(), "127.0.0.1", "quick", nil); !errors.Is(err, ErrScanConsoleDisabled) {
+		t.Fatalf("SubmitScan = %v", err)
+	}
+	if _, err := svc.GetScan(context.Background(), "scan-1"); !errors.Is(err, ErrScanConsoleDisabled) {
+		t.Fatalf("GetScan = %v", err)
+	}
+	if err := svc.CancelScan("scan-1"); !errors.Is(err, ErrScanConsoleDisabled) {
+		t.Fatalf("CancelScan = %v", err)
+	}
+
+	pool := NewAgentPool(svc.Hub(), nil)
+	svc.SetAgentPool(pool)
+	fake := &remoteAgent{
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
+	}
+	bindAgentQueue(fake, 1)
+	pool.agents[fake.nodeID] = fake
+	binding, err := anypb.New(&scanpb.SessionBinding{ScanId: "scan-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := svc.api.Sessions.OpenSession(context.Background(), "open-1", &aop.OpenSessionRequest{
+		SessionId: "session-1", NodeId: fake.nodeID,
+		Extensions: []*anypb.Any{binding},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := response.GetRejected()
+	if rejected == nil || rejected.GetCode() != "FAILED_PRECONDITION" {
+		t.Fatalf("scan binding on a scan-less host = %+v", response)
 	}
 }

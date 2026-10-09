@@ -5,10 +5,10 @@ import (
 	"strconv"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/output"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	"google.golang.org/protobuf/proto"
+	eventjsonl "github.com/chainreactors/cyber/core/events/jsonl"
+
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
 )
 
 type History struct {
@@ -35,7 +35,7 @@ func ReadHistory(path string) (*History, error) {
 	streams := make(map[string]*resumeStream)
 	seenEventIDs := make(map[string]struct{})
 	order := 0
-	err := output.ScanJSONL(path, func(event *aop.Event) error {
+	err := eventjsonl.ScanJSONL(path, func(event *aop.Event) error {
 		if event.Id == "" {
 			return fmt.Errorf("event in %s has no id", path)
 		}
@@ -75,12 +75,13 @@ func ReadHistory(path string) (*History, error) {
 			if _, command, _ := types.GetCommandDetail(event); command {
 				return nil
 			}
-			stream.messages = append(stream.messages, proto.CloneOf(payload.Message))
+			// ScanJSONL owns a fresh event per record; recovery transfers it to History.
+			stream.messages = append(stream.messages, payload.Message)
 			stream.messageCounter = max(stream.messageCounter, messageIDSequence(payload.Message.Id))
 		case *aop.Event_ToolResult:
 			if payload.ToolResult != nil {
 				stream.messages = append(stream.messages, &aop.Message{
-					Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: proto.CloneOf(payload.ToolResult)}}},
+					Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: payload.ToolResult}}},
 				})
 			}
 		}
@@ -157,7 +158,7 @@ func resumeStreamMessages(selected *resumeStream, streams map[string]*resumeStre
 			if message == nil {
 				continue
 			}
-			messages = append(messages, proto.CloneOf(message))
+			messages = append(messages, message)
 			counter = max(counter, messageIDSequence(message.Id))
 		}
 		counter = max(counter, stream.messageCounter)

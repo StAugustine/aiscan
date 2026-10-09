@@ -1,21 +1,21 @@
 package proton
 
 import (
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/resources"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
-func NewCommand(workDir string, resources *resources.Set, logger telemetry.Logger, proxy string, events aop.EventPublisher) commands.Command {
+func NewCommand(workDir string, provider func(string) []byte, logger telemetry.Logger, proxy string, events aop.EventPublisher, excludes ...string) coretool.Command {
 	cmd := New().WithLogger(logger).WithProxy(proxy).WithEvents(events)
-	if resources != nil {
-		cmd.WithResourceProvider(resources.ProtonConfig)
+	if provider != nil {
+		cmd.WithResourceProvider(provider)
 	}
 	cmd.SetWorkDir(workDir)
-	return commands.Command{
+	cmd.excludePaths = append([]string(nil), excludes...)
+	return coretool.Command{
 		Name: cmd.Name(), Usage: cmd.Usage(),
-		DescriptionPath: "aiscan://skills/aiscan/okf/easm/proton.md",
+		DescriptionPath: "cyber://proton/proton.md",
 		Run:             cmd.Run,
 	}
 }

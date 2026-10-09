@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 )
 
 func TestMarshalOpenAIRequestAlwaysIncludesMessageContent(t *testing.T) {
@@ -45,6 +45,25 @@ func TestMarshalOpenAIRequestAlwaysIncludesMessageContent(t *testing.T) {
 		}
 		if string(content) != `""` {
 			t.Fatalf("messages[%d].content = %s, want empty string", i, content)
+		}
+	}
+}
+
+func TestStructuredOutputIsOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		data, err := marshalOpenAIRequest(&ChatCompletionRequest{Model: "deepseek-flash", JSONOutput: enabled})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(data, &body); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := body["response_format"]; present != enabled {
+			t.Fatalf("unexpected format control: %s", data)
+		}
+		if enabled && string(body["response_format"]) != `{"type":"json_object"}` {
+			t.Fatalf("unsupported vendor format: %s", data)
 		}
 	}
 }

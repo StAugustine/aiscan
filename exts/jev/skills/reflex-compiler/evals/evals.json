@@ -1,0 +1,8 @@
+{
+  "skill_name": "reflex-compiler",
+  "evals": [
+    {"id": 1, "prompt": "Compile a browser UI search capability from a URL, preserving a term with Unicode, quotes and one backslash. Start without an existing session and return the current server receipt.", "expected_output": "A qualified artifact opens the current URL, derives its session, binds the exact current term, performs the UI operation and reads the current receipt.", "files": [], "assertions": ["Exact current target and argument strings", "No assumed example session", "Current receipt from independent server oracle"]},
+    {"id": 2, "prompt": "Compile a capability that submits one experiment, survives a lost response, and polls the same native call ID until the actual operation completes.", "expected_output": "A qualified artifact dispatches once, performs fresh reads until completion, and returns the actual receipt without deferring merely because the first poll is pending.", "files": [], "assertions": ["Exactly one effect", "Same operation ID on all polls", "Current receipt after completion"]},
+    {"id": 3, "prompt": "Compile a capability that appends two intentionally identical entries for the current actor and reports the actual count and receipt. Repair every validator diagnostic until accepted.", "expected_output": "A qualified artifact preserves both intended occurrences, reads current completion evidence and reports count two with its actual receipt.", "files": [], "assertions": ["Two distinct intended effects", "Exact current actor", "Current count and receipt", "No three-draft termination"]}
+  ]
+}

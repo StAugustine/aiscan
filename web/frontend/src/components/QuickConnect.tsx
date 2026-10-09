@@ -1,13 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertTriangle, Check, Copy, Link, Loader2, RefreshCw } from 'lucide-react'
-import { Button, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
+import { AlertTriangle, Check, Copy, Download, Link, Loader2, RefreshCw } from 'lucide-react'
+import { Button, Input, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
 import { cn } from '@cyber/theme'
+import { copyToClipboard } from '../../cyber-ui/packages/template/src/clipboard'
 import { getAgentConnectToken } from '../api'
-
-type OS = 'linux' | 'darwin' | 'windows'
-type Arch = 'amd64' | 'arm64'
-type DownloadSource = 'global' | 'china'
+import { nodeCommands, nodeDownloadURL, type OS, type Arch, type DownloadSource, type Distribution } from '../lib/node-bootstrap'
 
 interface Platform {
   os: OS
@@ -22,16 +20,19 @@ const OS_OPTIONS: { value: OS; label: string }[] = [
 
 const ARCH_OPTIONS: { value: Arch; label: string; osFilter?: OS[] }[] = [
   { value: 'amd64', label: 'x86_64' },
-  { value: 'arm64', label: 'ARM64', osFilter: ['linux', 'darwin'] },
+  { value: 'arm64', label: 'ARM64' },
 ]
-
-const CHINA_MIRROR = 'https://ghfast.top/'
-const NODE_NAME_PLACEHOLDER = 'NODE_NAME'
 
 interface Props {
   serverURL: string | undefined
   version: string | undefined
+  profiles?: Array<{ id: string; title?: string }>
 }
+
+const DEFAULT_PROFILES = [
+  { id: 'cyber-scan', title: 'Cyber Scan' },
+  { id: 'cyber-audit', title: 'Cyber Audit' },
+]
 
 function detectPlatform(): Platform {
   const ua = navigator.userAgent.toLowerCase()
@@ -47,71 +48,39 @@ function archOptionsForOS(os: OS) {
   return ARCH_OPTIONS.filter((a) => !a.osFilter || a.osFilter.includes(os))
 }
 
-function binaryName(os: OS, arch: Arch): string {
-  return `aiscan-full_${os}_${arch}.zip`
-}
-
-function releaseTag(version?: string): string {
-  const value = version?.trim()
-  if (!value || value === 'dev') return 'latest'
-  return value.startsWith('v') ? value : `v${value}`
-}
-
-function releaseURL(os: OS, arch: Arch, source: DownloadSource, tag: string): string {
-  const base = tag !== 'latest'
-    ? `https://github.com/chainreactors/aiscan/releases/download/${tag}`
-    : `https://github.com/chainreactors/aiscan/releases/latest/download`
-  const url = `${base}/${binaryName(os, arch)}`
-  return source === 'china' ? CHINA_MIRROR + url : url
-}
-
-function authenticatedURL(rawURL: string, accessToken: string): string {
-  const url = new URL(rawURL, window.location.origin)
-  url.username = accessToken
-  url.password = ''
-  return url.toString().replace(/\/$/, '')
-}
-
-function agentArgs(serverURL: string, accessToken: string): string {
-  return `--server-url '${authenticatedURL(serverURL, accessToken)}' --space default --node-name '${NODE_NAME_PLACEHOLDER}'`
-}
-
-function connectCmd(os: OS, serverURL: string, accessToken: string): string {
-  const args = agentArgs(serverURL, accessToken)
-  if (os === 'windows') {
-    return `.\\aiscan-full.exe agent ${args}`
-  }
-  return `./aiscan-full agent ${args}`
-}
-
-function installCmd(os: OS, arch: Arch, serverURL: string, accessToken: string, source: DownloadSource, tag: string): string {
-  const dlURL = releaseURL(os, arch, source, tag)
-  const args = agentArgs(serverURL, accessToken)
-  if (os === 'windows') {
-    return `powershell -c "Invoke-WebRequest '${dlURL}' -OutFile aiscan.zip; Expand-Archive aiscan.zip -DestinationPath .; .\\aiscan-full.exe agent ${args}"`
-  }
-  const bin = 'aiscan-full'
-  return `curl -sL '${dlURL}' -o aiscan.zip && unzip -o aiscan.zip ${bin} && chmod +x ${bin} && ./${bin} agent ${args}`
-}
-
 type CopiedKey = string | null
 
-export default function QuickConnect({ serverURL, version }: Props) {
+export default function QuickConnect({ serverURL, version, profiles }: Props) {
   const { t } = useTranslation('app')
   const [open, setOpen] = useState(false)
   const [platform, setPlatform] = useState<Platform>(detectPlatform)
+  const [distribution, setDistribution] = useState<Distribution>('cyber-scan')
+  const [defaultNodeName] = useState(() => `node-${Math.random().toString(36).slice(2, 10)}`)
+  const [nodeName, setNodeName] = useState('')
   const [downloadSource, setDownloadSource] = useState<DownloadSource>('global')
   const [copied, setCopied] = useState<CopiedKey>(null)
+  const [copyError, setCopyError] = useState(false)
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(null)
   const [tokenError, setTokenError] = useState(false)
   const [tokenRequest, setTokenRequest] = useState(0)
   const panelRef = useRef<HTMLDivElement>(null)
+  const availableProfiles = profiles?.length ? profiles : DEFAULT_PROFILES
+
+  useEffect(() => {
+    if (availableProfiles.some((profile) => profile.id === distribution)) return
+    setDistribution(availableProfiles[0].id as Distribution)
+    setCopied(null)
+    setCopyError(false)
+  }, [availableProfiles, distribution])
 
   const closePanel = useCallback(() => {
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
     setOpen(false)
     setAccessToken(null)
     setTokenError(false)
     setCopied(null)
+    setCopyError(false)
   }, [])
 
   const setOS = useCallback((os: OS) => {
@@ -121,17 +90,26 @@ export default function QuickConnect({ serverURL, version }: Props) {
       return { os, arch }
     })
     setCopied(null)
+    setCopyError(false)
   }, [])
 
   const setArch = useCallback((arch: Arch) => {
     setPlatform((prev) => ({ ...prev, arch }))
     setCopied(null)
+    setCopyError(false)
   }, [])
 
   const handleCopy = useCallback(async (key: string, text: string) => {
-    await navigator.clipboard.writeText(text)
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
+    const success = await copyToClipboard(text)
+    if (!success) {
+      setCopied(null)
+      setCopyError(true)
+      return
+    }
+    setCopyError(false)
     setCopied(key)
-    setTimeout(() => setCopied(null), 2000)
+    copyResetTimer.current = setTimeout(() => setCopied(null), 2000)
   }, [])
 
   useEffect(() => {
@@ -179,8 +157,11 @@ export default function QuickConnect({ serverURL, version }: Props) {
   ]
 
   const tokenReady = accessToken !== null
-  const install = tokenReady ? installCmd(os, arch, serverURL, accessToken, downloadSource, releaseTag(version)) : ''
-  const connect = tokenReady ? connectCmd(os, serverURL, accessToken) : ''
+  const options = { os, arch, distribution, source: downloadSource, version,
+    serverURL: new URL(serverURL, window.location.origin).toString(), accessToken: accessToken ?? '',
+    nodeName: nodeName.trim() || defaultNodeName }
+  const { install, connect } = tokenReady ? nodeCommands(options) : { install: '', connect: '' }
+  const downloadURL = nodeDownloadURL(options)
 
   return (
     <div className="relative" ref={panelRef}>
@@ -264,6 +245,23 @@ export default function QuickConnect({ serverURL, version }: Props) {
             </div>
           </div>
 
+          <div role="group" aria-label={t('quickConnectProfile')} className="mb-3 flex items-center gap-2">
+            <span className="text-[11px] text-muted-foreground">{t('quickConnectProfile')}</span>
+            {availableProfiles.map((profile) => (
+              <Button key={profile.id} type="button" size="xs" variant={distribution === profile.id ? 'default' : 'outline'}
+                aria-label={profile.id} aria-pressed={distribution === profile.id}
+                onClick={() => { setDistribution(profile.id as Distribution); setCopied(null); setCopyError(false) }}>
+                {profile.title || profile.id}
+              </Button>
+            ))}
+          </div>
+
+          <label className="mb-3 flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span className="shrink-0">{t('quickConnectNodeName')}</span>
+            <Input value={nodeName} placeholder={defaultNodeName} className="h-7 text-xs"
+              onChange={(event) => { setNodeName(event.target.value); setCopied(null); setCopyError(false) }} />
+          </label>
+
           {!tokenReady && !tokenError && (
             <div className="flex min-h-28 items-center justify-center gap-2 text-xs text-muted-foreground" role="status">
               <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -299,6 +297,7 @@ export default function QuickConnect({ serverURL, version }: Props) {
                       onClick={() => {
                         setDownloadSource(source.value)
                         setCopied(null)
+                        setCopyError(false)
                       }}
                       className={cn(
                         'rounded px-2 py-0.5 text-[10px] transition-colors',
@@ -315,6 +314,7 @@ export default function QuickConnect({ serverURL, version }: Props) {
 
               <CommandRow
                 label={t('quickConnectInstall')}
+                copyLabel={t('quickConnectCopy')}
                 commands={[
                   { key: `install-${downloadSource}`, text: install },
                 ]}
@@ -322,8 +322,13 @@ export default function QuickConnect({ serverURL, version }: Props) {
                 onCopy={handleCopy}
               />
 
+              <a href={downloadURL} className="mt-2 inline-flex items-center gap-1 text-[11px] text-primary hover:underline">
+                <Download className="h-3 w-3" />{t('quickConnectDownload')}
+              </a>
+
               <CommandRow
                 label={t('quickConnectOnly')}
+                copyLabel={t('quickConnectCopy')}
                 commands={[
                   { key: 'connect', text: connect },
                 ]}
@@ -331,6 +336,8 @@ export default function QuickConnect({ serverURL, version }: Props) {
                 onCopy={handleCopy}
                 className="mt-2"
               />
+
+              {copyError && <p role="alert" className="mt-2 text-xs text-destructive">{t('quickConnectCopyError')}</p>}
 
               <p className="mt-2 text-[10px] text-muted-foreground">
                 {t('quickConnectHint')}
@@ -349,8 +356,9 @@ interface CmdEntry {
   text: string
 }
 
-function CommandRow({ label, commands, copied, onCopy, className }: {
+function CommandRow({ label, copyLabel, commands, copied, onCopy, className }: {
   label: string
+  copyLabel: string
   commands: CmdEntry[]
   copied: CopiedKey
   onCopy: (key: string, text: string) => void
@@ -365,7 +373,7 @@ function CommandRow({ label, commands, copied, onCopy, className }: {
         </pre>
         <div className="mt-1.5 flex gap-1.5 justify-end">
           {commands.map((c) => (
-            <CopyButton key={c.key} tag={c.tag} copied={copied === c.key} onClick={() => onCopy(c.key, c.text)} />
+            <CopyButton key={c.key} tag={c.tag} label={`${copyLabel} — ${label}`} copied={copied === c.key} onClick={() => onCopy(c.key, c.text)} />
           ))}
         </div>
       </div>
@@ -373,11 +381,12 @@ function CommandRow({ label, commands, copied, onCopy, className }: {
   )
 }
 
-function CopyButton({ tag, copied, onClick }: { tag?: string; copied: boolean; onClick: () => void }) {
+function CopyButton({ tag, label, copied, onClick }: { tag?: string; label: string; copied: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-label={label}
       className={cn(
         'inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] transition-colors',
         copied

@@ -1,4 +1,11 @@
 export default {
+  results: 'Scan results',
+  resultsLoading: 'Syncing results',
+  resultsIncomplete: 'Results incomplete',
+  scanCanceled: 'Scan canceled',
+  scanFailed: 'Scan failed; collected results retained',
+  retryParsing: 'Retry parsing',
+
   // ScanForm
   targetPlaceholder: 'Target(s) — IP, hostname, or URL · comma or newline to add more',
   scanTarget: 'Scan target',
@@ -35,10 +42,6 @@ export default {
   completed: 'Completed',
   llm: 'LLM',
   offline: 'Offline',
-
-  // chat/ScanProgressInline
-  startingScan: 'Starting scan...',
-  scanLog: 'Scan progress log',
 
   // chat/ScanSummaryCard
   scanComplete: 'Scan Complete',

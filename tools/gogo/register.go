@@ -3,20 +3,20 @@ package gogo
 import (
 	"fmt"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/scan/engine"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/scan/engine"
 )
 
-func NewCommand(engines *engine.Set, logger telemetry.Logger, proxy string, events aop.EventPublisher) (commands.Command, error) {
+func NewCommand(engines *engine.Set, logger telemetry.Logger, proxy string, events aop.EventPublisher) (coretool.Command, error) {
 	if engines == nil || engines.Gogo == nil {
-		return commands.Command{}, fmt.Errorf("gogo engine is unavailable")
+		return coretool.Command{}, fmt.Errorf("gogo engine is unavailable")
 	}
 	impl := New(engines.Gogo).WithLogger(logger).WithProxy(proxy).WithEvents(events)
-	return commands.Command{
+	return coretool.Command{
 		Name: impl.Name(), Usage: impl.Usage(), QuickReference: impl.QuickReference(),
-		DescriptionPath: "aiscan://skills/aiscan/okf/easm/gogo.md",
+		DescriptionPath: "cyber://skills/cyber/okf/easm/gogo.md",
 		Run:             impl.Run,
 	}, nil
 }

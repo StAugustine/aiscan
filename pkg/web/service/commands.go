@@ -5,20 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"google.golang.org/protobuf/proto"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
 )
 
 // Stable system-message codes mirrored by the frontend i18n catalog.
 const (
-	SysNoRunningTask     = "no_running_task"
-	SysPaused            = "paused"
-	SysFileUploaded      = "file_uploaded"
-	SysNoAgentsConnected = "no_agents_connected"
-	SysAgentsList        = "agents_list"
-	SysAgentNotConnected = "agent_not_connected"
+	SysNoRunningTask       = "no_running_task"
+	SysPaused              = "paused"
+	SysFileUploaded        = "file_uploaded"
+	SysNoAgentsConnected   = "no_agents_connected"
+	SysAgentsList          = "agents_list"
+	SysAgentNotConnected   = "agent_not_connected"
+	SysSessionContextReset = "session_context_reset"
+	SysHelp                = "help"
 )
 
 func (s *Service) runHubCommand(sessionID, name, args string) {
@@ -48,25 +51,30 @@ func parseCommand(content string) (cmd, args string, ok bool) {
 }
 
 // handleHelpCommand renders the merged "/" command catalog (hub-scope plus the
-// bound agent's reported agent-scope commands) as a system message. Broadcast
-// with an empty code so the frontend shows this dynamic, already-localized text
-// verbatim instead of translating it.
+// bound agent's reported agent-scope commands) as a system message. The catalog
+// travels as metadata and the frontend renders it from its own description
+// strings; the body here is only the fallback for a client that does not know
+// this code, so it stays language-neutral and description-free.
 func (s *Service) handleHelpCommand(sessionID string) {
+	menu := s.SessionMenu(sessionID)
+	s.broadcastSystemMessageMetadata(sessionID, helpFallback(menu), &types.WebMessageMetadata{
+		Code:     SysHelp,
+		Commands: menu,
+	})
+}
+
+func helpFallback(menu []*types.CommandSpec) string {
 	var b strings.Builder
 	b.WriteString("**Commands**\n")
-	for _, c := range s.SessionMenu(sessionID) {
-		syntax := c.Usage
+	for _, c := range menu {
+		syntax := c.GetUsage()
 		if syntax == "" {
-			syntax = c.Name
+			syntax = c.GetName()
 		}
-		if c.Description != "" {
-			fmt.Fprintf(&b, "- `%s` — %s\n", syntax, c.Description)
-		} else {
-			fmt.Fprintf(&b, "- `%s`\n", syntax)
-		}
+		fmt.Fprintf(&b, "- `%s`\n", syntax)
 	}
-	b.WriteString("\n`!<command>` 直接在 agent 上执行 shell/伪命令;其他文本作为对话发送给 agent。")
-	s.broadcastSystemMessage(sessionID, "", b.String(), nil)
+	b.WriteString("\n`!<command>` runs a shell or pseudo command directly on the agent; any other text is sent to the agent as conversation.")
+	return b.String()
 }
 
 // SessionMenu is the web "/" command catalog for a session: the hub-scope
@@ -87,16 +95,16 @@ func (s *Service) SessionMenu(sessionID string) []*types.CommandSpec {
 		// This is the web's offline menu, not an executable terminal console.
 		agentSpecs = []*types.CommandSpec{
 			{Name: "/help", Description: "查看命令面板"},
-			{Name: "/status", Description: "查看模型、渲染模式、Server 和 skills"},
-			{Name: "/clear", Description: "清空当前会话上下文"},
+			{Name: "/status", Description: "查看 Agent 的 LLM、工具、扫描器和会话健康状态"},
+			{Name: "/clear", Description: "清空当前 Agent 上下文"},
 			{Name: "/resume", Description: "恢复已保存会话 (/resume 选择，/resume <path|#index>)"},
-			{Name: "/compact", Description: "压缩当前会话上下文 (/compact [focus instructions])"},
+			{Name: "/compact", Description: "压缩当前 Agent 上下文 (/compact [focus instructions])"},
 			{Name: "/provider", Description: "查看/管理 LLM provider 配置"},
 			{Name: "/model", Description: "查看/切换当前 provider 的模型"},
-			{Name: "/spaces", Description: "List all spaces"},
-			{Name: "/messages", Description: "List start messages in a space"},
-			{Name: "/context", Description: "View message thread/context"},
-			{Name: "/nodes", Description: "List nodes (optionally scoped to a space)"},
+			{Name: "/spaces", Description: "列出所有 space"},
+			{Name: "/messages", Description: "列出 space 中的起始消息"},
+			{Name: "/context", Description: "查看消息线程/上下文"},
+			{Name: "/nodes", Description: "列出节点（可限定 space）"},
 		}
 	}
 	return append(hubSpecs, agentSpecs...)
@@ -150,21 +158,31 @@ func (s *Service) sessionAgent(sessionID string) *remoteAgent {
 }
 
 func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) {
-	agent := s.sessionAgent(sessionID)
-	if agent == nil {
-		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
-			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
-		return
-	}
-
 	taskID := strings.TrimSpace(request.TurnId)
 	if taskID == "" {
 		taskID = generateID()
 	}
 	request.TurnId = taskID
 	request.SessionId = sessionID
-	s.resetTurnTerminal(sessionID, taskID)
-	s.registerSessionTask(taskID, sessionID, agent.NodeID())
+	if err := s.resetTurnTerminal(sessionID, taskID); err != nil {
+		s.broadcastHubTurnEnded(sessionID, taskID, "storage_error", err.Error())
+		return
+	}
+	workCtx, admitted := s.beginWork()
+	if !admitted {
+		s.broadcastHubTurnEnded(sessionID, taskID, "service_closing", "web service is closing")
+		return
+	}
+	defer s.work.Done()
+	agent := s.sessionAgent(sessionID)
+	if agent == nil {
+		s.broadcastSystemMessage(sessionID, SysAgentNotConnected,
+			"Agent is not connected. Reconnect the agent to continue chatting.", nil)
+		s.broadcastHubTurnEnded(sessionID, taskID, "agent_not_connected", "agent disconnected before turn dispatch")
+		return
+	}
+
+	s.registerSessionTask(taskID, sessionID)
 	resultCh, err := s.agents.DispatchRun(agent.NodeID(), request)
 	if err != nil {
 		s.finishSessionTask(taskID)
@@ -172,23 +190,36 @@ func (s *Service) StartAgentTurn(sessionID string, request *aop.RunTurnRequest) 
 		return
 	}
 
+	s.work.Add(1)
 	go func() {
-		res, ok := <-resultCh
-		canceled := s.finishSessionTask(taskID)
-		if canceled {
+		defer s.work.Done()
+		var res proto.Message
+		var ok bool
+		select {
+		case res, ok = <-resultCh:
+		case <-workCtx.Done():
+			_ = s.agents.CancelTask(agent.NodeID(), taskID, sessionID)
+			s.finishSessionTask(taskID)
+			s.broadcastHubTurnEnded(sessionID, taskID, "canceled", workCtx.Err().Error())
 			return
 		}
+		s.finishSessionTask(taskID)
 		if !ok {
 			s.broadcastHubTurnEnded(sessionID, taskID, "agent_disconnected", "agent disconnected")
 			return
 		}
-		if res.Err != "" {
-			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", res.Err)
+		if failure := taskError(res); failure != nil {
+			s.broadcastHubTurnEnded(sessionID, taskID, "agent_run_failed", failure.Message)
 		}
 	}()
 }
 
 func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) {
+	workCtx, admitted := s.beginWork()
+	if !admitted {
+		return "", fmt.Errorf("web service is closing")
+	}
+	defer s.work.Done()
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return "", fmt.Errorf("command line is required")
@@ -204,7 +235,8 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 		switch verb {
 		case "help", "agents":
 			operationID := generateID()
-			go s.runHubCommand(sessionID, verb, args)
+			s.work.Add(1)
+			go func() { defer s.work.Done(); s.runHubCommand(sessionID, verb, args) }()
 			return operationID, nil
 		case "clear":
 			return "", fmt.Errorf("clear requires ResetSession")
@@ -223,20 +255,34 @@ func (s *Service) ExecuteSessionCommand(sessionID, line string) (string, error) 
 		return "", fmt.Errorf("agent is not connected")
 	}
 	taskID := generateID()
-	s.registerSessionTask(taskID, sessionID, agent.NodeID())
+	s.registerSessionTask(taskID, sessionID)
 	resultCh, err := s.agents.DispatchCommand(agent.NodeID(), taskID, &types.CommandRequest{SessionId: sessionID, Line: line})
 	if err != nil {
 		s.finishSessionTask(taskID)
 		return "", err
 	}
+	s.work.Add(1)
 	go func() {
-		res, ok := <-resultCh
-		canceled := s.finishSessionTask(taskID)
-		if !ok || canceled {
+		defer s.work.Done()
+		var res proto.Message
+		var ok bool
+		select {
+		case res, ok = <-resultCh:
+		case <-workCtx.Done():
+			_ = s.agents.CancelTask(agent.NodeID(), taskID, sessionID)
+			s.finishSessionTask(taskID)
+			s.broadcastHubError(sessionID, "command_failed", workCtx.Err().Error(), nil)
 			return
 		}
-		if res.Err != "" {
-			s.broadcastHubError(sessionID, "", res.Err, nil)
+		s.finishSessionTask(taskID)
+		if !ok {
+			return
+		}
+		if failure := taskError(res); failure != nil {
+			// The agent's error text is a raw Go string ("context canceled" and
+			// friends). Code it so the client frames it in the reader's language
+			// instead of rendering the string bare.
+			s.broadcastHubError(sessionID, "command_failed", failure.Message, map[string]any{"error": failure.Message})
 		}
 	}()
 	return taskID, nil

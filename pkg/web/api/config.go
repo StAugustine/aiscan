@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	agentprovider "github.com/chainreactors/aiscan/agent/provider"
-	configpkg "github.com/chainreactors/aiscan/core/config"
-	probe "github.com/chainreactors/aiscan/pkg/probe"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	agentprovider "github.com/chainreactors/cyber/agent/provider"
+	types "github.com/chainreactors/cyber/core/types"
+	configpkg "github.com/chainreactors/cyber/pkg/config"
+	"google.golang.org/protobuf/proto"
 )
 
 // ConfigBackend owns configuration updates and runtime publication. The API
@@ -20,25 +20,24 @@ type ConfigBackend interface {
 }
 
 type ConfigOptions struct {
-	Probes   *probe.Registry
 	Sections *configpkg.Sections
 	Project  func(*types.DistributeConfig, *types.ConfigView)
+
+	// RuntimeLLM supplies the effective provider for an empty health probe.
+	// Explicit settings probes continue to use the requested profile and values.
+	RuntimeLLM func() agentprovider.ProviderConfig
 }
+
 type Config struct {
 	backend ConfigBackend
 	options ConfigOptions
 }
 
-func NewConfig(backend ConfigBackend, options ...ConfigOptions) *Config {
-	var selected ConfigOptions
-	if len(options) > 0 {
-		selected = options[0]
+func NewConfig(backend ConfigBackend, options ConfigOptions) *Config {
+	if options.Sections != nil {
+		options.Sections.Seal()
 	}
-	if selected.Probes == nil {
-		selected.Probes = probe.New()
-	}
-	selected.Probes.Seal()
-	return &Config{backend: backend, options: selected}
+	return &Config{backend: backend, options: options}
 }
 
 func (c *Config) GetConfig(ctx context.Context, _ *types.GetConfigRequest) (*types.GetConfigResponse, error) {
@@ -77,8 +76,20 @@ func (c *Config) ActivateProfile(ctx context.Context, request *types.ActivatePro
 	return &types.ActivateProfileResponse{Config: view}, nil
 }
 
+// TestLLM probes the effective runtime for an empty request. A settings probe
+// uses its explicit values and falls back to the selected profile's stored key.
 func (c *Config) TestLLM(ctx context.Context, request *types.LLMProbeRequest) (*types.LLMProbeResult, error) {
-	result, err := agentprovider.TestLLM(ctx, request, c.storedLLMAPIKey(ctx, request.GetProfileId()))
+	var storedKey string
+	if c.options.RuntimeLLM != nil && (request == nil || proto.Equal(request, &types.LLMProbeRequest{})) {
+		effective := c.options.RuntimeLLM()
+		request = &types.LLMProbeRequest{
+			Provider: effective.Provider, BaseUrl: effective.BaseURL,
+			ApiKey: effective.APIKey, Model: effective.Model, Proxy: effective.Proxy,
+		}
+	} else {
+		storedKey = c.storedLLMAPIKey(ctx, request.GetProfileId())
+	}
+	result, err := agentprovider.TestLLM(ctx, request, storedKey)
 	if err != nil {
 		return nil, NewError(CodeInvalidArgument, err)
 	}
@@ -98,7 +109,7 @@ func (c *Config) TestConnection(ctx context.Context, request *types.TestConnecti
 		return nil, Errorf(CodeInvalidArgument, "request is required")
 	}
 	stored, _ := c.Distribute(ctx)
-	checks, err := c.options.Probes.Test(ctx, request.GetSection(), request.GetConfig(), stored)
+	checks, err := c.options.Sections.TestConnection(ctx, request.GetSection(), request.GetConfig(), stored)
 	if err != nil {
 		return nil, NewError(CodeInvalidArgument, err)
 	}
@@ -155,7 +166,14 @@ func ValidateLLMConfig(config *types.LLMConfig) error {
 	if config == nil {
 		return nil
 	}
+	seen := map[string]bool{}
 	for index, profile := range config.Providers {
+		if profile != nil && profile.Id != "" {
+			if seen[profile.Id] {
+				return fmt.Errorf("duplicate LLM profile %q", profile.Id)
+			}
+			seen[profile.Id] = true
+		}
 		profile = configpkg.NormalizeLLMProvider(profile)
 		if profile == nil {
 			return fmt.Errorf("LLM profile #%d is empty", index+1)
@@ -182,6 +200,9 @@ func ValidateLLMConfig(config *types.LLMConfig) error {
 		if profile.Timeout < 0 {
 			return fmt.Errorf("LLM timeout must be zero or positive")
 		}
+	}
+	if config.ActiveProfile != "" && !seen[config.ActiveProfile] {
+		return fmt.Errorf("unknown LLM profile %q", config.ActiveProfile)
 	}
 	return nil
 }
@@ -212,10 +233,7 @@ func ConfigView(config *types.DistributeConfig, path string, loaded bool) *types
 		view.Llm.Active = view.Llm.Providers[0]
 		view.Llm.ActiveProfile = view.Llm.Active.Id
 	}
-	view.Cyberhub = &types.CyberhubView{Url: config.GetCyberhub().GetUrl(), KeyConfigured: config.GetCyberhub().GetKey() != "", Mode: config.GetCyberhub().GetMode(), Proxy: config.GetCyberhub().GetProxy()}
-	view.Recon = &types.ReconView{FofaKeyConfigured: config.GetRecon().GetFofaKey() != "", HunterApiKeyConfigured: config.GetRecon().GetHunterApiKey() != "", Proxy: config.GetRecon().GetProxy(), Limit: config.GetRecon().GetLimit()}
-	view.Scan = &types.ScanConfig{Verify: config.GetScan().GetVerify()}
-	view.Search = &types.SearchView{TavilyKeysConfigured: config.GetSearch().GetTavilyKeys() != ""}
-	view.Agent = &types.AgentConfig{Tools: append([]string(nil), config.GetAgent().GetTools()...), Timeout: config.GetAgent().GetTimeout()}
+	view.Agent = proto.CloneOf(config.GetAgent())
+	view.Traffic = proto.CloneOf(config.GetTraffic())
 	return view
 }

@@ -1,37 +1,134 @@
 package main
 
 import (
-	cfg "github.com/chainreactors/aiscan/core/config"
-	client "github.com/chainreactors/aiscan/pkg/exts/ioa/client"
-	ioaprobe "github.com/chainreactors/aiscan/pkg/exts/ioa/client/probe"
-	server "github.com/chainreactors/aiscan/pkg/exts/ioa/server"
-	scannerprobe "github.com/chainreactors/aiscan/pkg/exts/scanner/probe"
-	searchprobe "github.com/chainreactors/aiscan/pkg/exts/search/probe"
-	"github.com/chainreactors/aiscan/pkg/probe"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
-	"google.golang.org/protobuf/proto"
+	"fmt"
+	"net/url"
+
+	types "github.com/chainreactors/cyber/core/types"
+	ioaclient "github.com/chainreactors/cyber/exts/ioa/client"
+	ioaserver "github.com/chainreactors/cyber/exts/ioa/server"
+	"github.com/chainreactors/cyber/exts/jev"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	managementapi "github.com/chainreactors/cyber/pkg/web/api"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 	"gopkg.in/yaml.v3"
-	"net/url"
 )
 
-func normalizeProductConfig(config *types.DistributeConfig) error {
-	return client.NormalizeConfig(config)
+// cyber.yaml includes local fields outside the shared settings proto. Preserve
+// those fields when projecting settings for the Web editor.
+
+// protoKeyTree holds the keys the shared proto accepts, per message. A nil
+// subtree marks an opaque value (list, map or well-known Struct) copied whole.
+func protoKeyTree(descriptor protoreflect.MessageDescriptor) map[string]any {
+	tree := map[string]any{}
+	fields := descriptor.Fields()
+	for index := 0; index < fields.Len(); index++ {
+		field := fields.Get(index)
+		var subtree any
+		if field.Kind() == protoreflect.MessageKind && !field.IsMap() && !field.IsList() {
+			subtree = protoKeyTree(field.Message())
+		}
+		tree[string(field.Name())] = subtree
+		tree[field.JSONName()] = subtree
+	}
+	return tree
 }
-func validateProductConfig(config *types.DistributeConfig) error {
-	return client.ValidateWire(config, productSections(false))
+
+var configurationProtoKeys = protoKeyTree((&types.DistributeConfig{}).ProtoReflect().Descriptor())
+
+// splitDocument returns the proto projection of a document plus the remainder.
+func splitDocument(document, schema map[string]any) (map[string]any, map[string]any) {
+	canonical, own := map[string]any{}, map[string]any{}
+	for key, value := range document {
+		subtree, accepted := schema[key]
+		fields, isSection := value.(map[string]any)
+		nested, wantsSection := subtree.(map[string]any)
+		if accepted && isSection && wantsSection {
+			// Keep the section even when empty: dropping it would clear the
+			// message's presence and make a second save differ from the first.
+			projected, rest := splitDocument(fields, nested)
+			canonical[key] = projected
+			if len(rest) > 0 {
+				own[key] = rest
+			}
+			continue
+		}
+		if !accepted {
+			own[key] = value
+			continue
+		}
+		canonical[key] = value
+	}
+	return canonical, own
 }
-func parseProductConfig(data []byte) (*types.DistributeConfig, error) {
-	value, err := cfg.LoadDistributeConfigYAML(data)
+
+// mergeDocument restores local settings onto a projection rewritten from a
+// settings-page save.
+func mergeDocument(projection, own map[string]any) {
+	for key, value := range own {
+		fields, isSection := value.(map[string]any)
+		target, targetIsSection := projection[key].(map[string]any)
+		if isSection && targetIsSection {
+			mergeDocument(target, fields)
+			continue
+		}
+		projection[key] = value
+	}
+}
+
+// ownConfig returns the part of a saved cyber.yaml the shared proto does not
+// model. Root keys the extension registry consumes are excluded: those
+// round-trip through the proto's extensions map instead.
+func ownConfig(data []byte) (map[string]any, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	if _, legacy := document["ioa"]; legacy {
+		return nil, fmt.Errorf("configuration ioa was removed; use extensions.%s", ioaclient.ConfigKey)
+	}
+	_, own := splitDocument(document, configurationProtoKeys)
+	for _, alias := range defaultSections().Aliases() {
+		delete(own, alias)
+	}
+	return own, nil
+}
+
+func validateConfig(config *types.DistributeConfig) error {
+	sections := defaultSections()
+	for key, fields := range cfg.ValuesFromProto(config.GetExtensions()) {
+		if _, err := sections.Decode(key, fields); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func parseConfig(data []byte) (*types.DistributeConfig, error) {
+	var document map[string]any
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return nil, err
+	}
+	return parseConfigDocument(document)
+}
+
+func parseConfigDocument(document map[string]any) (*types.DistributeConfig, error) {
+	var option cfg.Option
+	if err := cfg.LoadConfigDocument(document, &option); err != nil {
+		return nil, err
+	}
+	if _, legacy := document["ioa"]; legacy {
+		return nil, fmt.Errorf("configuration ioa was removed; use extensions.%s", ioaclient.ConfigKey)
+	}
+	projection, _ := splitDocument(document, configurationProtoKeys)
+	value, err := cfg.LoadDistributeConfigDocument(projection)
 	if err != nil {
 		return nil, err
 	}
-	var document map[string]any
-	if err = yaml.Unmarshal(data, &document); err != nil {
-		return nil, err
-	}
-	fields, err := productSections(false).Normalize(document)
+	fields, err := defaultSections().Normalize(document)
 	if err != nil {
 		return nil, err
 	}
@@ -39,44 +136,63 @@ func parseProductConfig(data []byte) (*types.DistributeConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	value.Ioa = nil
-	if err = validateProductConfig(value); err != nil {
+	if err = validateConfig(value); err != nil {
 		return nil, err
+	}
+	if cfg.HasSingleProviderFields(&option) {
+		fileOption, e := (&cfg.Snapshot{Document: document, Sources: map[string]string{}}).FileOptions(defaultSections())
+		if e != nil {
+			return nil, e
+		}
+		value.Llm = cfg.LLMFromOption(fileOption)
 	}
 	cfg.NormalizeLLMConfig(value.Llm)
 	return value, nil
 }
-func marshalProductConfig(config *types.DistributeConfig) ([]byte, error) {
-	copy := proto.Clone(config).(*types.DistributeConfig)
-	fields := cfg.ValuesFromProto(copy.Extensions)[client.ConfigKey]
-	copy.Ioa = nil
-	delete(copy.Extensions, client.ConfigKey)
-	data, err := cfg.MarshalDistributeConfigYAML(copy)
+
+// marshalConfig writes only at the external file boundary.
+func marshalConfig(config *types.DistributeConfig, original []byte) ([]byte, error) {
+	own, err := ownConfig(original)
 	if err != nil {
 		return nil, err
 	}
-	var document map[string]any
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		return nil, err
-	}
-	if fields != nil {
-		document["ioa"] = fields
-	}
-	return yaml.Marshal(document)
+	return yaml.Marshal(configDocument(config, own))
 }
-func productConfigAPI() managementapi.ConfigOptions {
-	probes := probe.New()
-	for name, check := range map[string]probe.Check{"cyberhub": scannerprobe.Cyberhub, "recon": scannerprobe.Recon, "search": searchprobe.Check} {
-		if err := probes.Register(name, name, check); err != nil {
-			panic(err)
+
+func configDocument(config *types.DistributeConfig, own map[string]any) map[string]any {
+	document := cfg.DistributeConfigDocument(config)
+	dropNullValues(document)
+	mergeDocument(document, own)
+	return document
+}
+
+// Unset extension values surface as JSON nulls, which would write `token: null`
+// into an operator's config where a hand-written file simply omits the key.
+// Readers treat null, empty and absent alike, so dropping them changes nothing
+// but the file's readability.
+func dropNullValues(section map[string]any) {
+	for key, value := range section {
+		switch typed := value.(type) {
+		case nil:
+			delete(section, key)
+		case map[string]any:
+			dropNullValues(typed)
+		case []any:
+			for _, item := range typed {
+				if nested, ok := item.(map[string]any); ok {
+					dropNullValues(nested)
+				}
+			}
 		}
 	}
-	if err := probes.Register("ioa.client", "ioa", ioaprobe.Check); err != nil {
-		panic(err)
-	}
-	return managementapi.ConfigOptions{Probes: probes, Sections: productSections(false), Project: func(config *types.DistributeConfig, view *types.ConfigView) {
-		client.ProjectView(config, view)
-		if ext := view.Extensions[server.ConfigKey]; ext != nil && ext.Values != nil {
+}
+
+func configAPI() managementapi.ConfigOptions {
+	sections := defaultSections()
+	return managementapi.ConfigOptions{Sections: sections, Project: func(config *types.DistributeConfig, view *types.ConfigView) {
+		ioaclient.RedactView(view)
+		jev.ProjectView(view)
+		if ext := view.Extensions[ioaserver.ConfigKey]; ext != nil && ext.Values != nil {
 			value := ext.Values.Fields["url"].GetStringValue()
 			if u, err := url.Parse(value); err == nil {
 				u.User = nil
@@ -87,8 +203,8 @@ func productConfigAPI() managementapi.ConfigOptions {
 }
 
 // Restoring a masked URL keeps saved credentials only for the same endpoint.
-func preserveProductURLCredentials(incoming, current cfg.Values) {
-	for _, key := range []string{client.ConfigKey, server.ConfigKey} {
+func preserveURLCredentials(incoming, current cfg.Values) {
+	for _, key := range []string{ioaclient.ConfigKey, ioaserver.ConfigKey} {
 		fields := incoming[key]
 		if fields == nil {
 			continue

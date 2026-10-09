@@ -1,13 +1,15 @@
-# aiscan 外部接入 API
+# cyber 外部接入 API
 
-本文档描述外部程序集成 aiscan 时使用的两组 API。
+[文档首页](README.md) · 教程：[外部接入](integration.md) · 架构：[协议与数据](architecture.md#协议类型的归属)
+
+本文档描述外部程序集成 cyber 时使用的两组 API。
 
 | 功能组 | 传输 | 语义 |
 |--------|------|------|
 | Application WebSocket | 双向、长连接、二进制 protobuf | Session/Turn 生命周期和实时事件流 |
-| ConnectRPC | unary 请求/响应 | 会话历史、扫描、配置、Agent、系统状态和 SCO 管理 |
+| ConnectRPC | unary 请求/响应 | 会话历史、扫描、配置、Agent、系统状态和原始 Artifact 归档同步 |
 
-第三方语言的 protobuf 生成和接入流程见 [integration.md](integration.md)。Go 可运行示例见 [`examples/acp/README.md`](../examples/acp/README.md)。字段级自动生成文档见 [api/aop.md](api/aop.md) 和 [api/rpc.md](api/rpc.md)。
+第三方语言的 protobuf 生成和接入流程见 [integration.md](integration.md)。Go 可运行示例见 [`examples/acp/README.md`](../examples/acp/README.md)。字段级参考以 proto 源码为准，需要时按[生成字段文档](integration.md#23-生成字段文档)的步骤生成。
 
 ## 功能边界
 
@@ -25,7 +27,7 @@
 - 重置或删除 session
 - 提交、查询和取消扫描
 - 查询或更新配置
-- 查询 Agent、系统状态和 SCO 数据
+- 查询 Agent、系统状态和同步原始 Artifact 归档；规范化资产视图在浏览器生成
 
 `SessionService/ListEvents` 只返回已持久化历史，不替代 WebSocket `WatchEvents`。
 
@@ -45,12 +47,12 @@ Upgrade: websocket
 | `https://host` | `wss://host/api/aop/application/ws` |
 
 - 外部 client 使用 Bearer token。
-- 浏览器登录后也可以使用 `aiscan_session` cookie。
+- 浏览器登录后也可以使用 `cyber_session` cookie。
 - 鉴权失败时 upgrade 返回 HTTP 401。
-- `aiscan web` 未指定 `--token` 时会自动生成 access key，而不是关闭鉴权。
+- `cyber-web` 未指定 `--token` 时会自动生成 access key。
 - Application Endpoint 不需要握手消息。首个 envelope 如果包含 `AgentHello`，会返回 `WRONG_ENDPOINT`。
 
-每个 WebSocket message 必须是 BinaryMessage，内容为一个序列化的 `aop.Envelope`。文本 JSON frame 不属于 aiscan Application WebSocket wire format。
+每个 WebSocket message 必须是 BinaryMessage，内容为一个序列化的 `aop.Envelope`。文本 JSON frame 不属于 cyber Application WebSocket wire format。
 
 ### 2. Envelope
 
@@ -78,6 +80,8 @@ message, err := aop.Unwrap(envelope)
 ```
 
 其他语言使用 protobuf `Any.pack` / `unpack`。不要自行添加 namespace 字段；消息类型由 `Any.type_url` 决定。
+
+protobuf JSON 中 bytes 使用 base64，enum 使用符号名称，oneof 使用生成的 JSON 字段名。未知 `Any.type_url` 应保留，不能按 JSON shape 猜测类型；ConnectRPC 使用生成的客户端进行编码。
 
 ### 3. 请求关联和并发
 
@@ -179,7 +183,7 @@ Envelope{
 | `input` | 通常是 | 用户 `Message`；`continue_session=true` 时允许没有内容 |
 | `continue_session` | 否 | 继续已有 agent 上下文，不发布新的用户消息 |
 | `max_turns` | 否 | 本次执行允许的最大内部 Turn 数 |
-| `extensions` | 否 | AIScan 或其他 namespace 的请求扩展 |
+| `extensions` | 否 | Cyber 或其他 namespace 的请求扩展 |
 
 普通自然语言输入：
 
@@ -285,7 +289,7 @@ Event 公共字段：
 | `error` | `code`, `message`, `retryable` | 非终止或附加业务错误 |
 | `status` | `state` | 运行状态 |
 | `provider_frame` | provider 原始 frame | 仅在启用相关策略时出现 |
-| `extension` | `Any` | 产品自定义主 payload |
+| `extension` | `Any` | 应用自定义主 payload |
 
 #### MessageDelta
 
@@ -353,42 +357,15 @@ Envelope `id` 同时是幂等 ID：
 - 网络超时后重试原请求：复用原 `id`。
 - 新的用户操作：生成新的 `id`。
 
-### 12. Go WebSocket 示例的真实调用链
+### 12. Go WebSocket 示例
 
-[`examples/acp/client/main.go`](../examples/acp/client/main.go) 的核心调用顺序：
-
-```go
-client, err := Dial(ctx, serverURL, "", token)
-session, err := client.OpenSession(ctx, nodeID, title)
-events, err := client.Watch(session.GetId(), "")
-receipt, err := client.RunTurn(ctx, session.GetId(), prompt)
-
-for event := range events {
-    if printEvent(event) {
-        break
-    }
-}
-```
-
-其中：
-
-- `Dial` 默认路径为 `/api/aop/application/ws`
-- `OpenSession` 检查 accepted/rejected outcome
-- `Watch` 使用独立 envelope ID 注册订阅 channel
-- `RunTurn` 返回 `TurnReceipt`，但不返回回答
-- `printEvent` 在 `turn_ended` 或 `session_ended` 时结束
-
-运行：
-
-```bash
-go run ./examples/acp/client --server http://127.0.0.1:8080 --token demo --node local -p "列出当前目录"
-```
+[Go 接入示例](../examples/acp/README.md#实时对话)提供服务准备与运行命令；[client.go](../examples/acp/client/client.go)实现请求关联和事件分发。客户端按 OpenSession → WatchEvents → RunTurn 发起对话，以 `turn_ended` 判断本轮完成。
 
 ## ConnectRPC API
 
 ### 1. 定位
 
-本节的 ConnectRPC 指 aiscan 的 unary 管理服务。它与 Application WebSocket 使用相同的 server base URL 和 access key，但解决不同的问题。
+本节的 ConnectRPC 指 cyber 的 unary 管理服务。它与 Application WebSocket 使用相同的 server base URL 和 access key，但解决不同的问题。
 
 > `AOPService.Connect` 是 Application 协议的双向流投影，不属于 unary 管理功能组。普通 Web/ACP client 应优先使用 `/api/aop/application/ws`；本节重点描述管理 RPC。
 
@@ -425,8 +402,8 @@ response, err := client.ListSessions(ctx, request)
 HTTP procedure 示例：
 
 ```text
-/aiscan.rpc.chat.SessionService/ListSessions
-/aiscan.rpc.chat.SessionService/ListEvents
+/cyber.rpc.chat.SessionService/ListSessions
+/cyber.rpc.chat.SessionService/ListEvents
 ```
 
 #### ScanService
@@ -437,7 +414,6 @@ HTTP procedure 示例：
 | `GetScan` | 查询扫描 |
 | `ListScans` | 查询扫描列表 |
 | `CancelScan` | 取消扫描 |
-| `GetScanReport` | 获取扫描报告 |
 
 #### ConfigService
 
@@ -462,18 +438,17 @@ HTTP procedure 示例：
 |--------|------|
 | `GetStatus` | 查询系统状态 |
 
-#### SCOService
+#### ArtifactService
 
 | Method | 用途 |
 |--------|------|
-| `ListNodes` | 查询 SCO nodes |
-| `GetNode` | 查询单个 SCO node |
-| `GetStats` | 查询 SCO 统计 |
-| `DeleteNodes` | 删除 SCO nodes |
-| `ImportNodes` | 导入结构化 nodes |
-| `ListArtifacts` | 查询支持的 artifact 类型 |
+| `SyncArtifacts` | 追加浏览器导入的原始 Artifact events，并按 cursor 读取归档事件 |
 
-完整字段见 [api/rpc.md](api/rpc.md)。
+`SyncArtifactsRequest` 只有 `after_cursor` 和可选的 `artifacts`；响应是
+`aop.EventDelivery` 列表。服务端固定按 100 条分页，不接收或返回 CSTX node、
+处理完成状态或额外 Artifact DTO。
+
+完整字段见 `proto/rpc/*.proto`。
 
 ### 4. Session 管理字段
 
@@ -522,118 +497,6 @@ HTTP procedure 示例：
 
 ### 6. Go ConnectRPC 示例
 
-[`examples/acp/connectrpc/main.go`](../examples/acp/connectrpc/main.go) 使用真实生成 client：
+[历史查询示例](../examples/acp/README.md#查询历史)提供 ListSessions、ListEvents 的运行命令；[完整实现](../examples/acp/connectrpc/main.go)使用生成的 client，以标准 protobuf JSON 输出响应。示例的本地验证入口见[测试说明](../examples/acp/README.md#验证)。
 
-```go
-client := rpc.NewSessionServiceClient(http.DefaultClient, serverURL)
-
-request := connect.NewRequest(&types.ListSessionsRequest{
-    Limit:         100,
-    IncludeClosed: true,
-})
-request.Header().Set("Authorization", "Bearer "+token)
-
-response, err := client.ListSessions(ctx, request)
-```
-
-查询 session 列表：
-
-```bash
-go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo
-```
-
-查询指定 session 的持久化事件：
-
-```bash
-go run ./examples/acp/connectrpc --server http://127.0.0.1:8080 --token demo --session <session-id>
-```
-
-示例以标准 protobuf JSON 输出 response，方便直接检查字段。
-
-## Protobuf 代码生成
-
-### 1. Schema 位置
-
-Application/AOP schema：
-
-```text
-web/frontend/cyber-ui/packages/aop/proto/aop/*.proto
-```
-
-ConnectRPC service 和 AIScan 类型：
-
-```text
-proto/rpc/*.proto
-proto/types/*.proto
-```
-
-自动生成的字段参考：
-
-- [api/aop.md](api/aop.md)
-- [api/rpc.md](api/rpc.md)
-
-### 2. 只生成 Application WebSocket 消息
-
-Application WebSocket 不需要生成 service client，只需要 protobuf messages：
-
-```bash
-protoc \
-  -I web/frontend/cyber-ui/packages/aop/proto \
-  --java_out=lite:<out-dir> \
-  web/frontend/cyber-ui/packages/aop/proto/aop/*.proto
-```
-
-Android Gradle 示例：
-
-```kotlin
-plugins { id("com.google.protobuf") version "0.9.4" }
-
-protobuf {
-    protoc { artifact = "com.google.protobuf:protoc:4.31.0" }
-    generateProtoTasks {
-        all().forEach { task ->
-            task.builtins { create("java") { option("lite") } }
-        }
-    }
-}
-
-dependencies {
-    implementation("com.google.protobuf:protobuf-javalite:4.31.0")
-}
-```
-
-proto 当前没有设置 `java_package` 和 `java_multiple_files`。直接生成时 Java 类默认按 proto 文件嵌套；vendor 到自己的 SDK 时可以添加符合项目规范的 Java options。
-
-### 3. 生成 ConnectRPC client
-
-ConnectRPC 除 protobuf message generator 外，还需要对应语言的 Connect client generator。生成时同时提供两个 include root：
-
-```text
--I web/frontend/cyber-ui/packages/aop/proto
--I proto
-```
-
-需要编译的入口是 `proto/rpc/*.proto`，其 imports 会引用 `proto/types` 和 AOP schema。
-
-仓库内 Go 代码统一通过：
-
-```bash
-go run ./cmd/gen
-```
-
-生成的 Go clients 位于 `pkg/rpc/*connect.go`。
-
-### 4. 编码注意事项
-
-- WebSocket 使用 binary protobuf Envelope。
-- ConnectRPC 默认使用 binary protobuf，也可以协商标准 protobuf JSON。
-- protobuf JSON 中 `bytes` 是 base64 字符串。
-- enum 使用符号名称。
-- oneof 使用生成的 JSON 字段名。
-- 未知 `Any.type_url` 应保留，不应按 JSON shape 猜测类型。
-
-## 验证
-
-```bash
-go test ./examples/acp/client ./examples/acp/connectrpc
-```
+protobuf 生成、语言运行库及字段文档生成步骤统一见[接入教程](integration.md#2-protobuf-代码生成)。

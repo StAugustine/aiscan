@@ -8,23 +8,24 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/chainreactors/aiscan/core/extension"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	toolnode "github.com/chainreactors/aiscan/pkg/node/tool"
+	"github.com/chainreactors/cyber/core/egress"
+	terminalext "github.com/chainreactors/cyber/exts/terminal"
 
-	"github.com/chainreactors/aiscan/pkg/toolset"
+	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	toolnode "github.com/chainreactors/cyber/pkg/node/tool"
+
+	"github.com/chainreactors/cyber/core/hooks"
 )
 
-func newRegistry(workDir string) (tool.Executor, *commands.BashTool, *extension.Set) {
-	bash := commands.NewBashTool(workDir, 300, nil)
-	registry := toolset.NewRegistry(nil)
-	if err := registry.Register("terminal", bash); err != nil {
-		panic(err)
-	}
+func newRegistry(workDir string) (coretool.Executor, *extension.Set) {
+	registry := coretool.NewToolRegistry()
 	set, err := extension.New(
-		extension.Entry{ID: "tool-registry", Extension: registry},
+		extension.Provided[*hooks.Registry](hooks.New()),
+		extension.Provided[egress.Endpoint](egress.Disabled()),
+		coretool.NewCommandRegistry(), registry,
+		terminalext.New(terminalext.Config{Directory: workDir, Timeout: 300}),
 	)
 	if err != nil {
 		panic(err)
@@ -33,13 +34,10 @@ func newRegistry(workDir string) (tool.Executor, *commands.BashTool, *extension.
 		_ = set.Close(context.Background())
 		panic(err)
 	}
-	return registry, bash, set
+	return registry, set
 }
 
 func main() {
-	if code, handled := commands.RunShellCommandProxy(); handled {
-		os.Exit(code)
-	}
 	var (
 		serverURL string
 		token     string
@@ -61,8 +59,7 @@ func main() {
 	logger := telemetry.GlobalLogger(telemetry.LogConfig{Output: os.Stderr})
 
 	workDir, _ := os.Getwd()
-	tools, bash, set := newRegistry(workDir)
-	defer bash.Close()
+	tools, set := newRegistry(workDir)
 	defer set.Close(context.Background())
 
 	logger.Infof("rmcp tools ready: bash (workdir %s)", workDir)

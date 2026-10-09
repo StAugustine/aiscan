@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent/inbox"
-	"github.com/chainreactors/aiscan/core/telemetry"
+	"github.com/chainreactors/cyber/agent/inbox"
+	"github.com/chainreactors/cyber/core/telemetry"
 )
 
 type LoopMode int
@@ -86,18 +86,6 @@ func NewLoopScheduler(ctx context.Context, ib inbox.Inbox, logger telemetry.Logg
 		log:         logger,
 		minInterval: DefaultMinLoopInterval,
 	}
-}
-
-func (s *LoopScheduler) SetLogger(logger telemetry.Logger) {
-	if s == nil {
-		return
-	}
-	if logger == nil {
-		logger = telemetry.NopLogger()
-	}
-	s.mu.Lock()
-	s.log = logger
-	s.mu.Unlock()
 }
 
 func (s *LoopScheduler) Add(entry LoopEntry) (string, error) {

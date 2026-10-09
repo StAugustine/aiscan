@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 // run is a small harness: parse args, execute against a real server, capture
@@ -31,9 +31,9 @@ func run(t *testing.T, args []string, env, workDir string) (stdout, stderr strin
 	}
 	var out, errb strings.Builder
 	c := New()
-	var egress commands.Egress
+	var egress coretool.Egress
 	if env != "" {
-		egress = commands.ResolveEgress([]string{env}, c.Proxy)
+		egress = coretool.ResolveEgress([]string{env}, c.Proxy)
 	}
 	err = c.do(context.Background(), req, egress, workDir, &out, &errb)
 	return out.String(), errb.String(), err
@@ -54,7 +54,7 @@ func TestGetWritesBody(t *testing.T) {
 	}
 }
 
-func TestResponseEmitsAIScanArtifact(t *testing.T) {
+func TestResponseEmitsSprayArtifact(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("hello"))
@@ -63,25 +63,25 @@ func TestResponseEmitsAIScanArtifact(t *testing.T) {
 
 	bus := coreevents.New()
 	var artifact *toolpb.Artifact
-	bus.Observe(coreevents.ObserverFunc(func(event *aop.Event) {
+	bus.Observe(func(event *aop.Event) {
 		decoded := new(toolpb.Artifact)
 		if extension := event.GetExtension(); extension != nil && extension.UnmarshalTo(decoded) == nil {
 			artifact = decoded
 		}
-	}))
+	})
 	req, err := Parse([]string{srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr strings.Builder
-	if err := New().WithEvents(bus).do(context.Background(), req, commands.Egress{}, "", &stdout, &stderr); err != nil {
+	if err := New().WithEvents(bus).do(context.Background(), req, coretool.Egress{}, "", &stdout, &stderr); err != nil {
 		t.Fatal(err)
 	}
 	if artifact == nil {
 		t.Fatal("response did not emit an artifact")
 	}
 	expectedURL := srv.URL + "/"
-	if artifact.Tool != "aiscan" || artifact.Kind != toolpb.ArtifactKindWeb || artifact.Target != expectedURL {
+	if artifact.Tool != "spray" || artifact.Kind != toolpb.ArtifactKindWeb || artifact.Target != expectedURL {
 		t.Fatalf("artifact metadata = %+v", artifact)
 	}
 	var summary struct {
@@ -224,11 +224,11 @@ func TestFollowRedirect(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, _, err := run(t, []string{"-L", srv.URL + "/a"}, "", "")
+	out, _, err := run(t, []string{"-L", "-w", " %{http_code} %{num_redirects} %{url_effective}", srv.URL + "/a"}, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "final" {
+	if out != "final 200 1 "+srv.URL+"/b" {
 		t.Fatalf("expected followed body, got %q", out)
 	}
 }
@@ -782,15 +782,18 @@ func TestResolvePreservesTLSServerNameAndHost(t *testing.T) {
 	}
 }
 
-func TestResolveRejectsActiveProxy(t *testing.T) {
+func TestResolveReportsProxyConnectDenial(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte("proxy"))
+		if r.Method != http.MethodConnect || r.Host != "127.0.0.1:80" {
+			t.Errorf("unexpected proxy request: %s %s", r.Method, r.Host)
+		}
+		http.Error(w, "private-proxy-detail", http.StatusProxyAuthRequired)
 	}))
 	defer srv.Close()
 	if _, _, err := run(t, []string{
 		"--resolve", "example.test:80:127.0.0.1", "-x", srv.URL,
 		"http://example.test/",
-	}, "", ""); err == nil || !strings.Contains(err.Error(), "--resolve cannot be used with a proxy") {
+	}, "", ""); err == nil || !strings.Contains(err.Error(), "HTTP 407") || strings.Contains(err.Error(), "private-proxy-detail") {
 		t.Fatalf("resolve with proxy error = %v", err)
 	}
 }

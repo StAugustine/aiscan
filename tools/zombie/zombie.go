@@ -8,10 +8,10 @@ import (
 	"os"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"github.com/chainreactors/proxyclient"
 	sdkzombie "github.com/chainreactors/sdk/zombie"
 	zombiecore "github.com/chainreactors/zombie/core"
@@ -51,12 +51,25 @@ func (c *Command) Usage() string {
 	return toolargs.GoFlagsHelp(c.Name(), &options)
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) QuickReference() string {
+	return `### zombie — weak credential checks on discovered services (authorized checks only)
+  -i <ip> -s <service>          Check one service on an IP
+  -I <file> / -c <cidr>         Target file, or a CIDR range
+  -u <user> / -U <file>         Usernames, or a username list file
+  -p <pwd> / -P <file>          Passwords, or a password list file
+  -a user::pass / -A <file>     Explicit credentials, or a credential list file
+  -j <file> / -g <file>         Reuse gogo or JSON results as input (not output)
+  --weakpass                    Apply the built-in common weak-password rule
+  --force-continue              Keep testing after a first success
+  NOTE: -f/-O write results to a file (-O json for JSON Lines); -o sets the stdout format.`
+}
+
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("zombie", &err)
 	args := execution.Args
-	args = c.resolveRelativePaths(args)
+	args = toolargs.ResolveRelativePaths(args, zombieFileFlags, c.WorkDir)
 	args = ensureOutputDrain(args)
-	egress := commands.ResolveExecutionEgress(execution, c.Proxy)
+	egress := coretool.ResolveExecutionEgress(execution, c.Proxy)
 	proxyDial, err := proxyDialFor(egress.ProxyURL)
 	if err != nil {
 		return nil, err
@@ -115,8 +128,4 @@ var zombieFileFlags = map[string]bool{
 	"-P": true, "--PWD": true, "-A": true, "--AUTH": true,
 	"-j": true, "--json": true, "-g": true, "--gogo": true,
 	"-f": true, "--file": true,
-}
-
-func (c *Command) resolveRelativePaths(args []string) []string {
-	return toolargs.ResolveRelativePaths(args, zombieFileFlags, c.WorkDir)
 }

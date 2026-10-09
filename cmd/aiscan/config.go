@@ -1,0 +1,97 @@
+package main
+
+import (
+	"os"
+	"strings"
+
+	"github.com/chainreactors/cyber/agent/provider"
+	"github.com/chainreactors/cyber/core/telemetry"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	searchext "github.com/chainreactors/cyber/exts/search"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	profilepkg "github.com/chainreactors/cyber/pkg/profile"
+	"github.com/chainreactors/cyber/tools/resources"
+	"github.com/chainreactors/cyber/tools/scan/engine"
+)
+
+// appConfig selects the reusable capability packs in the reference
+// distribution. Runtime capabilities are owned by their extensions.
+type appConfig struct {
+	Resolved          *cfg.Resolved
+	DataDir           string
+	Provider          provider.StartupConfig
+	Scanner           scannerext.Config
+	TavilyKeys        string
+	PlaywrightSession string
+	OptionalTools     []string
+	MitmCapture       *bool
+	TrafficStorage    cfg.TrafficOptions
+	Logger            telemetry.Logger
+	CLISkillPaths     []string
+	SkipEngines       bool
+}
+
+func appConfigFromOption(option *cfg.Option, providerMode profilepkg.ProviderMode, logger telemetry.Logger) appConfig {
+	dataDir := cfg.ResolveDataDir(option.DataDir)
+	// Sections were resolved and validated during startup; a read error here is
+	// structurally impossible, so a zero section is the safe fallback.
+	hub, _ := scannerext.ReadCyberhub(option)
+	recon, _ := scannerext.ReadRecon(option)
+	searchKeys, _ := searchext.ReadKeys(option)
+	scanOptions, _ := scannerext.ReadScan(option)
+	return appConfig{
+		DataDir: dataDir, Resolved: option.Resolved,
+		Provider: provider.StartupConfig{
+			Mode: providerMode, Config: cfg.ProviderConfig(option),
+			Fallbacks: cfg.FallbackProviderConfigs(option),
+		},
+		Scanner: scannerext.Config{
+			AgentName: "cyber",
+			Verify:    scanOptions.Verify,
+			Resources: resources.Options{
+				CyberhubURL: hub.URL, APIKey: hub.Key,
+				Mode: hub.Mode, Proxy: hub.Proxy,
+			},
+			Recon: engine.ReconOptions{
+				FofaKey: recon.FofaKey, HunterAPIKey: recon.HunterAPIKey, IngressProxy: recon.Proxy,
+				Limit: intValue(recon.Limit), Credentials: scannerext.UncoverCredentials(envLookup(option)),
+			},
+		},
+		TavilyKeys:        tavilyKeys(recon.TavilyKey, searchKeys),
+		PlaywrightSession: option.PlaywrightSession, OptionalTools: option.Tools,
+		MitmCapture: cloneBool(hub.Mitm), TrafficStorage: option.TrafficOptions,
+		Logger: logger, CLISkillPaths: cfg.LocalSkillPaths(option.Skills),
+	}
+}
+
+func envLookup(option *cfg.Option) func(string) (string, bool) {
+	if option.Context != nil && option.Context.LookupEnv != nil {
+		return option.Context.LookupEnv
+	}
+	return os.LookupEnv
+}
+
+func tavilyKeys(primary string, fallbacks ...string) string {
+	keys := make([]string, 0, len(fallbacks)+1)
+	for _, raw := range append([]string{primary}, fallbacks...) {
+		if raw = strings.TrimSpace(raw); raw != "" {
+			keys = append(keys, raw)
+		}
+	}
+	return strings.Join(keys, ",")
+}
+
+func intValue(value *int) int {
+	if value != nil {
+		return *value
+	}
+	return 0
+}
+
+func cloneBool(source *bool) *bool {
+	if source == nil {
+		return nil
+	}
+	value := *source
+	return &value
+}

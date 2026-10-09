@@ -3,20 +3,12 @@ package engine
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
 	sdktypes "github.com/chainreactors/sdk/pkg/types"
 	"github.com/chainreactors/sdk/spray"
 	"github.com/chainreactors/utils/parsers"
 )
-
-// spray's runner construction mutates shared logger/option state inside the
-// upstream engine. A scan may schedule check, crawl and plugin capabilities in
-// parallel against the same engine, so keep one invocation active at a time
-// until its result stream is fully drained.
-var sprayExecutionMu sync.Mutex
 
 type SprayCheckOptions struct {
 	URLs          []string
@@ -40,6 +32,7 @@ type SprayCheckOptions struct {
 	MaxDuration   time.Duration
 	Proxy         string
 	Debug         bool
+	Quiet         bool
 	OnStats       func(sdktypes.Stats)
 }
 
@@ -47,7 +40,17 @@ func SprayCheckStream(ctx context.Context, eng *spray.Engine, opts SprayCheckOpt
 	if eng == nil {
 		return nil, fmt.Errorf("spray engine is not available")
 	}
-	sprayExecutionMu.Lock()
+
+	release, err := AcquireSpray(ctx)
+	if err != nil {
+		return nil, err
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
 	runCtx, cancel := sprayInvocationContext(ctx, opts)
 	sprayCtx := spray.NewContext().
 		WithContext(runCtx).
@@ -55,50 +58,25 @@ func SprayCheckStream(ctx context.Context, eng *spray.Engine, opts SprayCheckOpt
 		WithStatsHandler(opts.OnStats)
 
 	var resultCh <-chan sdktypes.Result
-	var err error
 	if needsBruteMode(opts) {
-		resultCh, err = eng.Execute(sprayCtx, spray.NewBruteTasks(opts.URLs, crawlSeedWordlist(opts)))
+		// BruteTask.Validate requires a seed; spray loads requested dictionaries itself.
+		resultCh, err = eng.Execute(sprayCtx, spray.NewBruteTasks(opts.URLs, []string{"/"}))
 	} else {
 		resultCh, err = eng.Execute(sprayCtx, spray.NewCheckTask(opts.URLs))
 	}
 	if err != nil {
 		cancel()
-		sprayExecutionMu.Unlock()
 		return nil, err
 	}
 
-	out := make(chan *parsers.SprayResult)
-	go func() {
-		defer telemetry.SDKGoRecover("spray")
-		defer sprayExecutionMu.Unlock()
-		defer cancel()
-		defer close(out)
-		for {
-			var result sdktypes.Result
-			var ok bool
-			select {
-			case result, ok = <-resultCh:
-				if !ok {
-					return
-				}
-			case <-runCtx.Done():
-				return
-			}
-			if result == nil || !result.Success() {
-				continue
-			}
-			sprayResult, ok := result.Data().(*parsers.SprayResult)
-			if !ok || sprayResult == nil {
-				continue
-			}
-			select {
-			case out <- sprayResult:
-			case <-runCtx.Done():
-				return
-			}
+	transferred = true
+	return forwardResults(runCtx, resultCh, func(result sdktypes.Result) (*parsers.SprayResult, bool) {
+		if result == nil || !result.Success() {
+			return nil, false
 		}
-	}()
-	return out, nil
+		value, ok := result.Data().(*parsers.SprayResult)
+		return value, ok && value != nil
+	}, func() { cancel(); release() }), nil
 }
 
 func sprayInvocationContext(parent context.Context, opts SprayCheckOptions) (context.Context, context.CancelFunc) {
@@ -136,11 +114,11 @@ func defaultSprayInvocationTimeout(opts SprayCheckOptions) time.Duration {
 func buildSprayOption(opts SprayCheckOptions) *spray.Option {
 	sprayOpt := spray.NewDefaultOption()
 	coreOpt := sprayOpt.Option
-	// The SDK configures its shared logger once when the engine is initialized,
-	// and scan --debug configures it before pipeline workers start. Keeping the
-	// per-run Quiet flag enabled makes upstream NewRunner call SetQuiet while
-	// other engines are logging, which races on the shared logger.
-	coreOpt.Quiet = false
+	// The SDK configures its shared logger once when the engine is initialized.
+	// JSON mode opts into quiet per-run output so progress banners cannot corrupt
+	// the command's JSONL stdout contract; ordinary terminal mode keeps the
+	// existing progress output.
+	coreOpt.Quiet = opts.Quiet
 	coreOpt.Threads = opts.Threads
 	coreOpt.Timeout = opts.Timeout
 	coreOpt.Host = opts.Host
@@ -174,10 +152,21 @@ func needsBruteMode(opts SprayCheckOptions) bool {
 	return opts.Crawl || opts.DefaultDict || len(opts.Dictionaries) > 0 || opts.Word != ""
 }
 
-// crawlSeedWordlist returns a minimal seed wordlist so the brute runner's
-// initial request triggers response-body URL extraction by the crawl plugin.
-// When dictionaries/word/defaultDict are set, spray's runner will load them
-// internally, but BruteTask.Validate still requires a non-empty wordlist.
-func crawlSeedWordlist(opts SprayCheckOptions) []string {
-	return []string{"/"}
+// Spray's native parser and SDK runner both mutate upstream global options,
+// logging and resource providers. Their whole invocations share this gate.
+var sprayExecution = make(chan struct{}, 1)
+
+// AcquireSpray admits one native or SDK invocation. Cancellation may stop
+// waiting for admission; an admitted caller releases only after upstream drains.
+func AcquireSpray(ctx context.Context) (func(), error) {
+	select {
+	case sprayExecution <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		<-sprayExecution
+		return nil, err
+	}
+	return func() { <-sprayExecution }, nil
 }

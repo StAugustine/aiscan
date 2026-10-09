@@ -1,51 +1,23 @@
-import { Activity, Bot, CheckCircle2 } from 'lucide-react'
+import { Bot, FileSearch } from 'lucide-react'
 import { registerTimelineRenderer } from '@/viewer'
-import type { SCONode } from '../api'
-import ScanProgressInline from '../components/chat/ScanProgressInline'
+import i18n from '../i18n'
 import ScanSummaryCard from '../components/chat/ScanSummaryCard'
 
 export function registerChatExtensions() {
-  registerTimelineRenderer('scan_started', {
-    renderer: ({ item, context }) => {
-      const scanResults = context.scanResults as Map<string, SCONode[]> | undefined
-      return (
-        <ScanProgressInline
-          scanID={item.data.scanID as string}
-          lines={item.data.lines as string[] ?? []}
-          complete={scanResults?.has(item.data.scanID as string)}
-        />
-      )
-    },
-    mark: {
-      label: 'Scan',
-      icon: Activity,
-      dotClass: 'border-blue-400 bg-blue-400',
-    },
-  })
-
   registerTimelineRenderer('scan_complete', {
-    renderer: ({ item, context }) => {
+    renderer: ({ item }) => {
       const scanID = item.data.scanID as string
-      // The hub persists a completed scan as SCO nodes keyed by scan_id; a live
-      // scan_complete event carries them inline, a card rebuilt from a persisted
-      // marker (page reload / session switch) falls back to the scanResults map
-      // the session loads from its scan_ids. Until that map resolves the nodes
-      // are absent — render nothing rather than an empty card; the row
-      // re-renders and the card appears once the map fills.
-      const scanResults = context.scanResults as Map<string, SCONode[]> | undefined
-      const nodes = (item.data.nodes as SCONode[]) ?? scanResults?.get(scanID)
-      if (!nodes) return null
+      // Render the status even while the browser is rebuilding archived results.
       return (
         <ScanSummaryCard
           scanID={scanID}
-          nodes={nodes}
         />
       )
     },
     mark: {
-      label: 'Complete',
-      icon: CheckCircle2,
-      dotClass: 'border-emerald-400 bg-emerald-400',
+      label: () => i18n.t('scan:results'),
+      icon: FileSearch,
+      dotClass: 'border-muted-foreground bg-muted',
     },
   })
 
@@ -55,13 +27,13 @@ export function registerChatExtensions() {
         <div className="h-px flex-1 bg-border" />
         <span className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
           <Bot className="h-3 w-3" />
-          {(item.data.agentName as string) || 'Agent'} joined
+          {i18n.t('chat:agentJoined', { name: (item.data.agentName as string) || i18n.t('chat:agent') })}
         </span>
         <div className="h-px flex-1 bg-border" />
       </div>
     ),
     mark: {
-      label: 'Agent',
+      label: () => i18n.t('chat:agent'),
       icon: Bot,
       dotClass: 'border-primary bg-primary',
     },

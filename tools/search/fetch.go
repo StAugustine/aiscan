@@ -15,9 +15,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/truncate"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/core/truncate"
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 	maxFetchBody   = truncate.MaxFetchBody
 	maxURLLength   = 2000
 	maxRedirects   = 10
-	fetchUserAgent = "Mozilla/5.0 (compatible; aiscan/1.0; +https://github.com/chainreactors/aiscan)"
+	fetchUserAgent = "Mozilla/5.0 (compatible; cyber/1.0; +https://github.com/chainreactors/cyber-harness)"
 
 	cacheTTL      = 15 * time.Minute
 	maxCacheBytes = 50 * 1024 * 1024
@@ -204,7 +204,7 @@ func fetchClientForProxy(proxy, caPath string) (*http.Client, error) {
 
 func (c *FetchCommand) ClearCache() { c.cache.Clear() }
 
-func (c *FetchCommand) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *FetchCommand) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("fetch", &err)
 	args := execution.Args
 	rawURL, extract, err := parseFetchArgs(args)
@@ -222,14 +222,14 @@ func (c *FetchCommand) Run(ctx context.Context, execution *commands.Execution) (
 
 	if cached, ok := c.cache.Get(normalizedURL); ok {
 		if cached.binary {
-			fmt.Fprint(execution.Stdout, formatBinaryCacheOutput(normalizedURL, cached))
+			fmt.Fprint(execution.Stdout, formatBinaryOutput(normalizedURL, cached))
 			return nil, nil
 		}
 		fmt.Fprint(execution.Stdout, formatFetchOutput(normalizedURL, cached, extract))
 		return nil, nil
 	}
 
-	egress := commands.ResolveExecutionEgress(execution, c.proxy)
+	egress := coretool.ResolveExecutionEgress(execution, c.proxy)
 	client, err := fetchClientForProxy(egress.ProxyURL, egress.CAPath)
 	if err != nil {
 		return nil, err
@@ -255,7 +255,7 @@ func (c *FetchCommand) Run(ctx context.Context, execution *commands.Execution) (
 			fetchedAt:   time.Now(),
 		}
 		c.cache.Set(normalizedURL, entry)
-		fmt.Fprint(execution.Stdout, formatBinaryCacheOutput(normalizedURL, entry))
+		fmt.Fprint(execution.Stdout, formatBinaryOutput(normalizedURL, entry))
 		return nil, nil
 	}
 
@@ -492,24 +492,15 @@ func formatFetchOutput(fetchedURL string, entry *cacheEntry, extract string) str
 	return sb.String()
 }
 
-func formatBinaryOutput(fetchedURL string, result *fetchResult) string {
+func formatBinaryOutput(fetchedURL string, entry *cacheEntry) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Fetched: %s\n", fetchedURL))
-	sb.WriteString(fmt.Sprintf("Status: %d %s\n", result.code, result.codeText))
-	sb.WriteString(fmt.Sprintf("Content-Type: %s\n", result.contentType))
-	sb.WriteString(fmt.Sprintf("Size: %d bytes\n", result.bytes))
+	sb.WriteString(fmt.Sprintf("Status: %d %s\n", entry.code, entry.codeText))
+	sb.WriteString(fmt.Sprintf("Content-Type: %s\n", entry.contentType))
+	sb.WriteString(fmt.Sprintf("Size: %d bytes\n", entry.bytes))
 	sb.WriteString("---\n\n")
-	sb.WriteString(fmt.Sprintf("[Binary content: %s, %d bytes. Download the file to inspect it.]", result.contentType, result.bytes))
+	sb.WriteString(fmt.Sprintf("[Binary content: %s, %d bytes. Download the file to inspect it.]", entry.contentType, entry.bytes))
 	return sb.String()
-}
-
-func formatBinaryCacheOutput(fetchedURL string, entry *cacheEntry) string {
-	return formatBinaryOutput(fetchedURL, &fetchResult{
-		contentType: entry.contentType,
-		bytes:       entry.bytes,
-		code:        entry.code,
-		codeText:    entry.codeText,
-	})
 }
 
 func binaryCacheEntrySize(result *fetchResult) int {

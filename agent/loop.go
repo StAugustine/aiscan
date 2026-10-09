@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"sort"
@@ -10,14 +11,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent/inbox"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/operation"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/core/truncate"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent/inbox"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/operation"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/core/truncate"
+	types "github.com/chainreactors/cyber/core/types"
+	"google.golang.org/protobuf/proto"
 )
 
 func requireProvider(cfg Config) error {
@@ -27,7 +29,7 @@ func requireProvider(cfg Config) error {
 	return nil
 }
 
-// StandardLoop is AIScan's built-in provider/tool reasoning loop. It has no
+// StandardLoop is Cyber's built-in provider/tool reasoning loop. It has no
 // mutable lifecycle and can be selected explicitly by any profile or session.
 type StandardLoop struct{}
 
@@ -36,12 +38,13 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 		return nil, err
 	}
 	if cfg.Tools == nil {
-		cfg.Tools = tool.EmptyExecutor()
+		cfg.Tools = coretool.EmptyExecutor()
 	}
 
 	transcript := newTranscript(cfg.Messages, 8)
 	turn := 0
 	overflowRecoveryAttempted := false
+	decisionPrepared := false
 
 	em := cfg.emitter
 	ib := cfg.Inbox
@@ -65,8 +68,17 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 		return result, err
 	}
 
-	initialPrompt, prepend := runStartHook(ctx, cfg, cfg.SystemPrompt)
+	systemPrompt := cfg.SystemPrompt
+	if cfg.SystemPromptFn != nil {
+		var err error
+		systemPrompt, err = cfg.SystemPromptFn(ctx, &cfg)
+		if err != nil {
+			return end(nil, fmt.Errorf("resolve system prompt: %w", err), StopReasonError)
+		}
+	}
+	initialPrompt, prepend := runStartHook(ctx, cfg, systemPrompt)
 	cfg.SystemPrompt = initialPrompt
+	cfg.SystemPromptFn = nil
 	transcript.append(prepend...)
 
 	for turn = 1; ; turn++ {
@@ -93,17 +105,25 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 				}
 			}
 			if len(inboxMsgs) > 0 {
+				decisionPrepared = false
 				cfg.Logger.Debugf("[turn %d] drained %d inbox message(s)", turn, len(inboxMsgs))
 			}
 			if ib.Closed() {
 				ib = nil
 			}
 		}
-		systemPrompt := cfg.SystemPrompt
-		if cfg.SystemPromptFn != nil {
-			systemPrompt = cfg.SystemPromptFn(&cfg)
+		if !decisionPrepared {
+			transcript.append(appendModelHook(ctx, cfg, transcript.messages, turn)...)
+			decisionPrepared = true
 		}
-		reqMessages := requestMessages(ctx, cfg, systemPrompt, transcript.messages, turn)
+		if err := ctx.Err(); err != nil {
+			return end(nil, err, StopReasonCanceled)
+		}
+		// A controller may have yielded to new input while executing tools.
+		if ib != nil && ib.Len() > 0 {
+			continue
+		}
+		reqMessages := requestMessages(ctx, cfg, cfg.SystemPrompt, transcript.messages, turn)
 		toolDefinitions := cfg.Tools.ToolDefinitions()
 		contextTokens := transcript.estimatedContextTokens(estimateRequestTokens(reqMessages, toolDefinitions))
 		if shouldCompactContext(contextTokens, cfg.ContextWindow, cfg.Compaction) {
@@ -111,16 +131,29 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 			if compactErr != nil {
 				cfg.Logger.Warnf("auto-compaction failed: %s", compactErr)
 			} else if compacted {
-				reqMessages = requestMessages(ctx, cfg, systemPrompt, transcript.messages, turn)
+				reqMessages = requestMessages(ctx, cfg, cfg.SystemPrompt, transcript.messages, turn)
 			}
 		}
 		cfg.Logger.Debugf("[turn %d] sending %d messages to LLM", turn, len(reqMessages))
 
-		assistant, usage, err := requestWithRetry(ctx, cfg, em, reqMessages, toolDefinitions, turn)
+		assistant, usage, err := requestWithInboxInterrupt(ctx, cfg, em, reqMessages, toolDefinitions, turn)
 		transcript.recordTurnUsage(turn, usage)
 		if err != nil {
 			if ctx.Err() != nil {
 				return end(nil, ctx.Err(), StopReasonCanceled)
+			}
+			if errors.Is(err, inbox.ErrInterrupted) {
+				transcript.completedTurns = turn
+				transcript.usageMessageCount = len(transcript.messages)
+				em.usage(usage, cfg.Model)
+				em.status("interrupted", nil)
+				if cfg.TokenBudget > 0 && transcript.totalUsage.GetTotalTokens() >= uint64(cfg.TokenBudget) {
+					return end(nil, fmt.Errorf("token budget exhausted after interruption"), StopReasonBudget)
+				}
+				if cfg.MaxTurns > 0 && turn >= cfg.MaxTurns {
+					return end(nil, nil, StopReasonStopped)
+				}
+				continue
 			}
 			if isContextOverflowError(err) && !overflowRecoveryAttempted {
 				compacted, compactErr := runAutoCompaction(ctx, cfg, em, transcript, "overflow", transcript.contextTokens)
@@ -163,6 +196,8 @@ func (StandardLoop) Run(ctx context.Context, cfg Config) (*Result, error) {
 			return end(result, result.Err, StopReasonBudget)
 		}
 		transcript.append(assistant.message)
+		afterModelHook(ctx, cfg, transcript.messages, turn)
+		decisionPrepared = false
 
 		if cfg.TokenBudget > 0 {
 			if transcript.totalUsage.GetTotalTokens() >= uint64(cfg.TokenBudget) {
@@ -368,6 +403,8 @@ func runAutoCompaction(ctx context.Context, cfg Config, em *aopEmitter, transcri
 		KeepRecentTokens: keepRecent,
 		ReserveTokens:    reserve,
 		MaxTokens:        cfg.MaxTokens,
+		PromptResolver:   cfg.PromptResolver,
+		Logger:           cfg.Logger,
 	}, transcript.messages)
 	if err != nil {
 		em.status(types.CompactStateError, &types.CompactDetail{Error: err.Error()})
@@ -413,9 +450,16 @@ func (t *transcript) recordTurnUsage(turn int, usage *aop.TokenUsage) {
 	t.totalUsage.InputTokens += usage.InputTokens
 	t.totalUsage.OutputTokens += usage.OutputTokens
 	t.totalUsage.TotalTokens += usage.TotalTokens
-	t.totalUsage.Detail["cache_read"] += usage.Detail["cache_read"]
-	t.totalUsage.Detail["cache_write"] += usage.Detail["cache_write"]
+	for key, value := range usage.Detail {
+		if key == "context_tokens" {
+			continue
+		}
+		t.totalUsage.Detail[key] += value
+	}
 	t.contextTokens = provider.UsageTotalTokens(usage)
+	if last, ok := usage.Detail["context_tokens"]; ok {
+		t.contextTokens = int(last)
+	}
 	// Provider usage covers the request plus the assistant response that will be
 	// appended immediately after this call.
 	t.usageMessageCount = len(t.messages) + 1
@@ -446,25 +490,21 @@ type toolBatchResult struct {
 
 func executeToolCalls(ctx context.Context, cfg Config, em *aopEmitter, assistant *assistantTurn, turn int) (toolBatchResult, error) {
 	toolCalls := assistant.toolCalls
-	slots := make([]toolCallSlot, len(toolCalls))
-
-	for i, tc := range toolCalls {
-		slots[i] = toolCallSlot{tc: tc, rejectedReason: assistant.rejected[i]}
-	}
+	results := make([]*aop.ToolResult, len(toolCalls))
 	for _, tc := range toolCalls {
 		em.toolCall(tc)
 	}
 
 	sem := make(chan struct{}, cfg.MaxParallelTools)
 	var wg sync.WaitGroup
-	for i := range slots {
-		if slots[i].rejectedReason != "" {
-			slots[i].startedAt = time.Now()
-			slots[i].result = toolExecution{
-				result: slots[i].rejectedReason, rawResult: slots[i].rejectedReason, isError: true,
-			}
-			cfg.Logger.Warnf("[turn %d] rejected unsafe tool call name=%s reason=%s",
-				turn, slots[i].tc.Name, slots[i].rejectedReason)
+	var interrupt <-chan struct{}
+	if cfg.Inbox != nil {
+		interrupt = cfg.Inbox.InterruptSignal()
+	}
+	for i, tc := range toolCalls {
+		if reason := assistant.rejected[i]; reason != "" {
+			results[i] = rejectedToolResult(tc, reason)
+			cfg.Logger.Warnf("[turn %d] rejected unsafe tool call name=%s reason=%s", turn, tc.Name, reason)
 			continue
 		}
 		wg.Add(1)
@@ -472,21 +512,28 @@ func executeToolCalls(ctx context.Context, cfg Config, em *aopEmitter, assistant
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			slots[i].startedAt = time.Now()
-			slots[i].result = runToolCallSafely(ctx, cfg, assistant.message, slots[i].tc, turn)
+			select {
+			case <-interrupt:
+				results[i] = rejectedToolResult(tc, "Tool was not executed because an interrupting Inbox message arrived.")
+				return
+			case <-ctx.Done():
+				results[i] = rejectedToolResult(tc, "Tool was not executed because the task was canceled.")
+				return
+			default:
+			}
+			results[i] = runToolCallSafely(ctx, cfg, tc, turn)
 		}()
 	}
 	wg.Wait()
 
 	// Emit results in original order.
-	messages := make([]*aop.Message, 0, len(slots))
+	messages := make([]*aop.Message, 0, len(results))
 	terminations := 0
-	for _, s := range slots {
-		em.toolResult(s.tc, s.result.eventContent(), s.result.fullResult, s.result.flow == ToolFlowTerminate, s.result.isError,
-			int(time.Since(s.startedAt).Milliseconds()))
-		cfg.Logger.Debugf("[turn %d] tool_result name=%s bytes=%d", turn, s.tc.Name, len(s.result.result))
-		messages = append(messages, s.result.toMessage(s.tc.Id))
-		if s.result.flow == ToolFlowTerminate {
+	for i, result := range results {
+		em.toolResult(result)
+		cfg.Logger.Debugf("[turn %d] tool_result name=%s bytes=%d", turn, toolCalls[i].Name, len(coretool.ResultText(result)))
+		messages = append(messages, modelToolResultMessage(result, cfg.MaxResultSize))
+		if result.Terminate {
 			terminations++
 		}
 	}
@@ -509,122 +556,75 @@ func isOutputLimitFinishReason(reason string) bool {
 	}
 }
 
-type toolCallSlot struct {
-	tc             *aop.ToolCall
-	rejectedReason string
-	result         toolExecution
-	startedAt      time.Time
+func rejectedToolResult(call *aop.ToolCall, message string) *aop.ToolResult {
+	result := coretool.ErrorResult(message)
+	result.CallId, result.Name = call.Id, call.Name
+	return result
 }
 
-type toolExecution struct {
-	result     string
-	rawResult  string
-	fullResult *tool.Result
-	isError    bool
-	err        error
-	flow       ToolFlowDecision
-}
-
-func runToolCallSafely(ctx context.Context, cfg Config, assistantMsg *aop.Message, tc *aop.ToolCall, turn int) (execution toolExecution) {
+func runToolCallSafely(ctx context.Context, cfg Config, tc *aop.ToolCall, turn int) (result *aop.ToolResult) {
+	startedAt := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			cfg.Logger.Errorf(
 				"tool call panic turn=%d name=%s call_id=%s session_id=%s panic=%v\n%s",
 				turn, tc.Name, tc.Id, cfg.SessionID, recovered, debug.Stack(),
 			)
-			message := fmt.Sprintf("tool %s failed unexpectedly (call_id=%s)", tc.Name, tc.Id)
-			execution = toolExecution{
-				result: message, rawResult: message, isError: true,
-				err: fmt.Errorf("tool call failed unexpectedly"),
-			}
+			result = rejectedToolResult(tc, fmt.Sprintf("tool %s failed unexpectedly (call_id=%s)", tc.Name, tc.Id))
+			result.DurationMs = uint64(time.Since(startedAt).Milliseconds())
 		}
+		if result == nil {
+			result = &aop.ToolResult{}
+		}
+		// Registry/remote executors already stamp their actual execution time.
+		// Only a bare executor needs metadata supplied at this boundary.
+		if result.CallId == "" {
+			result.DurationMs = uint64(time.Since(startedAt).Milliseconds())
+		}
+		result.CallId, result.Name = tc.Id, tc.Name
+		coretool.SanitizeResultUTF8(result)
 	}()
-	return runToolCall(ctx, cfg, assistantMsg, tc, turn)
-}
-
-func runToolCall(ctx context.Context, cfg Config, assistantMsg *aop.Message, tc *aop.ToolCall, turn int) toolExecution {
 	toolCtx := operation.ContextWithInvocation(ctx, operation.Invocation{
 		CallID: tc.Id, SessionID: cfg.SessionID, TurnID: cfg.TurnID, Emitter: cfg.AgentName,
 	})
-	toolCtx = withToolAgentConfig(toolCtx, cfg)
+	toolCtx = ContextWithToolAgentConfig(toolCtx, cfg)
 	toolCtx = inbox.ContextWithInbox(toolCtx, cfg.Inbox)
-	execution := toolExecution{}
-	if execution.result == "" && !execution.isError {
-		arguments := ""
-		if tc.Arguments != nil {
-			arguments = string(tc.Arguments.Data)
-		}
-		toolResult, execErr := cfg.Tools.ExecuteTool(toolCtx, tc.Name, arguments)
-		if toolResult == nil {
-			toolResult = &tool.Result{}
-		}
-		execution.result = tool.ResultText(toolResult)
-		execution.err = execErr
-		execution.isError = execErr != nil || toolResult.IsError
-		if execErr != nil {
-			execution.result = fmt.Sprintf("error: %s", execErr.Error())
-			cfg.Logger.Warnf("[turn %d] tool_error name=%s error=%q", turn, tc.Name, execErr.Error())
-		}
-		if toolResult.Terminate {
-			execution.flow = ToolFlowTerminate
-		}
-		if tool.ResultHasMedia(toolResult) || toolResult.Terminate {
-			execution.fullResult = toolResult
-		}
+	arguments := string(tc.GetArguments().GetData())
+	result, err := cfg.Tools.ExecuteTool(toolCtx, tc.Name, arguments)
+	if result == nil {
+		result = &aop.ToolResult{}
 	}
-	if execution.rawResult == "" {
-		execution.rawResult = execution.result
+	if err != nil {
+		result.IsError = true
+		if len(result.Output) == 0 {
+			result.Output = []*aop.Content{aop.Text(err.Error())}
+		}
+		cfg.Logger.Warnf("[turn %d] tool_error name=%s error=%q", turn, tc.Name, err.Error())
 	}
-	if tr := truncate.Head(execution.result, truncate.Options{MaxBytes: cfg.MaxResultSize}); tr.Truncated {
-		execution.result = tr.Content + fmt.Sprintf(
+	return result
+}
+
+// The event keeps the canonical result. Only the model-facing projection is
+// bounded, and its media and terminal flags remain intact.
+func modelToolResultMessage(result *aop.ToolResult, maxBytes int) *aop.Message {
+	if tr := truncate.Head(coretool.ResultText(result), truncate.Options{MaxBytes: maxBytes}); tr.Truncated {
+		result = proto.CloneOf(result)
+		preview := tr.Content + fmt.Sprintf(
 			"\n\n[truncated: showing %d/%d lines (%s of %s). Refine your query or use filter/parse tools to access specific parts.]",
 			tr.OutputLines, tr.TotalLines, truncate.FormatSize(tr.OutputBytes), truncate.FormatSize(tr.TotalBytes))
-	}
-	return execution
-}
-
-func (e toolExecution) eventContent() []*aop.Content {
-	content := []*aop.Content{aop.Text(e.eventResultText())}
-	if e.fullResult == nil {
-		return content
-	}
-	for _, block := range e.fullResult.Output {
-		media := block.GetMedia()
-		if media == nil || media.Resource == nil {
-			continue
-		}
-		content = append(content, block)
-	}
-	return content
-}
-
-func (e toolExecution) eventResultText() string {
-	if e.rawResult != "" {
-		return e.rawResult
-	}
-	return e.result
-}
-
-// toMessage converts the execution into the tool-role message appended to the
-// transcript. Image outputs ride along as media parts; the result text is
-// always present so text-only providers keep working.
-func (e toolExecution) toMessage(toolCallID string) *aop.Message {
-	result := &aop.ToolResult{
-		CallId:    toolCallID,
-		IsError:   e.isError,
-		Terminate: e.flow == ToolFlowTerminate,
-	}
-	if e.fullResult != nil && tool.ResultHasImages(e.fullResult) {
-		for _, block := range e.fullResult.Output {
-			if text := block.GetText(); text != nil {
-				result.Output = append(result.Output, aop.Text(text.Text))
-			}
-			if media := block.GetMedia(); media != nil && media.Kind == "image" && media.Resource != nil {
-				result.Output = append(result.Output, block)
+		output := make([]*aop.Content, 0, len(result.Output))
+		addedText := false
+		for _, block := range result.Output {
+			if block.GetText() != nil {
+				if !addedText {
+					output = append(output, aop.Text(preview))
+					addedText = true
+				}
+			} else {
+				output = append(output, block)
 			}
 		}
-	} else {
-		result.Output = []*aop.Content{aop.Text(e.result)}
+		result.Output = output
 	}
 	return &aop.Message{Role: "tool", Content: []*aop.Content{{Value: &aop.Content_ToolResult{ToolResult: result}}}}
 }
@@ -669,10 +669,11 @@ func logUsage(logger telemetry.Logger, usage *aop.TokenUsage) {
 
 // messageBuilder accumulates streamed deltas into one assistant message.
 type messageBuilder struct {
-	role      string
-	content   strings.Builder
-	reasoning strings.Builder
-	toolCalls map[int]*streamedToolCall
+	role         string
+	content      strings.Builder
+	reasoning    strings.Builder
+	hasReasoning bool
+	toolCalls    map[int]*streamedToolCall
 }
 
 type streamedToolCall struct {
@@ -698,6 +699,7 @@ func (b *messageBuilder) Apply(event ChatCompletionStreamEvent) {
 		case *aop.MessageDelta_Text:
 			b.content.WriteString(value.Text)
 		case *aop.MessageDelta_Reasoning:
+			b.hasReasoning = true
 			b.reasoning.WriteString(value.Reasoning)
 		}
 	}
@@ -722,8 +724,8 @@ func (b *messageBuilder) Apply(event ChatCompletionStreamEvent) {
 
 func (b *messageBuilder) Message() *aop.Message {
 	msg := &aop.Message{Role: b.role}
-	if reasoning := b.reasoning.String(); reasoning != "" {
-		msg.Content = append(msg.Content, aop.Reasoning(reasoning))
+	if b.hasReasoning {
+		msg.Content = append(msg.Content, aop.Reasoning(b.reasoning.String()))
 	}
 	if content := b.content.String(); content != "" {
 		msg.Content = append(msg.Content, aop.Text(content))
@@ -752,17 +754,4 @@ func (b *messageBuilder) Message() *aop.Message {
 		}
 	}
 	return msg
-}
-
-// decodeToolArguments renders a tool call's arguments as a JSON value for
-// event payloads.
-func decodeToolArguments(call *aop.ToolCall) any {
-	if call == nil || call.Arguments == nil || len(call.Arguments.Data) == 0 {
-		return map[string]any{}
-	}
-	var m map[string]any
-	if err := json.Unmarshal(call.Arguments.Data, &m); err == nil {
-		return m
-	}
-	return string(call.Arguments.Data)
 }

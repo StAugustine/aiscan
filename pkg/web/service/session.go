@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	filepb "github.com/chainreactors/aiscan/aop/file"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
+	aop "github.com/chainreactors/cyber/aop"
+	filepb "github.com/chainreactors/cyber/aop/file"
+	managementapi "github.com/chainreactors/cyber/pkg/web/api"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -52,10 +52,10 @@ func (s *Service) OpenAgentSession(ctx context.Context, requestID string, reques
 	defer timer.Stop()
 	select {
 	case result, ok := <-resultCh:
-		if ok && result.Err == "" {
+		if ok && taskError(result) == nil {
 			return nil
 		}
-		message := result.Err
+		message := taskError(result).GetMessage()
 		if message == "" {
 			message = "node disconnected while opening session"
 		}
@@ -82,10 +82,10 @@ func (s *Service) CloseAgentSession(ctx context.Context, requestID, nodeID strin
 	defer timer.Stop()
 	select {
 	case result, ok := <-resultCh:
-		if ok && result.Err == "" {
+		if ok && taskError(result) == nil {
 			return true, nil
 		}
-		message := result.Err
+		message := taskError(result).GetMessage()
 		if message == "" {
 			message = "node disconnected while closing session"
 		}
@@ -115,24 +115,16 @@ func (s *Service) TaskSession(taskID string) (string, bool) {
 	return sid, ok
 }
 
-func (s *Service) registerSessionTask(taskID, sessionID, nodeID string) {
+func (s *Service) registerSessionTask(taskID, sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.taskSessions[taskID] = sessionID
-	if nodeID != "" {
-		s.taskNodeIDs[taskID] = nodeID
-	}
-	delete(s.taskCanceled, taskID)
 }
 
-func (s *Service) finishSessionTask(taskID string) bool {
+func (s *Service) finishSessionTask(taskID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	canceled := s.taskCanceled[taskID]
 	delete(s.taskSessions, taskID)
-	delete(s.taskNodeIDs, taskID)
-	delete(s.taskCanceled, taskID)
-	return canceled
 }
 
 func (s *Service) CancelTurn(ctx context.Context, sessionID, turnID string) error {
@@ -164,26 +156,19 @@ func (s *Service) CancelTurn(ctx context.Context, sessionID, turnID string) erro
 		if !ok {
 			return managementapi.Errorf(managementapi.CodeUnavailable, "node disconnected while canceling turn")
 		}
-		if result.Err != "" {
-			if result.Code == string(managementapi.CodeNotFound) {
+		if failure := taskError(result); failure != nil {
+			if failure.Code == string(managementapi.CodeNotFound) {
 				return ErrTurnNotFound
 			}
-			return managementapi.Errorf(managementapi.CodeFailedPrecondition, "%s", result.Err)
+			return managementapi.Errorf(managementapi.CodeFailedPrecondition, "%s", failure.Message)
 		}
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
 		return managementapi.Errorf(managementapi.CodeUnavailable, "node timed out while canceling turn")
 	}
-	s.mu.Lock()
-	if s.taskSessions[turnID] == sessionID {
-		s.taskCanceled[turnID] = true
-	}
-	s.mu.Unlock()
-	s.BroadcastAOPEvent(sessionID, &aop.Event{
-		SessionId: sessionID, TurnId: turnID, Emitter: "aiscan.web",
-		Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "canceled"}},
-	})
+	// Acceptance only requests cancellation. Runtime publishes the terminal
+	// after execution drains, including its final usage and error details.
 	return nil
 }
 
@@ -216,7 +201,7 @@ func (s *Service) Upload(ctx context.Context, sessionID, filename string, data [
 		if !ok {
 			return nil, fmt.Errorf("agent disconnected during upload")
 		}
-		result := res.File
+		result, _ := res.(*filepb.Result)
 		if result == nil {
 			return nil, fmt.Errorf("agent upload returned no result envelope")
 		}
@@ -225,14 +210,20 @@ func (s *Service) Upload(ctx context.Context, sessionID, filename string, data [
 			map[string]any{"filename": filename, "path": result.Path})
 		return result, nil
 	case <-ctx.Done():
-		_ = s.agents.CancelTask(nodeID, taskID)
+		_ = s.agents.CancelTask(nodeID, taskID, "")
 		return nil, ctx.Err()
 	}
 }
 
 func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	s.closeRemoteSession(id)
-	return s.store.DeleteSession(ctx, id)
+	if err := s.store.DeleteSession(ctx, id); err != nil {
+		return err
+	}
+	s.eventMu.Lock()
+	delete(s.eventState, id)
+	s.eventMu.Unlock()
+	return nil
 }
 
 func (s *Service) closeRemoteSession(sessionID string) {

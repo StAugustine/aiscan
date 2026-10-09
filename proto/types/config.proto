@@ -1,21 +1,19 @@
 syntax = "proto3";
 
-package aiscan.config;
+package cyber.config;
 
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/chainreactors/aiscan/pkg/types;types";
+option go_package = "github.com/chainreactors/cyber/core/types;types";
 
 message DistributeConfig {
+  reserved 2, 3, 4, 5, 6;
+  reserved "ioa", "search";
   LLMConfig llm = 1;
-  CyberhubConfig cyberhub = 2;
-  ReconConfig recon = 3;
-  ScanConfig scan = 4;
-  SearchConfig search = 5;
-  IOAConfig ioa = 6;
   AgentConfig agent = 7;
   map<string, google.protobuf.Struct> extensions = 8;
   NodeConfig node = 9;
+  TrafficConfig traffic = 10;
 }
 
 message NodeConfig {
@@ -42,39 +40,21 @@ message LLMProviderConfig {
   optional bool images = 11;
 }
 
-message CyberhubConfig {
-  string url = 1;
-  string key = 2;
-  string mode = 3;
-  string proxy = 4;
-}
-
-message ReconConfig {
-  string fofa_key = 1;
-  string hunter_api_key = 2;
-  string proxy = 3;
-  int32 limit = 4;
-}
-
-message ScanConfig {
-  string verify = 1;
-}
-
-message SearchConfig {
-  string tavily_keys = 1;
-}
-
-message IOAConfig {
-  string url = 1;
-  string token = 2;
-  string node_name = 3;
-  string space = 4;
-}
-
 message AgentConfig {
   repeated string tools = 1;
-  int32 timeout = 2;
+  optional int32 timeout = 2;
   reserved 3;
+  int32 heartbeat = 4;
+  string eval_criteria = 5;
+  string eval_model = 6;
+  string eval_rounds = 7;
+  bool capture_provider_frames = 8;
+}
+
+message TrafficConfig {
+  string body_storage = 1;
+  int64 body_max_bytes = 2;
+  int64 body_retention_bytes = 3;
 }
 
 message LLMProviderView {
@@ -97,40 +77,15 @@ message LLMView {
   repeated LLMProviderView providers = 3;
 }
 
-message CyberhubView {
-  string url = 1;
-  bool key_configured = 2;
-  string mode = 3;
-  string proxy = 4;
-}
-
-message ReconView {
-  bool fofa_key_configured = 1;
-  bool hunter_api_key_configured = 2;
-  string proxy = 3;
-  int32 limit = 4;
-}
-
-message SearchView { bool tavily_keys_configured = 1; }
-
-message IOAView {
-  string url = 1;
-  bool token_configured = 2;
-  string node_name = 3;
-  string space = 4;
-}
-
 message ConfigView {
+  reserved 4, 5, 6, 7, 8;
+  reserved "ioa", "search";
   string path = 1;
   bool loaded = 2;
   LLMView llm = 3;
-  CyberhubView cyberhub = 4;
-  ReconView recon = 5;
-  ScanConfig scan = 6;
-  SearchView search = 7;
-  IOAView ioa = 8;
   AgentConfig agent = 9;
   map<string, ExtensionView> extensions = 10;
+  TrafficConfig traffic = 11;
 }
 
 message GetConfigRequest {}

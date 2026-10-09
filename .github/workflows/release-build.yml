@@ -20,7 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 # ---------------------------------------------------------------------------
-# One frontend bundle + standard/full/runner CI build matrix -> verified bundle
+# One frontend bundle + standard/full CI build matrix -> verified bundle
 # ---------------------------------------------------------------------------
 
 jobs:
@@ -29,22 +29,28 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
           submodules: recursive
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: web/frontend/package-lock.json
 
+      - name: Install frontend dependencies
+        run: npm --prefix web/frontend ci
+
+      - name: Install cyber-ui workspace dependencies
+        working-directory: web/frontend/cyber-ui
+        run: corepack pnpm install --frozen-lockfile
+
       - name: Build embedded frontend
         run: |
-          npm --prefix web/frontend ci
           npm --prefix web/frontend run build
           test -s web/static/index.html
           test -n "$(find web/static/assets -type f -size +0c -print -quit)"
@@ -59,7 +65,7 @@ jobs:
   # ── Parallel build matrix ───────────────────────────────────────
   build:
     needs: frontend
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-22.04
     defaults:
       run:
         shell: bash
@@ -68,61 +74,21 @@ jobs:
       matrix:
         include:
           - id: aiscan
-            profile: standard
-            runner: ubuntu-22.04
-            main: ./cmd/aiscan
-            binary: aiscan
-            tags: "forceposix emptytemplates noembed osusergo netgo"
+            build: aiscan
             targets: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
-            cgo: "0"
-          - id: runner
-            profile: runner
-            runner: ubuntu-22.04
-            main: ./cmd/runner
-            binary: runner
-            tags: ""
+          - id: aiscan-full
+            build: aiscan-full
             targets: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
-            cgo: "0"
-          - id: aiscan-full-linux-amd64
-            profile: full
-            runner: ubuntu-22.04
-            main: ./cmd/aiscan
-            binary: aiscan-full
-            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite cstx re2_cgo re2_static"
-            targets: "linux/amd64"
-            cgo: "1"
-          - id: aiscan-full-linux-arm64
-            profile: full
-            runner: ubuntu-24.04-arm
-            main: ./cmd/aiscan
-            binary: aiscan-full
-            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite cstx re2_cgo re2_static"
-            targets: "linux/arm64"
-            cgo: "1"
-          - id: aiscan-full-darwin
-            profile: full
-            runner: ubuntu-22.04
-            main: ./cmd/aiscan
-            binary: aiscan-full
-            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite cstx re2_cgo re2_static"
-            targets: "darwin/amd64 darwin/arm64"
-            cgo: "1"
-            cross: darwin
-          - id: aiscan-full-windows-amd64
-            profile: full
-            runner: windows-2022
-            main: ./cmd/aiscan
-            binary: aiscan-full
-            tags: "forceposix emptytemplates noembed osusergo netgo full sqlite cstx re2_cgo re2_static"
-            targets: "windows/amd64"
-            cgo: "1"
+          - id: cyber-audit
+            build: cyber-audit
+            targets: "linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 
     env:
       GORELEASER_CURRENT_TAG: ${{ inputs.tag }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -130,79 +96,40 @@ jobs:
           submodules: recursive
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Read macOS cross-toolchain versions
-        if: matrix.cross == 'darwin'
-        id: macos-cross
-        run: |
-          source .github/native/versions.env
-          echo "zig-version=${MACOS_CROSS_ZIG_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "sdk-version=${MACOS_CROSS_SDK_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "sdk-sha256=${MACOS_CROSS_SDK_SHA256}" >> "$GITHUB_OUTPUT"
-          echo "deployment-target=${MACOS_CROSS_DEPLOYMENT_TARGET}" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Zig for macOS CGO cross-compilation
-        if: matrix.cross == 'darwin'
-        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
-        with:
-          version: ${{ steps.macos-cross.outputs.zig-version }}
-          cache-key: macos-cgo-${{ matrix.id }}
-
-      - name: Install pinned macOS SDK
-        if: matrix.cross == 'darwin'
-        env:
-          SDK_VERSION: ${{ steps.macos-cross.outputs.sdk-version }}
-          SDK_SHA256: ${{ steps.macos-cross.outputs.sdk-sha256 }}
-          DEPLOYMENT_TARGET: ${{ steps.macos-cross.outputs.deployment-target }}
-        run: |
-          set -euo pipefail
-          sdk_dir="${RUNNER_TEMP}/macos-sdk"
-          archive="${sdk_dir}/MacOSX${SDK_VERSION}.sdk.tar.xz"
-          mkdir -p "${sdk_dir}"
-          for attempt in 1 2 3; do
-            if curl --retry 3 --retry-all-errors --retry-delay 2 -fsSL \
-              "https://github.com/joseluisq/macosx-sdks/releases/download/${SDK_VERSION}/MacOSX${SDK_VERSION}.sdk.tar.xz" \
-              -o "${archive}"; then
-              break
-            fi
-            if [[ "${attempt}" == "3" ]]; then
-              exit 1
-            fi
-          done
-          echo "${SDK_SHA256}  ${archive}" | sha256sum -c -
-          tar -xJf "${archive}" -C "${sdk_dir}"
-          sdk_root="${sdk_dir}/MacOSX${SDK_VERSION}.sdk"
-          test -d "${sdk_root}/System/Library/Frameworks"
-          test -f "${sdk_root}/usr/lib/libresolv.tbd"
-          echo "MACOS_SDKROOT=${sdk_root}" >> "${GITHUB_ENV}"
-          echo "MACOSX_DEPLOYMENT_TARGET=${DEPLOYMENT_TARGET}" >> "${GITHUB_ENV}"
-
-      - name: Set up mingw for libcstx
-        if: runner.os == 'Windows'
-        run: echo "C:/msys64/mingw64/bin" >> "$GITHUB_PATH"
-
       - name: Download embedded frontend
-        if: matrix.profile == 'full'
-        uses: actions/download-artifact@v7
+        if: matrix.build == 'aiscan-full'
+        uses: actions/download-artifact@v8
         with:
           name: embedded-frontend
           path: web/static
 
       - name: Generate embedded resources
-        run: go generate ./core/resources
+        run: go generate ./tools/resources ./tools/proton/resources
 
+      - name: Generate tool metadata
+        run: make arsenal-spec audit-arsenal-spec
+
+      - name: Load the build editions
+        run: grep -Ev '^[[:space:]]*(#|$)' editions.env >> "$GITHUB_ENV"
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          install-only: true
+          version: v2.13.0
+
+      # .goreleaser.yml defines the compile. This loop only chooses a target.
       - name: Build binaries
         shell: bash
         run: |
           set -euo pipefail
+          BUILD="${{ matrix.build }}"
           TARGETS="${{ matrix.targets }}"
-          TAGS="${{ matrix.tags }}"
-          BINARY="${{ matrix.binary }}"
-          MAIN="${{ matrix.main }}"
           VERSION="${GORELEASER_CURRENT_TAG#v}"
           OUTDIR="dist/build"
           mkdir -p "${OUTDIR}"
@@ -210,34 +137,15 @@ jobs:
           for target in $TARGETS; do
             IFS='/' read -r goos goarch <<< "$target"
             suffix=""; [[ "$goos" == "windows" ]] && suffix=".exe"
-            out="${OUTDIR}/${BINARY}_${goos}_${goarch}${suffix}"
+            out="${OUTDIR}/${BUILD}_${goos}_${goarch}${suffix}"
             echo "  compiling ${goos}/${goarch} → ${out}"
 
-            link_flags="-s -w -X github.com/chainreactors/aiscan/core/config.Version=${VERSION}"
-            if [[ "$goos" == "darwin" && "${{ matrix.cgo }}" == "1" ]]; then
-              test -n "${MACOS_SDKROOT:-}"
-              case "$goarch" in
-                amd64) zig_target=x86_64-macos ;;
-                arm64) zig_target=aarch64-macos ;;
-                *) echo "unsupported Darwin architecture ${goarch}" >&2; exit 1 ;;
-              esac
-              cross_flags="-target ${zig_target} -isysroot ${MACOS_SDKROOT} -F${MACOS_SDKROOT}/System/Library/Frameworks -L${MACOS_SDKROOT}/usr/lib -mmacosx-version-min=${MACOSX_DEPLOYMENT_TARGET}"
-              export CC="zig cc ${cross_flags}"
-              export CXX="zig c++ ${cross_flags}"
-              link_flags="-linkmode external ${link_flags}"
-            else
-              unset CC CXX
+            if [[ "$BUILD" == "cyber-audit" ]]; then
+              make embed-audit ARSENAL_GOOS="$goos" ARSENAL_GOARCH="$goarch"
             fi
 
-            build_args=(-trimpath)
-            if [[ -n "$TAGS" ]]; then
-              build_args+=(-tags "$TAGS")
-            fi
-            CGO_ENABLED="${{ matrix.cgo }}" GOOS="$goos" GOARCH="$goarch" \
-              go build "${build_args[@]}" \
-              -ldflags "${link_flags}" \
-              -buildvcs=false \
-              -o "$out" "$MAIN"
+            GOOS="$goos" GOARCH="$goarch" \
+              goreleaser build --id "$BUILD" --single-target --clean --skip=validate -o "$out"
 
             if [[ "$goos" == "darwin" ]]; then
               file_info="$(file -b "$out")"
@@ -249,13 +157,9 @@ jobs:
             fi
           done
 
-          if [[ -x "${OUTDIR}/${BINARY}_linux_amd64" ]]; then
-            version_output="$("${OUTDIR}/${BINARY}_linux_amd64" --version)"
-            if [[ "${{ matrix.profile }}" == "runner" ]]; then
-              test "$version_output" = "runner v${VERSION}"
-            else
-              test "$version_output" = "aiscan v${VERSION}"
-            fi
+          if [[ -x "${OUTDIR}/${BUILD}_linux_amd64" ]]; then
+            expected="aiscan"; [[ "$BUILD" == "cyber-audit" ]] && expected="cyber-audit"
+            test "$("${OUTDIR}/${BUILD}_linux_amd64" --version)" = "$expected v${VERSION}"
           fi
 
           echo "=== Binaries ==="
@@ -276,13 +180,13 @@ jobs:
       TAG: ${{ inputs.tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: release-*
           path: dist/build
@@ -319,9 +223,6 @@ jobs:
           for f in dist/build/*; do
             [ -f "$f" ] || continue
             base=$(basename "$f")
-            # Runner is built and smoke-tested in CI for Cairn, but is not a
-            # GitHub Release asset.
-            [[ "$base" == runner_* ]] && continue
             archive_name="${base%.exe}"
             binary="${base%%_*}"
             inner_name="$binary"
@@ -334,8 +235,12 @@ jobs:
             if [[ "$base" != *.exe ]]; then
               chmod 755 "${tmpdir}/${inner_name}"
             fi
-            cp README.md "${tmpdir}/" 2>/dev/null || true
-            cp -r docs "${tmpdir}/" 2>/dev/null || true
+            if [[ "$binary" == "cyber-audit" ]]; then
+              cp cmd/audit/README.md "${tmpdir}/README.md"
+            else
+              cp README.md "${tmpdir}/" 2>/dev/null || true
+              cp -r docs "${tmpdir}/" 2>/dev/null || true
+            fi
             (cd "$tmpdir" && zip -r - .) > "${GITHUB_WORKSPACE}/dist/release/${archive_name}.zip"
             rm -rf "$tmpdir"
           done
@@ -366,8 +271,19 @@ jobs:
             arch: arm64
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cmd/audit/go.mod
+          cache-dependency-path: cmd/audit/go.sum
+
       - name: Download release bundle
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-bundle
           path: dist/release
@@ -379,16 +295,24 @@ jobs:
         run: |
           set -euo pipefail
           (cd dist/release && sha256sum -c aiscan_checksums.txt)
-          test "$(find dist/release -name '*.zip' | wc -l)" -eq 11
-          for binary in aiscan aiscan-full; do
+          test "$(find dist/release -name '*.zip' | wc -l)" -eq 18
+          for binary in aiscan aiscan-full cyber-audit; do
             destination="${RUNNER_TEMP}/${binary}"
             unzip -q "dist/release/${binary}_linux_${ARCH}.zip" -d "$destination"
             test -x "${destination}/${binary}"
-            test "$("${destination}/${binary}" --version)" = "aiscan ${TAG}"
+            expected="aiscan"; [[ "$binary" == "cyber-audit" ]] && expected="cyber-audit"
+            test "$("${destination}/${binary}" --version)" = "$expected ${TAG}"
             if [[ "$binary" == "aiscan-full" ]]; then
               "${destination}/${binary}" web --help >/dev/null
             fi
           done
+
+      - name: Test packaged audit single-file release
+        env:
+          AUDIT_SINGLEFILE_BINARY: ${{ runner.temp }}/cyber-audit/cyber-audit
+          GOWORK: "off"
+          CGO_ENABLED: "0"
+        run: go -C cmd/audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m
 
   # UPX can report a structurally valid PE that still crashes at process
   # startup. Run the exact packaged Windows binaries before publishing them.
@@ -396,8 +320,19 @@ jobs:
     needs: package
     runs-on: windows-2022
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: cmd/audit/go.mod
+          cache-dependency-path: cmd/audit/go.sum
+
       - name: Download release bundle
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           name: release-bundle
           path: dist/release
@@ -408,13 +343,14 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $expectedVersion = "aiscan $env:TAG"
           $cases = @(
             @{ Archive = 'aiscan_windows_amd64.zip'; Binary = 'aiscan.exe'; Full = $false },
-            @{ Archive = 'aiscan-full_windows_amd64.zip'; Binary = 'aiscan-full.exe'; Full = $true }
+            @{ Archive = 'aiscan-full_windows_amd64.zip'; Binary = 'aiscan-full.exe'; Full = $true },
+            @{ Archive = 'cyber-audit_windows_amd64.zip'; Binary = 'cyber-audit.exe'; Full = $false }
           )
 
           foreach ($case in $cases) {
+            $expectedVersion = if ($case.Binary -eq "cyber-audit.exe") { "cyber-audit $env:TAG" } else { "aiscan $env:TAG" }
             $destination = Join-Path $env:RUNNER_TEMP ([IO.Path]::GetFileNameWithoutExtension($case.Archive))
             Expand-Archive -LiteralPath (Join-Path 'dist/release' $case.Archive) -DestinationPath $destination
             $binary = Join-Path $destination $case.Binary
@@ -432,3 +368,10 @@ jobs:
               }
             }
           }
+
+      - name: Test packaged audit single-file release after UPX
+        env:
+          AUDIT_SINGLEFILE_BINARY: ${{ runner.temp }}/cyber-audit_windows_amd64/cyber-audit.exe
+          GOWORK: "off"
+          CGO_ENABLED: "0"
+        run: go -C cmd/audit test ./internal/app -run '^TestSingleFileRelease$' -count=1 -v -timeout 10m

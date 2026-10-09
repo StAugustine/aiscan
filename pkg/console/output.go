@@ -8,15 +8,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/core/truncate"
-	"github.com/chainreactors/aiscan/core/util"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/truncate"
+	types "github.com/chainreactors/cyber/core/types"
+	"github.com/chainreactors/cyber/exts/guardrail"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/output"
 	"golang.org/x/term"
 )
 
@@ -67,6 +68,13 @@ type AgentOutput struct {
 	turnToolCalls int
 	contextTokens int
 	runCount      int
+	recapSession  string
+	recapTurn     string
+	recapText     string
+	recapEnded    bool
+	recapShown    bool
+	recapElapsed  time.Duration
+	recapWriter   io.Writer // Async recaps share the prompt's readline writer.
 
 	// Transient UI.
 	mode                   RenderMode
@@ -343,10 +351,30 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		o.beginRun()
 	}
 	switch payload := event.Payload.(type) {
+	case *aop.Event_Extension:
+		var recap types.Recap
+		if payload.Extension != nil && payload.Extension.MessageIs(&recap) {
+			if payload.Extension.UnmarshalTo(&recap) == nil && event.TurnId != "" && event.TurnId == o.recapTurn && event.SessionId == o.recapSession {
+				o.recapText = recap.Text
+				o.renderRecap()
+			}
+			return
+		}
+		var review guardrail.Review
+		if payload.Extension == nil || !payload.Extension.MessageIs(&review) || payload.Extension.UnmarshalTo(&review) != nil || review.State != guardrail.ReviewState_REVIEW_STATE_PENDING {
+			return
+		}
+		// Approval is a control command and remains usable while the turn waits.
+		o.live.Stop()
+		o.stream.Flush()
+		fmt.Fprintf(o.Stderr(), "\nGuardrail: %s is waiting for approval until %s\n%s\n/guardrail pending\n/guardrail approve %s\n/guardrail reject %s\n", review.Call.GetName(), review.ExpiresAt.AsTime().Format("15:04:05"), review.Decision.GetReason(), review.Operation.GetOperationId(), review.Operation.GetOperationId())
 	case *aop.Event_SessionStarted:
 		o.agentStart = time.Now()
 
 	case *aop.Event_TurnStarted:
+		o.recapSession, o.recapTurn = event.SessionId, event.TurnId
+		o.recapText, o.recapEnded, o.recapShown = "", false, false
+		o.recapElapsed = 0
 		o.agentStart = time.Now()
 		o.runCount++
 		o.stream.NewTurn()
@@ -365,6 +393,10 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		}
 		acc := o.deltas[data.MessageId]
 		if acc == nil {
+			// Each model response has its own cumulative deltas. A task can
+			// contain several responses separated by tool calls.
+			o.stream.Flush()
+			o.stream.NewTurn()
 			acc = &deltaAccumulator{}
 			o.deltas[data.MessageId] = acc
 		}
@@ -403,6 +435,14 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 		data := payload.Message
 		delete(o.deltas, data.Id)
 		if data.Role == "assistant" {
+			if len(data.Content) == 0 {
+				// Retry discards the attempt. Reset the print cursor so the
+				// replacement is not skipped; this is not a committed reply.
+				o.stream.EnsureNewline()
+				o.stream.closeReasoning()
+				o.stream.Reset()
+				break
+			}
 			o.lastAssistant = data
 			if event.TurnId == "" {
 				if content := strings.TrimSpace(messagePartText(data, false)); content != "" {
@@ -510,6 +550,9 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 
 	case *aop.Event_TurnEnded:
 		data := payload.TurnEnded
+		if event.TurnId == o.recapTurn && event.SessionId == o.recapSession && !o.recapEnded {
+			o.recapElapsed = time.Since(o.agentStart)
+		}
 		o.contextTokens = int(data.ContextTokens)
 		o.live.FinishTurn(o.contextTokens)
 		o.stopLive()
@@ -524,6 +567,10 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 			fmt.Fprintf(o.Stderr(), "error: %s\n", data.Error.Message)
 		case !o.quiet() && o.stream.ContentPrinted() == 0 && strings.TrimSpace(messagePartText(o.lastAssistant, false)) == "":
 			fmt.Fprintln(o.Stderr(), o.dim("No output."))
+		}
+		if event.TurnId == o.recapTurn && event.SessionId == o.recapSession {
+			o.recapEnded = true
+			o.renderRecap()
 		}
 	case *aop.Event_SessionEnded:
 		o.stopLive()
@@ -554,6 +601,28 @@ func (o *AgentOutput) HandleEvent(event *aop.Event) {
 			o.compactError()
 		}
 	}
+}
+
+func (o *AgentOutput) renderRecap() {
+	if !o.recapEnded || o.recapShown || o.quiet() || o.mode != ModeInteractive || strings.TrimSpace(o.recapText) == "" {
+		return
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, output.StripANSI(o.recapText))
+	text = strings.Join(strings.Fields(text), " ")
+	if text == "" {
+		return
+	}
+	w := o.recapWriter
+	if w == nil {
+		w = o.Stderr()
+	}
+	fmt.Fprintf(w, "\n%s\n\n", o.dim("  ✻ "+text+" · "+truncate.FormatDuration(o.recapElapsed)))
+	o.recapShown = true
 }
 
 func estimateStreamTokens(parts ...string) int {
@@ -738,7 +807,7 @@ func (o *AgentOutput) coloredElapsed(started time.Time) string {
 		return ""
 	}
 	d := time.Since(started)
-	text := "· " + util.FormatDuration(d)
+	text := "· " + truncate.FormatDuration(d)
 	switch {
 	case d > 30*time.Second:
 		return o.color.Wrap(text, output.ANSIRed)
@@ -812,7 +881,7 @@ func (o *AgentOutput) agentEnd(data *aop.TurnEnded) {
 		if provider.UsageTotalTokens(o.totalUsage) > 0 {
 			parts = append(parts, formatTokenUsage(o.totalUsage))
 		}
-		parts = append(parts, util.FormatDuration(elapsed))
+		parts = append(parts, truncate.FormatDuration(elapsed))
 		if data.Error != nil {
 			parts = append(parts, fmt.Sprintf("err=%q", data.Error.Message))
 		}

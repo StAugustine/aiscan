@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/scan/engine"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/scan/engine"
 	"github.com/projectdiscovery/uncover/sources"
 )
 
@@ -84,7 +84,7 @@ Options:
   -h            Show this help`, availStr)
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("passive", &err)
 	args := execution.Args
 	src, rest, help, err := splitSource(args)
@@ -192,18 +192,6 @@ type pyFofa struct {
 	ICP    string `json:"icp"`
 }
 
-type pyHunter struct {
-	IP      string `json:"ip"`
-	Port    string `json:"port"`
-	URL     string `json:"url"`
-	Domain  string `json:"domain"`
-	Status  string `json:"status"`
-	Company string `json:"company"`
-	Frame   string `json:"frame"`
-	Title   string `json:"title"`
-	ICP     string `json:"icp"`
-}
-
 type pyGeneric struct {
 	IP     string `json:"ip"`
 	Port   string `json:"port"`
@@ -226,16 +214,11 @@ func uncoverPython(src string, results []sources.Result) any {
 		}
 		return out
 	case "hunter":
-		out := make([]pyHunter, 0, len(results))
+		out := make([]engine.RawHunter, 0, len(results))
 		for _, r := range results {
 			var raw engine.RawHunter
 			_ = json.Unmarshal(r.Raw, &raw)
-			out = append(out, pyHunter{
-				IP: raw.IP, Port: raw.Port, URL: raw.URL,
-				Domain: raw.Domain, Status: raw.Status,
-				Company: raw.Company, Frame: raw.Frame,
-				Title: raw.Title, ICP: raw.ICP,
-			})
+			out = append(out, raw)
 		}
 		return out
 	default:

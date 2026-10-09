@@ -6,40 +6,44 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"os/user"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/eventbus"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/operation"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/toolset"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/eventbus"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/pkg/aopconn"
+	"github.com/chainreactors/cyber/pkg/aopws"
+
 	"github.com/gorilla/websocket"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // DefaultWSPath is the hub route the tool node dials; the agent node in pkg/node
 // dials the same route.
-const DefaultWSPath = "/api/aop/node/ws"
+const (
+	DefaultWSPath        = "/api/aop/node/ws"
+	websocketWriteWait   = 10 * time.Second
+	websocketPingPeriod  = 30 * time.Second
+	websocketPongTimeout = 90 * time.Second
+)
 
 type Config struct {
+	Metadata  map[string]any
 	ServerURL string
 	WSPath    string
 	ID        string
 	Token     string
 	Version   string
 	JSON      bool
-	Executor  tool.Executor
+	Executor  coretool.Executor
 	Events    *coreevents.Stream
 	Progress  *eventbus.Bus[*toolpb.Progress]
 	// RegisterNamespaces installs resource-control protocols on each new
@@ -79,6 +83,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Dialer == nil {
 		cfg.Dialer = websocket.DefaultDialer
 	}
+	if cfg.Events == nil {
+		cfg.Events = coreevents.New()
+	}
 	instanceID := aop.EnvelopeID()
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -109,44 +116,8 @@ func retryDelay(attempt int) time.Duration {
 	return time.Duration(1<<attempt) * 250 * time.Millisecond
 }
 
-type stream struct {
-	conn *websocket.Conn
-	json bool
-}
-
-func (s stream) recv() (*aop.Envelope, error) {
-	_, data, err := s.conn.ReadMessage()
-	if err != nil {
-		return nil, err
-	}
-	envelope := new(aop.Envelope)
-	if s.json {
-		err = protojson.Unmarshal(data, envelope)
-	} else {
-		err = proto.Unmarshal(data, envelope)
-	}
-	return envelope, err
-}
-
-func (s stream) send(envelope *aop.Envelope) error {
-	frame := websocket.BinaryMessage
-	var data []byte
-	var err error
-	if s.json {
-		frame = websocket.TextMessage
-		data, err = protojson.Marshal(envelope)
-	} else {
-		data, err = proto.Marshal(envelope)
-	}
-	if err != nil {
-		return err
-	}
-	_ = s.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	return s.conn.WriteMessage(frame, data)
-}
-
 func runConnection(ctx context.Context, cfg Config, instanceID string) error {
-	dialURL, token, err := connectionURL(cfg.ServerURL, cfg.WSPath)
+	dialURL, token, err := aopws.DialURL(cfg.ServerURL, cfg.WSPath)
 	if err != nil {
 		return err
 	}
@@ -164,33 +135,41 @@ func runConnection(ctx context.Context, cfg Config, instanceID string) error {
 	if err != nil {
 		return err
 	}
-	s := stream{conn: conn, json: cfg.JSON}
 	connectionCtx, cancel := context.WithCancel(ctx)
+	encoding := aopws.Binary
+	if cfg.JSON {
+		encoding = aopws.ProtoJSON
+	}
+	stream, err := aopws.New(connectionCtx, conn, aopws.Options{
+		Encoding:     encoding,
+		WriteTimeout: websocketWriteWait,
+		PingInterval: websocketPingPeriod,
+		PongTimeout:  websocketPongTimeout,
+	})
+	if err != nil {
+		cancel()
+		return err
+	}
 	defer func() {
 		cancel()
-		_ = conn.Close()
-	}()
-	go func() {
-		<-connectionCtx.Done()
-		_ = conn.Close()
+		_ = stream.Close()
 	}()
 	namespaces := aop.NewNamespaceMux(connectionCtx)
+	defer func() { _ = namespaces.Close(context.Background()) }()
 	if cfg.RegisterNamespaces != nil {
 		if err := cfg.RegisterNamespaces(namespaces); err != nil {
 			return fmt.Errorf("register tool node namespaces: %w", err)
 		}
 	}
-	defer func() { _ = namespaces.Close(context.Background()) }()
-
 	hello, err := hello(cfg, instanceID)
 	if err != nil {
 		return err
 	}
 	helloEnvelope := aop.Reply("", &aop.ProtocolMessage{Message: &aop.ProtocolMessage_AgentHello{AgentHello: hello}})
-	if err := s.send(helloEnvelope); err != nil {
+	if err := stream.Send(helloEnvelope); err != nil {
 		return err
 	}
-	acceptedEnvelope, err := s.recv()
+	acceptedEnvelope, err := stream.Recv()
 	if err != nil {
 		return err
 	}
@@ -208,156 +187,38 @@ func runConnection(ctx context.Context, cfg Config, instanceID string) error {
 	if accepted.GetAgentAccepted() == nil {
 		return fmt.Errorf("expected AOP agent acceptance")
 	}
-	sendCh := make(chan *aop.Envelope, 64)
-	writerErr := make(chan error, 1)
-	go func() {
-		for {
-			select {
-			case envelope := <-sendCh:
-				if err := s.send(envelope); err != nil {
-					select {
-					case writerErr <- err:
-					default:
-					}
-					cancel()
-					return
-				}
-			case <-connectionCtx.Done():
-				return
-			}
-		}
-	}()
-	send := func(replyTo string, value proto.Message) {
-		envelope := aop.Reply(replyTo, value)
-		select {
-		case sendCh <- envelope:
-		case <-connectionCtx.Done():
-		}
+	connection, err := aopconn.NewConnection(connectionCtx, stream)
+	if err != nil {
+		return err
 	}
-
-	var operations sync.Map
-	var wg sync.WaitGroup
+	defer connection.Close()
+	// The same connection context ends work when either reader or writer fails.
+	stop := context.AfterFunc(connection.Context(), cancel)
+	defer stop()
+	send := func(id string, message proto.Message) { _ = connection.Send(aop.Reply(id, message)) }
+	calls := &CallHandler{Executor: cfg.Executor, Progress: cfg.Progress, Emitter: cfg.ID, Logger: cfg.Logger, Send: send, Publish: cfg.Events.Publish}
+	if err := namespaces.Register(&toolpb.ProtocolMessage{}, calls.Handle); err != nil {
+		return err
+	}
 	if cfg.Progress != nil {
-		unsubscribe := cfg.Progress.Subscribe(func(progress *toolpb.Progress) {
-			if progress == nil || strings.TrimSpace(progress.GetText()) == "" {
-				return
-			}
-			if callID := progress.GetCallId(); callID != "" {
-				if _, active := operations.Load(callID); !active {
-					return
-				}
-			}
-			copy := proto.Clone(progress).(*toolpb.Progress)
-			copy.Text = strings.ToValidUTF8(copy.Text, "\uFFFD")
-			send(copy.GetCallId(), &toolpb.ProtocolMessage{Message: &toolpb.ProtocolMessage_Progress{Progress: copy}})
-		})
-		defer unsubscribe.Cancel()
+		sub := cfg.Progress.Subscribe(calls.ForwardProgress)
+		defer sub.Cancel()
 	}
-	if cfg.Events != nil {
-		unsubscribe := cfg.Events.Observe(coreevents.ObserverFunc(func(event *aop.Event) {
-			if event == nil {
-				return
-			}
-			// Every AOP event uses the same ordered connection lane. Synchronous
-			// observations emitted during a call therefore precede its terminal
-			// result, while genuinely detached observations remain valid later.
-			send("", &aop.ProtocolMessage{Message: &aop.ProtocolMessage_Event{Event: proto.Clone(event).(*aop.Event)}})
-		}))
-		defer unsubscribe.Cancel()
-	}
-	defer func() {
-		cancel()
-		operations.Range(func(_, value any) bool {
-			value.(context.CancelFunc)()
-			return true
-		})
-		wg.Wait()
-	}()
-
-	for {
-		envelope, err := s.recv()
-		if err != nil {
-			select {
-			case writeErr := <-writerErr:
-				return writeErr
-			default:
-			}
-			return err
+	sub := cfg.Events.Observe(calls.Forward)
+	defer sub.Cancel()
+	defer func() { cancel(); calls.Close() }()
+	return connection.Run(func(_ context.Context, envelope *aop.Envelope, reply aop.SendFunc) error {
+		if calls.Cancel(envelope) {
+			return nil
 		}
-		value, err := aop.Unwrap(envelope)
+		handled, err := namespaces.Dispatch(envelope, reply)
 		if err != nil {
 			send(envelope.GetId(), aop.NewProtocolError("INVALID_PAYLOAD", err.Error()))
-			continue
+		} else if !handled {
+			send(envelope.GetId(), aop.NewProtocolError("UNSUPPORTED_NAMESPACE", "unsupported AOP namespace"))
 		}
-		switch message := value.(type) {
-		case *aop.ProtocolMessage:
-			cancelRequest := message.GetCancelOperation()
-			if cancelRequest == nil {
-				send(envelope.GetId(), aop.NewProtocolError("UNSUPPORTED_MESSAGE", "tool node only accepts cancellation in the core namespace"))
-				continue
-			}
-			if cancelCall, ok := operations.Load(cancelRequest.GetTargetId()); ok {
-				cancelCall.(context.CancelFunc)()
-			}
-		case *toolpb.ProtocolMessage:
-			request := message.GetCall()
-			if request == nil || request.Call == nil {
-				send(envelope.GetId(), aop.NewProtocolError("INVALID_PAYLOAD", "tool call is required"))
-				continue
-			}
-			operationID := envelope.GetId()
-			if operationID == "" || request.Call.Id != "" && request.Call.Id != operationID {
-				send(operationID, aop.NewProtocolError("INVALID_PAYLOAD", "tool call ID must match envelope ID"))
-				continue
-			}
-			callCtx, callCancel := context.WithCancel(connectionCtx)
-			if _, loaded := operations.LoadOrStore(operationID, callCancel); loaded {
-				callCancel()
-				send(operationID, aop.NewProtocolError("DUPLICATE_OPERATION", "operation ID is already active"))
-				continue
-			}
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer operations.Delete(operationID)
-				defer callCancel()
-				execute(callCtx, cfg, operationID, request, send)
-			}()
-		default:
-			handled, dispatchErr := namespaces.Dispatch(envelope, func(reply *aop.Envelope) error {
-				select {
-				case sendCh <- reply:
-					return nil
-				case <-connectionCtx.Done():
-					return connectionCtx.Err()
-				}
-			})
-			if dispatchErr != nil {
-				send(envelope.GetId(), aop.NewProtocolError("INVALID_PAYLOAD", dispatchErr.Error()))
-				continue
-			}
-			if !handled {
-				send(envelope.GetId(), aop.NewProtocolError("UNSUPPORTED_NAMESPACE", "unsupported AOP namespace"))
-			}
-		}
-	}
-}
-
-func execute(ctx context.Context, cfg Config, operationID string, request *toolpb.Call, send func(string, proto.Message)) {
-	call := request.Call
-	if call.Id == "" {
-		call.Id = operationID
-	}
-	invocation := operation.Invocation{
-		WorkDir: call.WorkingDirectory, CallID: operationID,
-		SessionID: request.SessionId, TurnID: request.TurnId, Emitter: cfg.ID,
-	}
-	event, err := toolset.ExecuteToolRequest(operation.ContextWithInvocation(ctx, invocation), operationID, request, cfg.Executor, cfg.Progress)
-	if err != nil {
-		send(operationID, aop.NewProtocolError("INVALID_PAYLOAD", err.Error()))
-		return
-	}
-	send(operationID, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_Event{Event: event}})
+		return nil
+	})
 }
 
 func hello(cfg Config, instanceID string) (*aop.AgentHello, error) {
@@ -367,9 +228,12 @@ func hello(cfg Config, instanceID string) (*aop.AgentHello, error) {
 	if current, err := user.Current(); err == nil {
 		username = current.Username
 	}
-	metadata, err := structpb.NewStruct(map[string]any{
-		"version": cfg.Version, "mode": "tool", "instance_id": instanceID,
-	})
+	values := make(map[string]any, len(cfg.Metadata)+3)
+	for key, value := range cfg.Metadata {
+		values[key] = value
+	}
+	values["version"], values["mode"], values["instance_id"] = cfg.Version, "tool", instanceID
+	metadata, err := structpb.NewStruct(values)
 	if err != nil {
 		return nil, err
 	}
@@ -381,27 +245,4 @@ func hello(cfg Config, instanceID string) (*aop.AgentHello, error) {
 			Os: runtime.GOOS, Arch: runtime.GOARCH, Pid: int32(os.Getpid()), Metadata: metadata,
 		},
 	}, nil
-}
-
-func connectionURL(serverURL, path string) (string, string, error) {
-	u, err := url.Parse(strings.TrimRight(serverURL, "/"))
-	if err != nil || u.Host == "" {
-		return "", "", fmt.Errorf("invalid tool node server URL %q", serverURL)
-	}
-	token := ""
-	if u.User != nil {
-		token = u.User.Username()
-		u.User = nil
-	}
-	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
-	case "ws", "wss":
-	default:
-		return "", "", fmt.Errorf("unsupported tool node URL scheme %q", u.Scheme)
-	}
-	u.Path = strings.TrimRight(u.Path, "/") + "/" + strings.TrimLeft(path, "/")
-	return u.String(), token, nil
 }

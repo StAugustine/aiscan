@@ -25,7 +25,7 @@ func basicAuthZombieTarget(ctx context.Context, rawURL, hostHeader string, timeo
 		return sdkzombie.Target{}, false
 	}
 
-	target, ok := zombieTargetFromParsedURL(parsed, "")
+	target, ok := zombieTargetFromParsedURL(parsed)
 	if !ok || !isGenericWebZombieService(target.Service) {
 		return sdkzombie.Target{}, false
 	}
@@ -46,7 +46,7 @@ func hasHTTPBasicAuthChallenge(ctx context.Context, parsed *url.URL, hostHeader 
 	if hostHeader != "" {
 		req.Host = hostHeader
 	}
-	req.Header.Set("User-Agent", "aiscan")
+	req.Header.Set("User-Agent", "cyber")
 	req.Close = true
 
 	client := httpAuthClient(timeoutSeconds, proxy)

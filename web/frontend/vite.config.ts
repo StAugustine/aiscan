@@ -1,18 +1,31 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { writeFileSync } from 'node:fs'
 import path from 'path'
 
-const backendURL = process.env.AISCAN_BACKEND_URL || 'http://127.0.0.1:8080'
+const backendURL = process.env.CYBER_BACKEND_URL || 'http://127.0.0.1:8080'
 
 // Shared UI and IOA components are consumed directly from the cyber-ui
-// submodule (single source of truth for what aiscan contributes upstream). The
+// submodule (single source of truth for what cyber contributes upstream). The
 // remaining composite views (markdown/viewer) stay vendored under @/ because
-// aiscan still diverges them.
+// cyber still diverges them.
 const cyberUI = path.resolve(__dirname, './cyber-ui/packages')
+const staticDir = path.resolve(__dirname, '../static')
+
+// Vite clears the embed directory before writing hashed assets. Recreate the
+// tracked directory marker after every build so a build followed by `go test`
+// remains valid even when the output contains no generated files yet.
+const preserveStaticDirectory = {
+  name: 'preserve-embedded-static-directory',
+  closeBundle() {
+    writeFileSync(path.join(staticDir, '.gitkeep'), '\n')
+  },
+}
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), preserveStaticDirectory],
   resolve: {
+    dedupe: ['react', 'react-dom'],
     alias: {
       '@': path.resolve(__dirname, './src'),
       '@cyber/ui': path.resolve(cyberUI, 'ui/src'),
@@ -23,14 +36,25 @@ export default defineConfig({
       '@cyber/cstx': path.resolve(cyberUI, 'cstx/src'),
       '@cyber/cstx-easm': path.resolve(cyberUI, 'cstx-easm/src'),
       '@cyber/viewer': path.resolve(cyberUI, 'viewer/src'),
+      '@cyber/file-manager': path.resolve(cyberUI, 'file-manager/src'),
+      '@cyber/traffic': path.resolve(cyberUI, 'traffic/src'),
       '@cyber/ioa': path.resolve(cyberUI, 'ioa/src'),
     },
   },
   server: {
     proxy: {
+      // The backend serves three top-level families: the auth + AOP-websocket
+      // JSON API, the IOA read API, and the ConnectRPC services. Missing any of
+      // them leaves the dev server rendering an app with no data.
       '/api': {
         target: backendURL,
         ws: true,
+      },
+      '/ioa': {
+        target: backendURL,
+      },
+      '/cyber.rpc.': {
+        target: backendURL,
       },
     },
   },

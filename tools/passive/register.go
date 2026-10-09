@@ -6,20 +6,20 @@
 package passive
 
 import (
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/scan/engine"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/scan/engine"
 )
 
-func NewCommand(engines *engine.Set, logger telemetry.Logger) commands.Command {
+func NewCommand(engines *engine.Set, logger telemetry.Logger) coretool.Command {
 	var backend QueryEngine
 	if engines != nil && engines.Uncover != nil {
 		backend = engines.Uncover
 	}
 	impl := New(backend).WithLogger(logger)
-	return commands.Command{
+	return coretool.Command{
 		Name: impl.Name(), Usage: impl.Usage(),
-		DescriptionPath: "aiscan://skills/aiscan/okf/easm/passive.md",
+		DescriptionPath: "cyber://skills/cyber/okf/easm/passive.md",
 		Run:             impl.Run,
 	}
 }

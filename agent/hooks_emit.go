@@ -3,15 +3,78 @@ package agent
 import (
 	"context"
 
-	"github.com/chainreactors/aiscan/agent/hooks"
-	aop "github.com/chainreactors/aiscan/aop"
+	"github.com/chainreactors/cyber/agent/hooks"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/operation"
+	"google.golang.org/protobuf/proto"
 )
+
+func cloneModelMessages(messages []*aop.Message) []*aop.Message {
+	snapshot := make([]*aop.Message, len(messages))
+	for i, m := range messages {
+		snapshot[i] = proto.CloneOf(m)
+	}
+	return snapshot
+}
+
+func afterModelHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) {
+	if !hooks.AfterModel.Has(cfg.Hooks) {
+		return
+	}
+	snapshot := make([]*aop.Message, len(messages))
+	for i, message := range messages {
+		snapshot[i] = proto.CloneOf(message)
+	}
+	cfg.Messages = snapshot
+	ctx = ContextWithToolAgentConfig(ctx, cfg)
+	_, err := hooks.AfterModel.Emit(ctx, cfg.Hooks, hooks.ContextEvent{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: snapshot,
+	})
+	if err != nil {
+		cfg.Logger.Warnf("after model: %v", err)
+	}
+}
+
+func appendModelHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) []*aop.Message {
+	if !hooks.BeforeModel.Has(cfg.Hooks) {
+		return nil
+	}
+	snapshot := make([]*aop.Message, len(messages))
+	for i, message := range messages {
+		snapshot[i] = proto.CloneOf(message)
+	}
+	cfg.Messages = snapshot
+	ctx = ContextWithToolAgentConfig(ctx, cfg)
+	ctx = operation.ContextWithInvocation(ctx, operation.Invocation{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Emitter: cfg.AgentName,
+	})
+	result, err := hooks.BeforeModel.Emit(ctx, cfg.Hooks, hooks.ContextEvent{
+		SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: snapshot,
+	})
+	if err != nil {
+		cfg.Logger.Warnf("before model: %v", err)
+	}
+	var appended []*aop.Message
+	for _, message := range result {
+		// A controller contributes observations, never fabricated assistant calls
+		// or tool results without a corresponding model-issued call.
+		if message == nil || message.Role != "user" || len(provider.MessageToolCalls(message)) != 0 || provider.MessageToolResult(message) != nil {
+			continue
+		}
+		message = proto.CloneOf(message)
+		message.Id = cfg.emitter.allocMessageID()
+		cfg.emitter.messageProto(message)
+		appended = append(appended, message)
+	}
+	return appended
+}
 
 // The kernel reaches the typed hook registry only through these helpers. Each
 // helper preserves the zero-handler fast path exposed by hooks.Registry.
 
 func runStartHook(ctx context.Context, cfg Config, systemPrompt string) (string, []*aop.Message) {
-	if !cfg.Hooks.Has(hooks.BeforeRun.Kind) {
+	if !hooks.BeforeRun.Has(cfg.Hooks) {
 		return systemPrompt, nil
 	}
 	result, _ := hooks.BeforeRun.Emit(ctx, cfg.Hooks, hooks.RunStartEvent{
@@ -41,7 +104,7 @@ func toolNames(cfg Config) []string {
 }
 
 func transformContextHook(ctx context.Context, cfg Config, messages []*aop.Message, turn int) []*aop.Message {
-	if !cfg.Hooks.Has(hooks.Context.Kind) {
+	if !hooks.Context.Has(cfg.Hooks) {
 		return messages
 	}
 	result, _ := hooks.Context.Emit(ctx, cfg.Hooks, hooks.ContextEvent{
@@ -56,7 +119,7 @@ func transformContextHook(ctx context.Context, cfg Config, messages []*aop.Messa
 }
 
 func compactCanceled(ctx context.Context, cfg Config, trigger string, contextTokens int) (bool, string) {
-	if !cfg.Hooks.Has(hooks.BeforeCompact.Kind) {
+	if !hooks.BeforeCompact.Has(cfg.Hooks) {
 		return false, ""
 	}
 	result, _ := hooks.BeforeCompact.Emit(ctx, cfg.Hooks, hooks.CompactEvent{
@@ -69,7 +132,7 @@ func compactCanceled(ctx context.Context, cfg Config, trigger string, contextTok
 }
 
 func emitRunEnd(ctx context.Context, cfg Config, result *Result) {
-	if result == nil || !cfg.Hooks.Has(hooks.RunEnd.Kind) {
+	if result == nil || !hooks.RunEnd.Has(cfg.Hooks) {
 		return
 	}
 	_, _ = hooks.RunEnd.Emit(ctx, cfg.Hooks, hooks.RunEndEvent{
@@ -82,28 +145,4 @@ func emitRunEnd(ctx context.Context, cfg Config, result *Result) {
 		Usage:          result.TotalUsage,
 		Err:            result.Err,
 	})
-}
-
-func emitSessionStart(ctx context.Context, cfg Config) {
-	if !cfg.Hooks.Has(hooks.SessionStart.Kind) {
-		return
-	}
-	_, _ = hooks.SessionStart.Emit(ctx, cfg.Hooks, sessionEvent(cfg, ""))
-}
-
-func emitSessionEnd(ctx context.Context, cfg Config, reason string) {
-	if !cfg.Hooks.Has(hooks.SessionEnd.Kind) {
-		return
-	}
-	_, _ = hooks.SessionEnd.Emit(ctx, cfg.Hooks, sessionEvent(cfg, reason))
-}
-
-func sessionEvent(cfg Config, reason string) hooks.SessionEvent {
-	return hooks.SessionEvent{
-		SessionID: cfg.SessionID,
-		ParentID:  cfg.ParentSessionID,
-		AgentName: cfg.AgentName,
-		Model:     cfg.Model,
-		Reason:    reason,
-	}
 }

@@ -12,12 +12,12 @@ import (
 	"strings"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	scanengine "github.com/chainreactors/aiscan/tools/scan/engine"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	scanengine "github.com/chainreactors/cyber/tools/scan/engine"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"github.com/chainreactors/neutron/templates"
 	sdkneutron "github.com/chainreactors/sdk/neutron"
 	"github.com/chainreactors/sdk/pkg/association"
@@ -115,10 +115,10 @@ func (c *Command) QuickReference() string {
     neutron -l targets.txt -s high,critical -j`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("neutron", &err)
 	args := execution.Args
-	args = c.resolveRelativePaths(args)
+	args = toolargs.ResolveRelativePaths(args, neutronFileFlags, c.WorkDir)
 	var flags neutronFlags
 	parser := toolargs.NewGoFlagsParser("neutron", &flags)
 	_, err = parser.ParseArgs(normalizeNucleiStyleArgs(args))
@@ -161,7 +161,7 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	// before loading -t templates: the SDK binds each request transport at
 	// compile time, so a zero-proxy loader would let an explicit template dial
 	// the target directly even though the command itself has a proxy configured.
-	proxyURL := commands.ResolveExecutionEgress(execution, c.Proxy).ProxyURL
+	proxyURL := coretool.ResolveExecutionEgress(execution, c.Proxy).ProxyURL
 	loadedTemplates, err := loadNeutronTemplatePaths(flags.Templates, proxyURL)
 	if err != nil {
 		return nil, err
@@ -369,7 +369,7 @@ func loadNeutronTemplatePaths(paths []string, proxyURL string) ([]*templates.Tem
 	return nonNilSortedTemplates(loaded), nil
 }
 
-const minimalTemplateID = "__aiscan_neutron_loader__"
+const minimalTemplateID = "__cyber_neutron_loader__"
 
 func minimalCompilableTemplate() *templates.Template {
 	return &templates.Template{
@@ -467,15 +467,10 @@ func cleanTemplateTags(tmpl *templates.Template) []string {
 	return tags
 }
 
-// resolveRelativePaths resolves relative file arguments against workDir.
 var neutronFileFlags = map[string]bool{
 	"-l": true, "--list": true,
 	"-o": true, "--output": true,
 	"-t": true, "--templates": true,
-}
-
-func (c *Command) resolveRelativePaths(args []string) []string {
-	return toolargs.ResolveRelativePaths(args, neutronFileFlags, c.WorkDir)
 }
 
 func appendNonEmpty(parts []string, values ...string) []string {

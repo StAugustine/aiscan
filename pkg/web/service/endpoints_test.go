@@ -3,10 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	scannerprobe "github.com/chainreactors/aiscan/pkg/exts/scanner/probe"
-	webext "github.com/chainreactors/aiscan/pkg/exts/web"
-	"github.com/chainreactors/aiscan/pkg/probe"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,25 +10,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chainreactors/cyber/core/resource"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	hostcli "github.com/chainreactors/cyber/pkg/cli"
+	configpkg "github.com/chainreactors/cyber/pkg/config"
+	managementapi "github.com/chainreactors/cyber/pkg/web/api"
+	flags "github.com/jessevdk/go-flags"
+
 	"connectrpc.com/connect"
-	aop "github.com/chainreactors/aiscan/aop"
-	rpc "github.com/chainreactors/aiscan/pkg/rpc"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	web "github.com/chainreactors/aiscan/pkg/web"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
+	rpc "github.com/chainreactors/cyber/pkg/rpc"
+	web "github.com/chainreactors/cyber/pkg/web"
 	"github.com/gorilla/websocket"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
-func newHandler(service web.Service, _ http.Handler, static http.Handler, _ ...string) *web.Handler {
-	handler, err := web.NewHandler(service.Auth(), static, webext.Routes(service)...)
+func newHandler(service web.Service, static http.Handler) *web.Handler {
+	handler, err := web.NewHandler(service.Auth(), static, web.ManagementRoutes(service)...)
 	if err != nil {
 		panic(err)
 	}
 	return handler
 }
 
-func registerConnectServices(mux *http.ServeMux, _ string, service web.Service) {
-	for _, route := range webext.Routes(service) {
+func registerConnectServices(mux *http.ServeMux, service web.Service) {
+	for _, route := range web.ManagementRoutes(service) {
 		mux.Handle(route.Pattern, route.Handler)
 	}
 }
@@ -50,7 +53,7 @@ func newEndpointTestServer(t *testing.T) (*httptest.Server, *Service) {
 	service := NewService(ServiceConfig{})
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
-	server := httptest.NewServer(newHandler(service, nil, nil, ""))
+	server := httptest.NewServer(newHandler(service, nil))
 	t.Cleanup(func() {
 		server.Close()
 		service.Close(context.Background())
@@ -113,7 +116,7 @@ func TestConnectHandlerSupportsConnectGRPCWebAndGRPC(t *testing.T) {
 	defer service.Close(context.Background())
 
 	mux := http.NewServeMux()
-	registerConnectServices(mux, "", service)
+	registerConnectServices(mux, service)
 	server := httptest.NewUnstartedServer(mux)
 	server.EnableHTTP2 = true
 	server.StartTLS()
@@ -142,13 +145,24 @@ func TestConnectHandlerSupportsConnectGRPCWebAndGRPC(t *testing.T) {
 }
 
 func TestHandlerTestConnRouting(t *testing.T) {
-	probes := probe.New()
-	if err := probes.Register("scanner", "cyberhub", scannerprobe.Cyberhub); err != nil {
+	sections := configpkg.NewSections()
+	resources := resource.New()
+	if _, err := resource.Define[configpkg.Section](resources, sections); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewService(ServiceConfig{ConfigAPI: managementapi.ConfigOptions{Probes: probes}})
+	if _, err := resource.Define[hostcli.Contribution](resources, hostcli.New(flags.NewParser(&struct{}{}, flags.None))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resource.Define[configpkg.Connection](resources, sections.ConnectionPoint()); err != nil {
+		t.Fatal(err)
+	}
+	if err := scannerext.Declare(resources); err != nil {
+		t.Fatal(err)
+	}
+	resources.Freeze()
+	svc := NewService(ServiceConfig{ConfigAPI: managementapi.ConfigOptions{Sections: sections}})
 	defer svc.Close(context.Background())
-	srv := httptest.NewServer(newHandler(svc, nil, nil, ""))
+	srv := httptest.NewServer(newHandler(svc, nil))
 	defer srv.Close()
 	client := rpc.NewConfigServiceClient(srv.Client(), srv.URL)
 
@@ -171,7 +185,7 @@ func TestHandlerTestConnRouting(t *testing.T) {
 }
 
 func TestAOPServiceUsesSharedEnvelopeStreamOverConnectAndGRPC(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "connect-parity.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "connect-parity.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +202,7 @@ func TestAOPServiceUsesSharedEnvelopeStreamOverConnectAndGRPC(t *testing.T) {
 	}
 
 	mux := http.NewServeMux()
-	registerConnectServices(mux, "", service)
+	registerConnectServices(mux, service)
 	server := httptest.NewUnstartedServer(mux)
 	server.EnableHTTP2 = true
 	server.StartTLS()
@@ -236,7 +250,7 @@ func TestAOPServiceUsesSharedEnvelopeStreamOverConnectAndGRPC(t *testing.T) {
 // A1: a full Application Endpoint session lifecycle over Connect while the
 // answering node uses the separate Node WebSocket Endpoint.
 func TestConnectBidiClientSessionLifecycle(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "lifecycle.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "lifecycle.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,13 +261,13 @@ func TestConnectBidiClientSessionLifecycle(t *testing.T) {
 	defer service.Close(context.Background())
 
 	mux := http.NewServeMux()
-	registerConnectServices(mux, "", service)
+	registerConnectServices(mux, service)
 	server := httptest.NewUnstartedServer(mux)
 	server.EnableHTTP2 = true
 	server.StartTLS()
 	defer server.Close()
 	nodeMux := http.NewServeMux()
-	nodeMux.HandleFunc(NodeWebSocketPath, pool.HandleNodeWebSocket)
+	nodeMux.Handle(NodeWebSocketPath, service.NodeWebSocketHandler())
 	nodeServer := httptest.NewServer(nodeMux)
 	defer nodeServer.Close()
 

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/aop"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/telemetry"
+	"github.com/chainreactors/cyber/aop"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/telemetry"
 )
 
 func TestRetryOnTransientError(t *testing.T) {
@@ -212,10 +212,10 @@ func TestStreamAssistantMessageReturnsContextErrorOnClosedCanceledStream(t *test
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, _, err := streamAssistantMessageWithUsage(ctx,
+	_, _, _, err := streamAssistantMessageWithUsage(ctx,
 		&scriptedProvider{},
 		&ChatCompletionRequest{Model: "test"},
-		newAOPEmitter(coreevents.New(), "aiscan", "test-session", "", "", nil, 0),
+		newAOPEmitter(coreevents.New(), "cyber", "test-session", "", "", nil, 0),
 		telemetry.NopLogger(),
 		1,
 		"m-1",
@@ -366,7 +366,13 @@ func TestInferImageSupportModelRegistry(t *testing.T) {
 		{"openai", "qwen-vl-plus", true},
 
 		{"openai", "deepseek-v4-pro", false},
-		{"openai", "deepseek-v4-flash", false},
+		{"openai", "deepseek-v4-flash", true},
+		{"openai", "deepseek-flash", true},
+		{"anthropic", "deepseek-flash", true},
+		{"anthropic", "deepseek-v4-pro", false},
+		{"openai", "deepseek/deepseek-flash", true},
+		{"openai", "deepseek-v4-flash-vision-exp", true},
+		{"openai", "deepseek-chat", false},
 		{"openai", "Qwen3-235B-A22B", false},
 		{"openai", "glm-4.7", false},
 		{"openai", "mistral-large-2411", false},

@@ -3,8 +3,8 @@ package provider
 import (
 	"context"
 	"fmt"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/core/telemetry"
+	types "github.com/chainreactors/cyber/core/types"
 	"strings"
 	"sync"
 	"time"
@@ -28,14 +28,24 @@ type Entry struct {
 	Provider Provider
 	Model    string
 }
+
+// StartupMode expresses whether a Profile omits, requires, or opportunistically
+// initializes its provider.
+type StartupMode uint8
+
+const (
+	StartupDisabled StartupMode = iota
+	StartupRequired
+	StartupOptional
+)
+
 type StartupConfig struct {
-	Enabled   bool
+	Mode      StartupMode
 	Config    ProviderConfig
 	Fallbacks []ProviderConfig
-	Optional  bool
 }
 
-// State is provider business state. The profile owns its initialization.
+// State is provider business state owned by the provider extension.
 type State struct {
 	mu        sync.RWMutex
 	provider  Provider
@@ -44,6 +54,12 @@ type State struct {
 	health    Health
 	fallbacks []Entry
 	owned     []Provider
+}
+
+// Controller is the provider extension's live configuration boundary. The
+// session runtime consumes State; it never constructs or probes providers.
+type Controller interface {
+	Reload(context.Context, ProviderConfig, ...func() error) error
 }
 
 func (s *State) Current() (Provider, ProviderConfig) {
@@ -65,6 +81,27 @@ func (s *State) Fallbacks() []Entry {
 	defer s.mu.RUnlock()
 	return append([]Entry(nil), s.fallbacks...)
 }
+
+// ForModel builds a session-local client from the Profile's provider settings.
+// The existing provider owner closes it after dependent sessions drain.
+func (s *State) ForModel(model string, logger telemetry.Logger) (Provider, ProviderConfig, error) {
+	current, config := s.Current()
+	if current != nil && config.Model == model {
+		return current, config, nil
+	}
+	if config.Model != model {
+		config.Images, config.ContextWindow = nil, 0
+	}
+	config.Model = model
+	p, resolved, err := initProvider(config, logger)
+	if err != nil {
+		return nil, ProviderConfig{}, err
+	}
+	s.mu.Lock()
+	s.owned = append(s.owned, p)
+	s.mu.Unlock()
+	return p, *resolved, nil
+}
 func (s *State) Set(p Provider, config ProviderConfig) {
 	s.install(p, config, Health{State: HealthConfigured, CheckedAt: time.Now()})
 }
@@ -75,6 +112,7 @@ func (s *State) install(p Provider, config ProviderConfig, health Health) uint64
 	s.revision++
 	return s.revision
 }
+
 func (s *State) Reload(ctx context.Context, config ProviderConfig, logger telemetry.Logger) (Provider, ProviderConfig, error) {
 	p, resolved, err := initProvider(config, logger)
 	if err != nil {
@@ -95,17 +133,81 @@ func (s *State) Reload(ctx context.Context, config ProviderConfig, logger teleme
 	s.mu.Unlock()
 	return p, *resolved, nil
 }
+
+// Update is the live configuration operation owned by the provider
+// extension. It validates and probes the new client before publishing it, so
+// a quota/network failure leaves the previous client and sessions usable.
+// An optional commit runs after validation, under the publication lock. It
+// must not call State methods. A failed commit leaves the existing client,
+// health and sessions intact, without a second probe or a rollback reload.
+func (s *State) Update(ctx context.Context, config ProviderConfig, logger telemetry.Logger, commit ...func() error) error {
+	if len(commit) > 1 {
+		return fmt.Errorf("provider update accepts one commit")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.RLock()
+	revision := s.revision
+	s.mu.RUnlock()
+	p, resolved, err := initProvider(config, logger)
+	if err != nil {
+		return err
+	}
+	health := Probe(ctx, *resolved, logger)
+	if err := ctx.Err(); err != nil {
+		closeIdleConnections(p)
+		return err
+	}
+	if health.State == HealthFailed {
+		closeIdleConnections(p)
+		if health.Error == "" {
+			return fmt.Errorf("provider probe failed")
+		}
+		return fmt.Errorf("provider probe failed: %s", health.Error)
+	}
+	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		closeIdleConnections(p)
+		return err
+	}
+	if s.revision != revision {
+		s.mu.Unlock()
+		closeIdleConnections(p)
+		return fmt.Errorf("provider state changed while checking configuration")
+	}
+	if len(commit) == 1 && commit[0] != nil {
+		if err := commit[0](); err != nil {
+			s.mu.Unlock()
+			closeIdleConnections(p)
+			return err
+		}
+	}
+	s.provider, s.config, s.health = p, *resolved, health
+	s.owned = append(s.owned, p)
+	s.revision++
+	s.mu.Unlock()
+	return nil
+}
 func (s *State) initialize(ctx context.Context, config StartupConfig, logger telemetry.Logger) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !config.Enabled {
+	switch config.Mode {
+	case StartupDisabled:
 		return nil
+	case StartupRequired, StartupOptional:
+	default:
+		return fmt.Errorf("invalid provider startup mode %d", config.Mode)
 	}
 	s.install(nil, config.Config, Health{State: HealthNotConfigured})
 	if _, _, err := s.Reload(ctx, config.Config, logger); err != nil {
 		s.install(nil, config.Config, Health{State: HealthNotConfigured, Error: err.Error(), CheckedAt: time.Now()})
-		if !config.Optional {
+		if config.Mode != StartupOptional {
 			return err
 		}
 		logger.Debugf("provider not configured: %s", err)

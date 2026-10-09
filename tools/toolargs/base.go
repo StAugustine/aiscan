@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/operation"
-	"github.com/chainreactors/aiscan/core/telemetry"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/operation"
+	"github.com/chainreactors/cyber/core/telemetry"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -34,25 +34,54 @@ func (b *Base) InitLogger(logger telemetry.Logger) {
 }
 
 func (b *Base) EmitArtifactCtx(ctx context.Context, tool, kind, target string, data any) {
-	b.EmitArtifactResultCtx(ctx, ArtifactResultID(tool, kind, target, data), tool, kind, target, data)
+	raw, err := json.Marshal(data)
+	if err != nil {
+		if b.Logger != nil {
+			b.Logger.Warnf("marshal %s artifact: %s", tool, err)
+		}
+		return
+	}
+	if err := b.EmitArtifactJSONCtx(ctx, ArtifactResultIDFromJSON(tool, kind, target, raw), tool, kind, target, raw); err != nil && b.Logger != nil {
+		b.Logger.Warnf("emit %s artifact: %s", tool, err)
+	}
 }
 
 // ArtifactResultID returns a stable identity for one scanner-native record.
 // The same value is carried by its aop.tool.Loot marker.
 func ArtifactResultID(tool, kind, target string, data any) string {
 	raw, _ := json.Marshal(data)
-	digest := sha256.Sum256(append([]byte(tool+"\x00"+kind+"\x00"+target+"\x00"), raw...))
-	return fmt.Sprintf("%x", digest[:16])
+	return ArtifactResultIDFromJSON(tool, kind, target, raw)
 }
 
-func (b *Base) EmitArtifactResultCtx(ctx context.Context, resultID, tool, kind, target string, data any) {
+func ArtifactResultIDFromJSON(tool, kind, target string, raw []byte) string {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte(tool + "\x00" + kind + "\x00" + target + "\x00"))
+	_, _ = digest.Write(raw)
+	return fmt.Sprintf("%x", digest.Sum(nil)[:16])
+}
+
+func (b *Base) EmitArtifactResultCtx(ctx context.Context, resultID, tool, kind, target string, data any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if b.Events == nil || data == nil {
-		return
+		return nil
 	}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		b.Logger.Warnf("marshal %s artifact: %s", tool, err)
-		return
+		return err
+	}
+	return b.EmitArtifactJSONCtx(ctx, resultID, tool, kind, target, raw)
+}
+
+// EmitArtifactJSONCtx publishes a native record already encoded by its producer.
+func (b *Base) EmitArtifactJSONCtx(ctx context.Context, resultID, tool, kind, target string, raw []byte) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if b.Events == nil || len(raw) == 0 {
+		return nil
 	}
 	// One artifact event is one control-plane frame. A record that outgrows the
 	// frame is trimmed to fit here, at the sole point every tool's artifact is
@@ -80,25 +109,29 @@ func (b *Base) EmitArtifactResultCtx(ctx context.Context, resultID, tool, kind, 
 	extension, err := anypb.New(artifact)
 	if err != nil {
 		b.Logger.Warnf("encode %s artifact: %s", tool, err)
-		return
+		return err
 	}
 	event.Payload.(*aop.Event_Extension).Extension = extension
 	if ref := operation.Correlation(ctx); ref != nil {
 		if err := aop.SetTypedExtension(event, ref); err != nil {
 			b.Logger.Warnf("encode %s artifact correlation: %s", tool, err)
-			return
+			return err
 		}
 	}
 	b.Events.Publish(event)
+	return nil
 }
 
 func (b *Base) EmitLootCtx(
 	ctx context.Context,
 	resultID, tool, kind, target, priority, description, verificationStatus string,
 	tags []string,
-) {
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if b.Events == nil || resultID == "" {
-		return
+		return nil
 	}
 	invocation := operation.InvocationFromContext(ctx)
 	loot := &toolpb.Loot{
@@ -122,14 +155,15 @@ func (b *Base) EmitLootCtx(
 	extension, err := anypb.New(loot)
 	if err != nil {
 		b.Logger.Warnf("encode %s loot: %s", tool, err)
-		return
+		return err
 	}
 	event.Payload.(*aop.Event_Extension).Extension = extension
 	if ref := operation.Correlation(ctx); ref != nil {
 		if err := aop.SetTypedExtension(event, ref); err != nil {
 			b.Logger.Warnf("encode %s loot correlation: %s", tool, err)
-			return
+			return err
 		}
 	}
 	b.Events.Publish(event)
+	return nil
 }

@@ -4,15 +4,134 @@ import (
 	"context"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
+	managementapi "github.com/chainreactors/cyber/pkg/web/api"
+	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+func TestRoutedChildEventsShareParentTimelineSequence(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	createStoredSession(t, store, "parent")
+	svc := NewService(ServiceConfig{Store: store})
+	defer svc.Close(context.Background())
+	for i, origin := range []string{"parent", "child", "parent"} {
+		svc.BroadcastAOPEvent("parent", &aop.Event{
+			Id: strconv.Itoa(i), SessionId: origin, TurnId: "turn", Seq: 50,
+			Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}},
+		})
+	}
+	events, err := store.ListAOPEvents(t.Context(), "parent", 10)
+	if err != nil || len(events) != 2 {
+		t.Fatalf("events=%v, error=%v", events, err)
+	}
+	if events[0].Seq != 1 || events[1].Seq != 2 || events[1].SessionId != "child" {
+		t.Fatalf("routed timeline lost ordering or origin: %v", events)
+	}
+	// A new service must continue the destination timeline even for a child origin.
+	restarted := NewService(ServiceConfig{Store: store})
+	defer restarted.Close(context.Background())
+	restarted.BroadcastAOPEvent("parent", &aop.Event{Id: "after-restart", SessionId: "child",
+		Payload: &aop.Event_Message{Message: &aop.Message{Role: "assistant", Content: []*aop.Content{aop.Text("next")}}},
+	})
+	events, err = store.ListAOPEvents(t.Context(), "parent", 10)
+	if err != nil || len(events) != 3 || events[2].Seq != 3 {
+		t.Fatalf("restarted timeline=%v, error=%v", events, err)
+	}
+}
+
+func TestWebTimelineConcurrentOrderingAndRestartDedup(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	createStoredSession(t, store, "timeline")
+	svc := NewService(ServiceConfig{Store: store})
+	defer svc.Close(context.Background())
+	deliveries, stop := svc.hub.SubscribeAOP("timeline")
+	defer stop()
+	var writers sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			event := &aop.Event{Id: strconv.Itoa(i), SessionId: "timeline", Seq: 900,
+				Payload: &aop.Event_Message{Message: &aop.Message{Id: strconv.Itoa(i), Role: "assistant", Content: []*aop.Content{aop.Text("text")}}}}
+			svc.BroadcastAOPEvent("timeline", event)
+			if event.Seq != 900 {
+				t.Error("source event mutated")
+			}
+		}()
+	}
+	writers.Wait()
+	stored, err := store.ListAOPEvents(t.Context(), "timeline", 100)
+	if err != nil || len(stored) != 20 {
+		t.Fatalf("events=%d error=%v", len(stored), err)
+	}
+	for seq := uint64(1); seq <= 20; seq++ {
+		select {
+		case delivery := <-deliveries:
+			if delivery.Event.Seq != seq {
+				t.Fatalf("wire order=%d expected=%d", delivery.Event.Seq, seq)
+			}
+		default:
+			t.Fatal("missing delivery")
+		}
+	}
+	restarted := NewService(ServiceConfig{Store: store})
+	defer restarted.Close(context.Background())
+	replay, cancelReplay := restarted.hub.SubscribeAOP("timeline")
+	defer cancelReplay()
+	restarted.BroadcastAOPEvent("timeline", stored[0])
+	select {
+	case <-replay:
+		t.Fatal("durable duplicate was republished after restart")
+	default:
+	}
+	restarted.BroadcastAOPEvent("timeline", &aop.Event{Id: "new", SessionId: "timeline", Payload: &aop.Event_Message{Message: &aop.Message{Role: "assistant", Content: []*aop.Content{aop.Text("new")}}}})
+	if got := (<-replay).Event.Seq; got != 21 {
+		t.Fatalf("restart sequence=%d", got)
+	}
+}
+
+func TestFailedPersistenceDoesNotSealTurn(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	createStoredSession(t, store, "retry")
+	svc := NewService(ServiceConfig{Store: store})
+	defer svc.Close(context.Background())
+	event := &aop.Event{Id: "terminal", SessionId: "retry", TurnId: "turn", Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}}}
+	if _, err := store.db.Exec(`CREATE TRIGGER reject_event BEFORE INSERT ON chat_aop_events BEGIN SELECT RAISE(FAIL, 'storage unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.acceptAOPEvent("retry", proto.CloneOf(event)); err == nil {
+		t.Fatal("persistence failure was hidden")
+	}
+	if _, err := store.db.Exec(`DROP TRIGGER reject_event`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.acceptAOPEvent("retry", proto.CloneOf(event)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := store.ListAOPEvents(t.Context(), "retry", 10)
+	if err != nil || len(stored) != 1 || stored[0].Seq != 1 {
+		t.Fatalf("retry events=%v error=%v", stored, err)
+	}
+}
 
 func TestHubBroadcastAOPReliableSurvivesBackpressure(t *testing.T) {
 	hub := NewHub()
@@ -80,7 +199,7 @@ func TestScanSubscriptionReturnsSnapshotSequenceBoundary(t *testing.T) {
 	if sequence != 1 {
 		t.Fatalf("subscription sequence = %d, want 1", sequence)
 	}
-	snapshot := managementapi.ScanSnapshot(&types.Scan{Id: "scan-1"}, sequence)
+	snapshot := managementapi.ScanSnapshot(&scanpb.Scan{Id: "scan-1"}, sequence)
 	if snapshot.Sequence != sequence {
 		t.Fatalf("snapshot sequence = %d, want %d", snapshot.Sequence, sequence)
 	}
@@ -96,7 +215,7 @@ func TestScanSubscriptionReturnsSnapshotSequenceBoundary(t *testing.T) {
 }
 
 func TestBroadcastAOPEventPersistsCanonicalProtoJSON(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +224,7 @@ func TestBroadcastAOPEventPersistsCanonicalProtoJSON(t *testing.T) {
 	createStoredSession(t, store, "session-aop")
 	event := &aop.Event{
 		Id: "event-1", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)),
-		SessionId: "session-aop", Emitter: "aiscan", Seq: 7,
+		SessionId: "session-aop", Emitter: "cyber", Seq: 7,
 		Payload: &aop.Event_Message{Message: &aop.Message{Id: "message-1", Role: "assistant", Content: []*aop.Content{aop.Text("hello")}}},
 	}
 	service.BroadcastAOPEvent("session-aop", event)
@@ -114,13 +233,18 @@ func TestBroadcastAOPEventPersistsCanonicalProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || !proto.Equal(events[0], event) {
+	expected := proto.CloneOf(event)
+	expected.Seq = 1
+	if event.Seq != 7 {
+		t.Fatal("incoming timeline was mutated")
+	}
+	if len(events) != 1 || !proto.Equal(events[0], expected) {
 		t.Fatalf("persisted events = %+v, want %+v", events, event)
 	}
 }
 
 func TestBroadcastAOPEventDoesNotFanOutRetryWithSameEventID(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +254,7 @@ func TestBroadcastAOPEventDoesNotFanOutRetryWithSameEventID(t *testing.T) {
 	deliveries, unsubscribe := service.SubscribeSessionEvents("session-retry")
 	defer unsubscribe()
 	event := &aop.Event{
-		Id: "event-retry", SessionId: "session-retry", Emitter: "aiscan",
+		Id: "event-retry", SessionId: "session-retry", Emitter: "cyber",
 		Payload: &aop.Event_Message{Message: &aop.Message{Id: "message-1", Role: "assistant", Content: []*aop.Content{aop.Text("once")}}},
 	}
 	service.BroadcastAOPEvent("session-retry", event)
@@ -153,7 +277,7 @@ func TestBroadcastAOPEventDoesNotFanOutRetryWithSameEventID(t *testing.T) {
 }
 
 func TestEvalMetadataPersistsOnlyInAOP(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +285,7 @@ func TestEvalMetadataPersistsOnlyInAOP(t *testing.T) {
 	service := NewService(ServiceConfig{Store: store})
 	createStoredSession(t, store, "session-eval")
 	event := &aop.Event{
-		Id: "event-1", EmittedAt: timestamppb.Now(), SessionId: "session-eval", TurnId: "turn-1", Emitter: "aiscan",
+		Id: "event-1", EmittedAt: timestamppb.Now(), SessionId: "session-eval", TurnId: "turn-1", Emitter: "cyber",
 		Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}},
 	}
 	_ = types.SetEvalDetail(event, &types.EvalDetail{Round: 2, Reason: "needs verification"})
@@ -177,7 +301,7 @@ func TestEvalMetadataPersistsOnlyInAOP(t *testing.T) {
 }
 
 func TestServerGeneratedAOPEventContinuesStoredSessionSequence(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,35 +322,39 @@ func TestServerGeneratedAOPEventContinuesStoredSessionSequence(t *testing.T) {
 }
 
 func TestScanCompletePersistsTypedAOPExtension(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	createStoredSession(t, store, "session-scan")
-	if err := store.Create(context.Background(), &types.Scan{
+	if err := store.Create(context.Background(), &scanpb.Scan{
 		Id: "scan-123", Target: "127.0.0.1", Mode: "quick",
-		Status: types.ScanStatus_SCAN_STATUS_COMPLETED, CreatedAt: nowProto(), UpdatedAt: nowProto(),
+		Status: scanpb.ScanStatus_SCAN_STATUS_COMPLETED, CreatedAt: nowProto(), UpdatedAt: nowProto(),
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// The session binds the scan at open time; that durable link — not a
+	// fabricated in-flight task — is what the completion fan-out resolves.
+	if err := store.LinkScanToSession(context.Background(), "session-scan", "scan-123"); err != nil {
+		t.Fatal(err)
+	}
 	service := NewService(ServiceConfig{Store: store})
-	service.registerSessionTask("scan-123", "session-scan", "")
-	service.broadcastScanComplete("scan-123")
+	service.broadcastScanStatus("scan-123", scanpb.ScanStatus_SCAN_STATUS_COMPLETED)
 
 	events, err := store.ListAOPEvents(context.Background(), "session-scan", 10)
 	if err != nil || len(events) != 1 {
 		t.Fatalf("events = %+v, err = %v", events, err)
 	}
 	extension := events[0].GetExtension()
-	value := new(types.SessionScanEvent)
+	value := new(scanpb.SessionScanEvent)
 	if extension == nil || !extension.MessageIs(value) {
 		t.Fatalf("extension = %+v", extension)
 	}
 	if err := extension.UnmarshalTo(value); err != nil {
 		t.Fatal(err)
 	}
-	if value.ScanId != "scan-123" || value.Status != types.ScanStatus_SCAN_STATUS_COMPLETED {
+	if value.ScanId != "scan-123" || value.Status != scanpb.ScanStatus_SCAN_STATUS_COMPLETED {
 		t.Fatalf("scan extension = %+v", value)
 	}
 	ids, err := store.SessionScanIDs(context.Background(), "session-scan")
@@ -235,23 +363,46 @@ func TestScanCompletePersistsTypedAOPExtension(t *testing.T) {
 	}
 }
 
+func TestScanCompleteWithoutSessionBindingEmitsNothing(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	createStoredSession(t, store, "session-unbound")
+	service := NewService(ServiceConfig{Store: store})
+	// An in-flight task id is not a scan binding. The completion fan-out resolves
+	// the durable session_scans relation, so a stray task registration must not
+	// leak a result card into a session the scan was never bound to.
+	service.registerSessionTask("scan-stray", "session-unbound")
+	service.broadcastScanStatus("scan-stray", scanpb.ScanStatus_SCAN_STATUS_COMPLETED)
+
+	events, err := store.ListAOPEvents(context.Background(), "session-unbound", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %+v, want none", events)
+	}
+}
+
 func TestWatchScanEventsImmediatelyReturnsTerminalSnapshot(t *testing.T) {
-	for _, status := range []types.ScanStatus{types.ScanStatus_SCAN_STATUS_COMPLETED, types.ScanStatus_SCAN_STATUS_FAILED, types.ScanStatus_SCAN_STATUS_CANCELED} {
+	for _, status := range []scanpb.ScanStatus{scanpb.ScanStatus_SCAN_STATUS_COMPLETED, scanpb.ScanStatus_SCAN_STATUS_FAILED, scanpb.ScanStatus_SCAN_STATUS_CANCELED} {
 		t.Run(scanStatusToDB(status), func(t *testing.T) {
-			store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+			store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer store.Close()
-			scan := &types.Scan{Id: "terminal-scan", Target: "127.0.0.1", Mode: "quick", Status: status, CreatedAt: nowProto(), UpdatedAt: nowProto()}
+			scan := &scanpb.Scan{Id: "terminal-scan", Target: "127.0.0.1", Mode: "quick", Status: status, CreatedAt: nowProto(), UpdatedAt: nowProto()}
 			if err := store.Create(context.Background(), scan); err != nil {
 				t.Fatal(err)
 			}
-			service := NewService(ServiceConfig{Store: store})
-			var responses []*types.ScanEvent
+			service := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
+			var responses []*scanpb.ScanEvent
 			err = service.api.Scans.WatchScanEvents(
-				&types.WatchScanEventsRequest{ScanId: scan.Id}, context.Background(),
-				func(event *types.ScanEvent) error {
+				&scanpb.WatchScanEventsRequest{ScanId: scan.Id}, context.Background(),
+				func(event *scanpb.ScanEvent) error {
 					responses = append(responses, event)
 					return nil
 				},

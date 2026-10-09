@@ -3,23 +3,84 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent/inbox"
-	"github.com/chainreactors/aiscan/agent/provider"
-	"github.com/chainreactors/aiscan/agent/tmux"
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/hooks"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	toolhooks "github.com/chainreactors/aiscan/core/tool/hooks"
-	"github.com/chainreactors/aiscan/core/truncate"
+	agenthooks "github.com/chainreactors/cyber/agent/hooks"
+	"github.com/chainreactors/cyber/agent/inbox"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/hooks"
+	procbus "github.com/chainreactors/cyber/core/proc"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
+	"github.com/chainreactors/cyber/core/truncate"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
+	terminaltool "github.com/chainreactors/cyber/tools/terminal"
+	"github.com/chainreactors/utils/proc"
 	"google.golang.org/protobuf/encoding/protojson"
 )
+
+func TestSystemPromptResolvesOnceBeforeRunHooks(t *testing.T) {
+	registry := hooks.New()
+	var hookSaw string
+	agenthooks.BeforeRun.On(registry, "test", func(_ context.Context, event agenthooks.RunStartEvent) (agenthooks.RunStartResult, error) {
+		hookSaw = event.SystemPrompt
+		updated := event.SystemPrompt + "\nhook"
+		return agenthooks.RunStartResult{SystemPrompt: &updated}, nil
+	})
+	llm := &scriptedProvider{responses: []*ChatCompletionResponse{
+		chatResponse(ChatMessage{Role: "assistant", ToolCalls: []ToolCall{{
+			ID: "call_1", Type: "function", Function: FunctionCall{Name: "echo", Arguments: "{}"},
+		}}}),
+		chatResponse(NewTextMessage("assistant", "done")),
+	}}
+	resolved := 0
+	agent := NewAgent(Config{
+		Loop: StandardLoop{}, Provider: llm, Model: "test", Hooks: registry,
+		Tools: newTestTools(t, &recordingTool{name: "echo", output: "ok"}),
+		SystemPromptFn: func(context.Context, *Config) (string, error) {
+			resolved++
+			return fmt.Sprintf("resolved-%d", resolved), nil
+		},
+	})
+	if _, err := agent.Run(t.Context(), TextInput("run")); err != nil {
+		t.Fatal(err)
+	}
+	if resolved != 1 || hookSaw != "resolved-1" {
+		t.Fatalf("resolved=%d hook saw=%q", resolved, hookSaw)
+	}
+	for index, request := range llm.requestsSnapshot() {
+		if len(request.Messages) == 0 || provider.MessageText(request.Messages[0]) != "resolved-1\nhook" {
+			t.Fatalf("request %d system prompt = %#v", index, request.Messages)
+		}
+	}
+}
+
+func TestSystemPromptResolutionFailureEndsRun(t *testing.T) {
+	llm := &callbackProvider{fn: func(context.Context, *ChatCompletionRequest) (*ChatCompletionResponse, error) {
+		t.Fatal("provider should not be called")
+		return nil, nil
+	}}
+	agent := NewAgent(Config{
+		Loop: StandardLoop{}, Provider: llm,
+		SystemPromptFn: func(context.Context, *Config) (string, error) {
+			return "", errors.New("prompt failed")
+		},
+	})
+	result, err := agent.Run(t.Context(), TextInput("run"))
+	if err == nil || !strings.Contains(err.Error(), "resolve system prompt: prompt failed") {
+		t.Fatalf("error = %v", err)
+	}
+	if result == nil || result.Stop != StopReasonError || result.Err == nil {
+		t.Fatalf("result = %#v", result)
+	}
+}
 
 func TestParallelToolCallRecoversExtensionPanic(t *testing.T) {
 	registry := hooks.New()
@@ -29,7 +90,7 @@ func TestParallelToolCallRecoversExtensionPanic(t *testing.T) {
 		}
 		return toolhooks.Admission{}, nil
 	})
-	tools := testToolsWithHooks(t, registry, &recordingTool{name: "first", output: "first ok"}, &recordingTool{name: "second", output: "second ok"})
+	tools := hosttest.ToolsWithHooks(t, registry, &recordingTool{name: "first", output: "first ok"}, &recordingTool{name: "second", output: "second ok"})
 	var logs bytes.Buffer
 	cfg := Config{
 		Tools:  tools,
@@ -54,10 +115,10 @@ func TestParallelToolCallRecoversExtensionPanic(t *testing.T) {
 	}
 	first := provider.MessageToolResult(batch.messages[0])
 	second := provider.MessageToolResult(batch.messages[1])
-	if first == nil || !first.IsError || !strings.Contains(tool.ResultText(first), "operation denied") {
+	if first == nil || !first.IsError || !strings.Contains(coretool.ResultText(first), "operation denied") {
 		t.Fatalf("first result = %+v", first)
 	}
-	if second == nil || second.IsError || tool.ResultText(second) != "second ok" {
+	if second == nil || second.IsError || coretool.ResultText(second) != "second ok" {
 		t.Fatalf("second result = %+v", second)
 	}
 	if got := logs.String(); strings.Contains(got, "before boom") || !strings.Contains(got, "handler panicked") {
@@ -101,20 +162,36 @@ func TestToolResultEventNormalizesInvalidUTF8(t *testing.T) {
 	if _, err := aop.Wrap("event", "call-invalid-utf8", message); err != nil {
 		t.Fatalf("wrap tool.result: %v", err)
 	}
-	if got := tool.ResultText(provider.MessageToolResult(batch.messages[0])); got != "ok:\uFFFD" {
+	if got := coretool.ResultText(provider.MessageToolResult(batch.messages[0])); got != "ok:\uFFFD" {
 		t.Fatalf("transcript output = %q, want valid UTF-8 replacement", got)
 	}
 }
 
 type invalidUTF8Tool struct{}
 
+func TestModelToolResultBoundsTextWithoutLosingMedia(t *testing.T) {
+	full := strings.Repeat("large output\n", 100)
+	result := &aop.ToolResult{
+		CallId: "call", Name: "scan", IsError: true, Terminate: true, DurationMs: 7,
+		Output: []*aop.Content{aop.Text(full), aop.Image("image/png", []byte("image"))},
+	}
+	message := modelToolResultMessage(result, 64)
+	projected := provider.MessageToolResult(message)
+	if coretool.ResultText(result) != full || len(coretool.ResultText(projected)) >= len(full) {
+		t.Fatal("model projection must bound text without changing the event result")
+	}
+	if !projected.IsError || !projected.Terminate || projected.DurationMs != 7 || projected.Name != "scan" || !coretool.ResultHasImages(projected) {
+		t.Fatalf("model projection lost result fields: %+v", projected)
+	}
+}
+
 func (invalidUTF8Tool) Name() string        { return "echo" }
 func (invalidUTF8Tool) Description() string { return "returns raw text" }
 func (invalidUTF8Tool) Definition() *aop.ToolDefinition {
-	return tool.Def("echo", "returns raw text", struct{}{})
+	return coretool.Def("echo", "returns raw text", struct{}{})
 }
-func (invalidUTF8Tool) Execute(context.Context, string) (*tool.Result, error) {
-	return &tool.Result{Output: []*aop.Content{{
+func (invalidUTF8Tool) Execute(context.Context, string) (*coretool.Result, error) {
+	return &coretool.Result{Output: []*aop.Content{{
 		Value: &aop.Content_Text{Text: &aop.TextContent{Text: string([]byte{'o', 'k', ':', 0xe7})}},
 	}}}, nil
 }
@@ -160,8 +237,10 @@ func TestRunEmitsTurnEndAfterToolResults(t *testing.T) {
 		"message",
 		"tool.call",
 		"tool.result",
+		"usage", // unknown usage is now reported explicitly with request counters
 		"status",
 		"message",
+		"usage",
 	}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %#v, want %#v", events, want)
@@ -392,11 +471,10 @@ func TestStreamingToolCallDeltasAreAggregated(t *testing.T) {
 
 func TestOutputLimitToolCallIsRejectedAndRetried(t *testing.T) {
 	echo := &recordingTool{name: "echo", output: "must not run"}
-	tools := newTestTools(t, echo)
 	beforeCalled := false
 	afterCalled := false
 	registry := hooks.New()
-	tools = testToolsWithHooks(t, registry, echo)
+	tools := hosttest.ToolsWithHooks(t, registry, echo)
 	toolhooks.Before.On(registry, "test", func(context.Context, toolhooks.CallEvent) (toolhooks.Admission, error) {
 		beforeCalled = true
 		return toolhooks.Admission{}, nil
@@ -460,9 +538,30 @@ func TestOutputLimitToolCallIsRejectedAndRetried(t *testing.T) {
 	if got := string(truncatedCalls[0].GetArguments().GetData()); got != "{}" {
 		t.Fatalf("sanitized arguments = %q, want {}", got)
 	}
-	if errorResult == nil || !errorResult.IsError || !strings.Contains(tool.ResultText(errorResult), "Retry") {
+	if errorResult == nil || !errorResult.IsError || !strings.Contains(coretool.ResultText(errorResult), "Retry") {
 		t.Fatalf("error tool result = %#v", errorResult)
 	}
+}
+
+func TestStreamedEmptyReasoningSurvivesToolContinuation(t *testing.T) {
+	echo := &recordingTool{name: "echo", output: "observed"}
+	llm := &scriptedProvider{streamEventBatches: [][]ChatCompletionStreamEvent{
+		{roleDelta("assistant"), {MessageDelta: &aop.MessageDelta{Value: &aop.MessageDelta_Reasoning{Reasoning: ""}}}, toolCallDelta(0, "c1", "echo", `{}`), {FinishReason: "tool_calls"}, {Done: true}},
+		{roleDelta("assistant"), textDelta("done"), {FinishReason: "stop"}, {Done: true}},
+	}}
+	result, err := NewAgent(Config{Loop: StandardLoop{}, Provider: llm, Tools: newTestTools(t, echo), Model: "test", Stream: true}).Run(t.Context(), TextInput("Read the observation."))
+	if err != nil || result.Output != "done" {
+		t.Fatalf("tool continuation failed: %v", err)
+	}
+	for _, msg := range result.Messages {
+		if len(provider.MessageToolCalls(msg)) > 0 {
+			if len(msg.Content) == 0 || msg.Content[0].GetReasoning() == nil {
+				t.Fatal("explicit empty reasoning lost in streamed history")
+			}
+			return
+		}
+	}
+	t.Fatal("tool call not recorded")
 }
 
 func TestStreamingOutputLimitToolCallPreservesFinishReason(t *testing.T) {
@@ -569,14 +668,13 @@ func TestStreamingMalformedToolCallIsRejectedAfterNormalTerminalMarker(t *testin
 	if len(rejectedCalls) != 1 || string(rejectedCalls[0].GetArguments().GetData()) != "{}" {
 		t.Fatalf("rejected tool call = %#v", rejectedCalls)
 	}
-	if errorResult == nil || !errorResult.IsError || !strings.Contains(tool.ResultText(errorResult), "invalid") {
+	if errorResult == nil || !errorResult.IsError || !strings.Contains(coretool.ResultText(errorResult), "invalid") {
 		t.Fatalf("error tool result = %#v", errorResult)
 	}
 }
 
 func TestToolHookRewritesFullResultAndTerminates(t *testing.T) {
 	echo := &recordingTool{name: "echo", output: "raw"}
-	tools := newTestTools(t, echo)
 	llm := &scriptedProvider{
 		responses: []*ChatCompletionResponse{
 			chatResponse(ChatMessage{
@@ -594,7 +692,7 @@ func TestToolHookRewritesFullResultAndTerminates(t *testing.T) {
 	}
 	rewritten := "rewritten result"
 	registry := hooks.New()
-	tools = testToolsWithHooks(t, registry, echo)
+	tools := hosttest.ToolsWithHooks(t, registry, echo)
 	toolhooks.After.On(registry, "test", func(_ context.Context, event toolhooks.ResultEvent) (struct{}, error) {
 		event.Result.Output = []*aop.Content{aop.Text(rewritten)}
 		event.Result.IsError = false
@@ -1106,17 +1204,18 @@ func TestSessionCompletionInjectedIntoAgentLoop(t *testing.T) {
 	tools := newTestTools(t, &recordingTool{name: "echo", output: "tool output"})
 
 	ib := inbox.NewBuffered(8)
-	sessMgr := tmux.NewManager()
-	sessMgr.SetOnDone(func(info tmux.Info) {
+	sessMgr := procbus.NewManager()
+	sessMgr.SetOnDone(func(info proc.Info) {
 		tail := sessMgr.PeekOrEmpty(info.ID, 20)
 		msg := inbox.NewMessage(inbox.OriginSession, "user",
-			tmux.FormatCompletion(info, tail))
+			terminaltool.FormatCompletion(info, tail))
 		msg.Meta = map[string]any{"session_id": info.ID}
 		ib.Push(msg)
 	})
 
 	dir := t.TempDir()
-	_, err := sessMgr.Create(dir, "echo background-result", "bg-scan", 10*time.Second, nil, "")
+	_, err := sessMgr.Start(t.Context(), proc.Spec{Name: "bg-scan", Command: "echo background-result", Timeout: 10 * time.Second},
+		proc.TTY(proc.ProcOptions{Line: "echo background-result", Dir: dir}))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -1182,21 +1281,22 @@ func TestSessionCompletionInjectedIntoAgentLoop(t *testing.T) {
 
 func TestSessionCompletionMetadata(t *testing.T) {
 	ib := inbox.NewBuffered(4)
-	sessMgr := tmux.NewManager()
-	sessMgr.SetOnDone(func(info tmux.Info) {
+	sessMgr := procbus.NewManager()
+	sessMgr.SetOnDone(func(info proc.Info) {
 		tail := sessMgr.PeekOrEmpty(info.ID, 20)
 		msg := inbox.NewMessage(inbox.OriginSession, "user",
-			tmux.FormatCompletion(info, tail))
+			terminaltool.FormatCompletion(info, tail))
 		msg.Meta = map[string]any{
 			"session_id":   info.ID,
 			"session_name": info.Name,
-			"exit_code":    info.ExitCode,
+			"exit_code":    info.ExitStatus(),
 		}
 		ib.Push(msg)
 	})
 
 	dir := t.TempDir()
-	_, err := sessMgr.Create(dir, "echo done", "test-session", 10*time.Second, nil, "")
+	_, err := sessMgr.Start(t.Context(), proc.Spec{Name: "test-session", Command: "echo done", Timeout: 10 * time.Second},
+		proc.TTY(proc.ProcOptions{Line: "echo done", Dir: dir}))
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}

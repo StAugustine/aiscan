@@ -6,9 +6,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/tool"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -154,18 +153,10 @@ func (e *aopEmitter) messageDelta(messageID string, contentIndex int, partType, 
 
 func (e *aopEmitter) toolCall(call *aop.ToolCall) {
 	event := &aop.Event{Payload: &aop.Event_ToolCall{ToolCall: call}}
-	if detail, ok := delegationFromToolCall(call.Name, decodeToolArguments(call)); ok {
-		e.emitWithExt(event, detail)
-		return
-	}
 	e.emit(event)
 }
 
-func (e *aopEmitter) toolResult(call *aop.ToolCall, content []*aop.Content, fullResult *tool.Result, terminate, isError bool, durationMs int) {
-	result := &aop.ToolResult{
-		CallId: call.Id, Name: call.Name, Output: content,
-		Terminate: terminate, IsError: isError, DurationMs: uint64(max(durationMs, 0)),
-	}
+func (e *aopEmitter) toolResult(result *aop.ToolResult) {
 	e.emit(&aop.Event{Payload: &aop.Event_ToolResult{ToolResult: result}})
 }
 

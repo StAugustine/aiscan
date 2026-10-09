@@ -3,18 +3,20 @@ package console
 import (
 	"context"
 	"fmt"
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	rlterm "github.com/chainreactors/tui/readline/terminal"
 	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/provider"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
+	rlterm "github.com/chainreactors/tui/readline/terminal"
 )
 
 type gateProvider struct {
@@ -44,19 +46,19 @@ func (p *gateProvider) ChatCompletion(ctx context.Context, req *agent.ChatComple
 	}
 	return &agent.ChatCompletionResponse{Choices: []agent.Choice{{Message: agent.TextMessage("assistant", "done")}}}, nil
 }
-func newTestConsole(t *testing.T, option *cfg.Option, provider agent.Provider, stdout, stderr io.Writer) *AgentConsole {
+func newTestConsole(t *testing.T, option *cfg.Option, provider agent.Provider, stdout, stderr io.Writer, configs ...agent.ProviderConfig) (*AgentConsole, *apptest.Fixture) {
 	t.Helper()
 	if option == nil {
 		option = &cfg.Option{}
 	}
-	rt := newConsoleRuntime(t, provider)
-	session, err := rt.OpenSession(context.Background(), agentext.SessionOptions{ID: "console-test"})
+	rt, application := newConsoleRuntime(t, provider, configs...)
+	session, err := rt.OpenSession(context.Background(), agentsession.SessionOptions{ID: "console-test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := newAgentConsole(context.Background(), rt, session, option, rlterm.Stream(strings.NewReader(""), stdout, stderr, rlterm.NewControl(false, 80, 24)), testSessionBindings(t, rt))
 	t.Cleanup(c.Close)
-	return c
+	return c, application
 }
 func executeAndWait(r *AgentConsole, line string) (bool, error) {
 	done, err := r.handleInputLine(line)
@@ -76,12 +78,12 @@ func waitFor(t *testing.T, cond func() bool, msg string) {
 }
 func TestConsoleSubmissionsUseRuntimeFIFOAndLimit(t *testing.T) {
 	p := &gateProvider{release: make(chan struct{})}
-	c := newTestConsole(t, &cfg.Option{}, p, io.Discard, io.Discard)
+	c, _ := newTestConsole(t, &cfg.Option{}, p, io.Discard, io.Discard)
 	if err := c.submitPrompt("first", false); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return p.calls.Load() == 1 }, "provider")
-	for i := 1; i < agentext.DefaultSessionPendingLimit; i++ {
+	for i := 1; i < agentsession.DefaultSessionPendingLimit; i++ {
 		if err := c.submitPrompt(fmt.Sprintf("queued-%02d", i), false); err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +93,7 @@ func TestConsoleSubmissionsUseRuntimeFIFOAndLimit(t *testing.T) {
 	}
 	close(p.release)
 	c.work.Wait()
-	if p.calls.Load() != agentext.DefaultSessionPendingLimit {
+	if p.calls.Load() != agentsession.DefaultSessionPendingLimit {
 		t.Fatalf("calls=%d", p.calls.Load())
 	}
 	p.mu.Lock()
@@ -112,7 +114,7 @@ func TestConsoleSubmissionsUseRuntimeFIFOAndLimit(t *testing.T) {
 }
 func TestConsoleStopCancelsOnlyItsOwnSubmissions(t *testing.T) {
 	p := &gateProvider{release: make(chan struct{})}
-	c := newTestConsole(t, &cfg.Option{}, p, io.Discard, io.Discard)
+	c, _ := newTestConsole(t, &cfg.Option{}, p, io.Discard, io.Discard)
 	if err := c.submitPrompt("first", false); err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +122,7 @@ func TestConsoleStopCancelsOnlyItsOwnSubmissions(t *testing.T) {
 	if err := c.submitPrompt("must cancel", false); err != nil {
 		t.Fatal(err)
 	}
-	other, err := c.session.Run(context.Background(), agentext.RunInput{Content: []*aop.Content{aop.Text("inline")}})
+	other, err := c.session.Run(context.Background(), agentsession.RunInput{Content: []*aop.Content{aop.Text("inline")}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +149,7 @@ func TestConsoleStopCancelsOnlyItsOwnSubmissions(t *testing.T) {
 	}
 }
 func TestConsoleCloseRejectsInputAndLeavesProfileSession(t *testing.T) {
-	c := newTestConsole(t, &cfg.Option{}, &consoleProvider{}, io.Discard, io.Discard)
+	c, _ := newTestConsole(t, &cfg.Option{}, &consoleProvider{}, io.Discard, io.Discard)
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)

@@ -3,7 +3,7 @@ package node
 import (
 	"sync"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -30,8 +30,8 @@ func (t *AgentStatsTracker) Snapshot() *aop.AgentStats {
 
 // Observe records an AOP event and returns updated stats if the stats changed.
 func (t *AgentStatsTracker) Observe(e *aop.Event) (*aop.AgentStats, bool) {
-	if t == nil {
-		return &aop.AgentStats{}, false
+	if t == nil || e == nil {
+		return nil, false
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -55,7 +55,7 @@ func (t *AgentStatsTracker) Observe(e *aop.Event) (*aop.AgentStats, bool) {
 			t.stats.RunningTools--
 		}
 	default:
-		return proto.CloneOf(&t.stats), false
+		return nil, false
 	}
 	return proto.CloneOf(&t.stats), true
 }

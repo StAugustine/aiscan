@@ -7,11 +7,12 @@ import (
 	"io"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	scanengine "github.com/chainreactors/cyber/tools/scan/engine"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"github.com/chainreactors/sdk/spray"
 	spraycore "github.com/chainreactors/spray/core"
 	"github.com/chainreactors/utils/parsers"
@@ -46,8 +47,7 @@ func (c *Command) WithEvents(events aop.EventPublisher) *Command {
 func (c *Command) Name() string { return "spray" }
 
 func (c *Command) Usage() string {
-	var options spraycore.Option
-	return toolargs.GoFlagsHelp(c.Name(), &options)
+	return sprayHelp()
 }
 
 func (c *Command) QuickReference() string {
@@ -65,22 +65,33 @@ func (c *Command) QuickReference() string {
     spray -l urls.txt --finger --crawl`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("spray", &err)
 	args := execution.Args
-	args = c.resolveRelativePaths(args)
-	var buf bytes.Buffer
 	debug := toolargs.BoolFlagEnabled(args, "--debug")
-	jsonOut := toolargs.BoolFlagEnabled(args, "-j") || toolargs.BoolFlagEnabled(args, "--json")
 	if debug {
 		restoreDebug := telemetry.ActivateDebug(c.Logger)
 		defer restoreDebug()
 		c.Logger.Debugf("spray debug enabled")
 	}
+	for _, arg := range execution.Args {
+		if arg == "-h" || arg == "--help" {
+			fmt.Fprint(execution.Stdout, c.Usage())
+			return nil, nil
+		}
+	}
+	release, err := scanengine.AcquireSpray(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	args = toolargs.ResolveRelativePaths(args, sprayFileFlags, c.WorkDir)
+	var buf bytes.Buffer
+	jsonOut := toolargs.BoolFlagEnabled(args, "-j") || toolargs.BoolFlagEnabled(args, "--json")
 	if c.engine != nil {
 		c.engine.InstallResourceProvider()
 	}
-	egress := commands.ResolveExecutionEgress(execution, c.Proxy)
+	egress := coretool.ResolveExecutionEgress(execution, c.Proxy)
 	args = c.injectProxyURL(args, egress.ProxyURL)
 	runOpts := spraycore.RunOptions{
 		Output:        &buf,
@@ -140,15 +151,6 @@ func writeResult(w io.Writer, result *parsers.SprayResult, jsonOutput bool) {
 	}
 }
 
-// TestInjectProxy is exported for cross-package testing.
-func (c *Command) TestInjectProxy(args []string) []string {
-	return c.injectProxy(args)
-}
-
-func (c *Command) injectProxy(args []string) []string {
-	return c.injectProxyURL(args, c.Proxy)
-}
-
 func (c *Command) injectProxyURL(args []string, proxy string) []string {
 	if proxy == "" {
 		return args
@@ -159,16 +161,10 @@ func (c *Command) injectProxyURL(args []string, proxy string) []string {
 	return append(args, "--proxy", proxy)
 }
 
-func withDefaultNoBar(args []string) []string {
-	return withDefaultBoolFlag(args, "--no-bar")
-}
-
-func withDefaultNoStat(args []string) []string {
-	return withDefaultBoolFlag(args, "--no-stat")
-}
-
 func withDefaultScannerFlags(args []string) []string {
-	return withDefaultClient(withDefaultNoStat(withDefaultNoBar(args)))
+	args = withDefaultBoolFlag(args, "--no-bar")
+	args = withDefaultBoolFlag(args, "--no-stat")
+	return withDefaultClient(args)
 }
 
 func withDefaultClient(args []string) []string {
@@ -198,8 +194,4 @@ var sprayFileFlags = map[string]bool{
 	"-d": true, "--dict": true, "-r": true, "--rules": true,
 	"-R": true, "--append-rule": true, "--append": true,
 	"-f": true, "--file": true, "--dump-file": true, "--extract-config": true,
-}
-
-func (c *Command) resolveRelativePaths(args []string) []string {
-	return toolargs.ResolveRelativePaths(args, sprayFileFlags, c.WorkDir)
 }

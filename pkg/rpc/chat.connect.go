@@ -8,8 +8,8 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	aop "github.com/chainreactors/aiscan/aop"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
 	http "net/http"
 	strings "strings"
 )
@@ -23,7 +23,7 @@ const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// SessionServiceName is the fully-qualified name of the SessionService service.
-	SessionServiceName = "aiscan.rpc.chat.SessionService"
+	SessionServiceName = "cyber.rpc.chat.SessionService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -34,28 +34,32 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// SessionServiceUpdateSessionProcedure is the fully-qualified name of the SessionService's
+	// UpdateSession RPC.
+	SessionServiceUpdateSessionProcedure = "/cyber.rpc.chat.SessionService/UpdateSession"
 	// SessionServiceListSessionsProcedure is the fully-qualified name of the SessionService's
 	// ListSessions RPC.
-	SessionServiceListSessionsProcedure = "/aiscan.rpc.chat.SessionService/ListSessions"
+	SessionServiceListSessionsProcedure = "/cyber.rpc.chat.SessionService/ListSessions"
 	// SessionServiceGetSessionProcedure is the fully-qualified name of the SessionService's GetSession
 	// RPC.
-	SessionServiceGetSessionProcedure = "/aiscan.rpc.chat.SessionService/GetSession"
+	SessionServiceGetSessionProcedure = "/cyber.rpc.chat.SessionService/GetSession"
 	// SessionServiceResetSessionProcedure is the fully-qualified name of the SessionService's
 	// ResetSession RPC.
-	SessionServiceResetSessionProcedure = "/aiscan.rpc.chat.SessionService/ResetSession"
+	SessionServiceResetSessionProcedure = "/cyber.rpc.chat.SessionService/ResetSession"
 	// SessionServiceDeleteSessionProcedure is the fully-qualified name of the SessionService's
 	// DeleteSession RPC.
-	SessionServiceDeleteSessionProcedure = "/aiscan.rpc.chat.SessionService/DeleteSession"
+	SessionServiceDeleteSessionProcedure = "/cyber.rpc.chat.SessionService/DeleteSession"
 	// SessionServiceListCommandsProcedure is the fully-qualified name of the SessionService's
 	// ListCommands RPC.
-	SessionServiceListCommandsProcedure = "/aiscan.rpc.chat.SessionService/ListCommands"
+	SessionServiceListCommandsProcedure = "/cyber.rpc.chat.SessionService/ListCommands"
 	// SessionServiceListEventsProcedure is the fully-qualified name of the SessionService's ListEvents
 	// RPC.
-	SessionServiceListEventsProcedure = "/aiscan.rpc.chat.SessionService/ListEvents"
+	SessionServiceListEventsProcedure = "/cyber.rpc.chat.SessionService/ListEvents"
 )
 
-// SessionServiceClient is a client for the aiscan.rpc.chat.SessionService service.
+// SessionServiceClient is a client for the cyber.rpc.chat.SessionService service.
 type SessionServiceClient interface {
+	UpdateSession(context.Context, *connect.Request[types.UpdateSessionRequest]) (*connect.Response[types.UpdateSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[types.ListSessionsRequest]) (*connect.Response[types.ListSessionsResponse], error)
 	GetSession(context.Context, *connect.Request[types.GetSessionRequest]) (*connect.Response[types.GetSessionResponse], error)
 	ResetSession(context.Context, *connect.Request[types.ResetSessionRequest]) (*connect.Response[types.ResetSessionResponse], error)
@@ -64,7 +68,7 @@ type SessionServiceClient interface {
 	ListEvents(context.Context, *connect.Request[aop.ListEventsRequest]) (*connect.Response[aop.ListEventsResponse], error)
 }
 
-// NewSessionServiceClient constructs a client for the aiscan.rpc.chat.SessionService service. By
+// NewSessionServiceClient constructs a client for the cyber.rpc.chat.SessionService service. By
 // default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
 // and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
 // connect.WithGRPC() or connect.WithGRPCWeb() options.
@@ -75,6 +79,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	sessionServiceMethods := File_rpc_chat_proto.Services().ByName("SessionService").Methods()
 	return &sessionServiceClient{
+		updateSession: connect.NewClient[types.UpdateSessionRequest, types.UpdateSessionResponse](
+			httpClient,
+			baseURL+SessionServiceUpdateSessionProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("UpdateSession")),
+			connect.WithClientOptions(opts...),
+		),
 		listSessions: connect.NewClient[types.ListSessionsRequest, types.ListSessionsResponse](
 			httpClient,
 			baseURL+SessionServiceListSessionsProcedure,
@@ -116,6 +126,7 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // sessionServiceClient implements SessionServiceClient.
 type sessionServiceClient struct {
+	updateSession *connect.Client[types.UpdateSessionRequest, types.UpdateSessionResponse]
 	listSessions  *connect.Client[types.ListSessionsRequest, types.ListSessionsResponse]
 	getSession    *connect.Client[types.GetSessionRequest, types.GetSessionResponse]
 	resetSession  *connect.Client[types.ResetSessionRequest, types.ResetSessionResponse]
@@ -124,38 +135,44 @@ type sessionServiceClient struct {
 	listEvents    *connect.Client[aop.ListEventsRequest, aop.ListEventsResponse]
 }
 
-// ListSessions calls aiscan.rpc.chat.SessionService.ListSessions.
+// UpdateSession calls cyber.rpc.chat.SessionService.UpdateSession.
+func (c *sessionServiceClient) UpdateSession(ctx context.Context, req *connect.Request[types.UpdateSessionRequest]) (*connect.Response[types.UpdateSessionResponse], error) {
+	return c.updateSession.CallUnary(ctx, req)
+}
+
+// ListSessions calls cyber.rpc.chat.SessionService.ListSessions.
 func (c *sessionServiceClient) ListSessions(ctx context.Context, req *connect.Request[types.ListSessionsRequest]) (*connect.Response[types.ListSessionsResponse], error) {
 	return c.listSessions.CallUnary(ctx, req)
 }
 
-// GetSession calls aiscan.rpc.chat.SessionService.GetSession.
+// GetSession calls cyber.rpc.chat.SessionService.GetSession.
 func (c *sessionServiceClient) GetSession(ctx context.Context, req *connect.Request[types.GetSessionRequest]) (*connect.Response[types.GetSessionResponse], error) {
 	return c.getSession.CallUnary(ctx, req)
 }
 
-// ResetSession calls aiscan.rpc.chat.SessionService.ResetSession.
+// ResetSession calls cyber.rpc.chat.SessionService.ResetSession.
 func (c *sessionServiceClient) ResetSession(ctx context.Context, req *connect.Request[types.ResetSessionRequest]) (*connect.Response[types.ResetSessionResponse], error) {
 	return c.resetSession.CallUnary(ctx, req)
 }
 
-// DeleteSession calls aiscan.rpc.chat.SessionService.DeleteSession.
+// DeleteSession calls cyber.rpc.chat.SessionService.DeleteSession.
 func (c *sessionServiceClient) DeleteSession(ctx context.Context, req *connect.Request[types.DeleteSessionRequest]) (*connect.Response[types.DeleteSessionResponse], error) {
 	return c.deleteSession.CallUnary(ctx, req)
 }
 
-// ListCommands calls aiscan.rpc.chat.SessionService.ListCommands.
+// ListCommands calls cyber.rpc.chat.SessionService.ListCommands.
 func (c *sessionServiceClient) ListCommands(ctx context.Context, req *connect.Request[types.ListCommandsRequest]) (*connect.Response[types.ListCommandsResponse], error) {
 	return c.listCommands.CallUnary(ctx, req)
 }
 
-// ListEvents calls aiscan.rpc.chat.SessionService.ListEvents.
+// ListEvents calls cyber.rpc.chat.SessionService.ListEvents.
 func (c *sessionServiceClient) ListEvents(ctx context.Context, req *connect.Request[aop.ListEventsRequest]) (*connect.Response[aop.ListEventsResponse], error) {
 	return c.listEvents.CallUnary(ctx, req)
 }
 
-// SessionServiceHandler is an implementation of the aiscan.rpc.chat.SessionService service.
+// SessionServiceHandler is an implementation of the cyber.rpc.chat.SessionService service.
 type SessionServiceHandler interface {
+	UpdateSession(context.Context, *connect.Request[types.UpdateSessionRequest]) (*connect.Response[types.UpdateSessionResponse], error)
 	ListSessions(context.Context, *connect.Request[types.ListSessionsRequest]) (*connect.Response[types.ListSessionsResponse], error)
 	GetSession(context.Context, *connect.Request[types.GetSessionRequest]) (*connect.Response[types.GetSessionResponse], error)
 	ResetSession(context.Context, *connect.Request[types.ResetSessionRequest]) (*connect.Response[types.ResetSessionResponse], error)
@@ -171,6 +188,12 @@ type SessionServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	sessionServiceMethods := File_rpc_chat_proto.Services().ByName("SessionService").Methods()
+	sessionServiceUpdateSessionHandler := connect.NewUnaryHandler(
+		SessionServiceUpdateSessionProcedure,
+		svc.UpdateSession,
+		connect.WithSchema(sessionServiceMethods.ByName("UpdateSession")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceListSessionsHandler := connect.NewUnaryHandler(
 		SessionServiceListSessionsProcedure,
 		svc.ListSessions,
@@ -207,8 +230,10 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("ListEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
-	return "/aiscan.rpc.chat.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return "/cyber.rpc.chat.SessionService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case SessionServiceUpdateSessionProcedure:
+			sessionServiceUpdateSessionHandler.ServeHTTP(w, r)
 		case SessionServiceListSessionsProcedure:
 			sessionServiceListSessionsHandler.ServeHTTP(w, r)
 		case SessionServiceGetSessionProcedure:
@@ -230,26 +255,30 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 // UnimplementedSessionServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedSessionServiceHandler struct{}
 
+func (UnimplementedSessionServiceHandler) UpdateSession(context.Context, *connect.Request[types.UpdateSessionRequest]) (*connect.Response[types.UpdateSessionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.UpdateSession is not implemented"))
+}
+
 func (UnimplementedSessionServiceHandler) ListSessions(context.Context, *connect.Request[types.ListSessionsRequest]) (*connect.Response[types.ListSessionsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.ListSessions is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.ListSessions is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetSession(context.Context, *connect.Request[types.GetSessionRequest]) (*connect.Response[types.GetSessionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.GetSession is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.GetSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ResetSession(context.Context, *connect.Request[types.ResetSessionRequest]) (*connect.Response[types.ResetSessionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.ResetSession is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.ResetSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) DeleteSession(context.Context, *connect.Request[types.DeleteSessionRequest]) (*connect.Response[types.DeleteSessionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.DeleteSession is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.DeleteSession is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListCommands(context.Context, *connect.Request[types.ListCommandsRequest]) (*connect.Response[types.ListCommandsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.ListCommands is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.ListCommands is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ListEvents(context.Context, *connect.Request[aop.ListEventsRequest]) (*connect.Response[aop.ListEventsResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("aiscan.rpc.chat.SessionService.ListEvents is not implemented"))
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("cyber.rpc.chat.SessionService.ListEvents is not implemented"))
 }

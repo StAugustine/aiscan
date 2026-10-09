@@ -1,0 +1,95 @@
+//go:build integration
+
+package scanner
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/utils/parsers"
+)
+
+func TestScannerPublicIntegration(t *testing.T) {
+	if os.Getenv("CYBER_INTEGRATION") != "1" {
+		t.Skip("set CYBER_INTEGRATION=1 to run public network regression tests")
+	}
+
+	installed := installScanner(t, t.TempDir(), Config{})
+	recorder := newFunctionalRecorder(installed.events)
+	registry := installed.commands
+
+	templateFile := filepath.Join(t.TempDir(), "redhaze-marker.yaml")
+	writeTestFile(t, templateFile, `id: redhaze-public-marker
+info:
+  name: RedHaze public regression marker
+  severity: info
+  tags: regression
+http:
+  - method: GET
+    path:
+      - '{{BaseURL}}'
+    matchers:
+      - type: word
+        words:
+          - 'RedHaze Group'
+`)
+
+	cases := []functionalCase{
+		{
+			Name: "gogo/redhaze-http-https-fingerprint", Tool: "gogo",
+			Args:    []string{"-i", "redhaze.top", "-p", "80,443", "-v", "-o", "jl", "-t", "2"},
+			Timeout: 45 * time.Second,
+			Check: func(t *testing.T, result functionalResult) {
+				requireOutputContains(t, result, `"port":"80"`, `"port":"443"`, "nginx")
+				requireEvent(t, result, "gogo", toolpb.ArtifactKindService, func(data any) bool {
+					item, ok := data.(*parsers.GOGOResult)
+					return ok && item != nil && item.Port == "443" && item.Protocol == "https"
+				})
+			},
+		},
+		{
+			Name: "spray/redhaze-explicit-https", Tool: "spray",
+			Args:    []string{"-u", "https://redhaze.top", "-j", "--limit", "1", "--timeout", "10"},
+			Timeout: 30 * time.Second,
+			Check: func(t *testing.T, result functionalResult) {
+				requireOutputContains(t, result, `"url":"https://redhaze.top`, `"status":301`, "nginx")
+				if strings.Contains(result.Stdout, `"url":"http://redhaze.top`) {
+					t.Fatalf("spray downgraded explicit HTTPS target:\n%s", result.Stdout)
+				}
+			},
+		},
+		{
+			Name: "neutron/redhaze-benign-template", Tool: "neutron",
+			Args: []string{
+				"-i", "https://id.redhaze.top/home", "-t", templateFile,
+				"--tags", "regression", "-s", "info", "--concurrency", "1",
+				"--rate-limit", "1", "--timeout", "20", "-j",
+			},
+			Timeout: 30 * time.Second,
+			Check: func(t *testing.T, result functionalResult) {
+				requireOutputContains(t, result, `"matched":true`, `"template":"redhaze-public-marker"`)
+				requireEvent(t, result, "neutron", toolpb.ArtifactKindVuln, nil)
+			},
+		},
+		{
+			Name: "scan/redhaze-limited-pipeline", Tool: "scan",
+			Args: []string{
+				"-i", "redhaze.top", "--ports", "80,443", "--mode", "quick",
+				"--verify=off", "--timeout", "8", "--no-color",
+			},
+			Timeout: 90 * time.Second,
+			Check: func(t *testing.T, result functionalResult) {
+				requireOutputContains(t, result, "[summary] completed", "443", "nginx")
+				requireEvent(t, result, "gogo", toolpb.ArtifactKindService, func(data any) bool {
+					item, ok := data.(*parsers.GOGOResult)
+					return ok && item != nil && item.Port == "443" && item.Protocol == "https"
+				})
+			},
+		},
+	}
+	runFunctionalCases(t, registry, recorder, cases)
+}

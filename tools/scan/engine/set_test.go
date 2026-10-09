@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
+	"github.com/chainreactors/cyber/core/telemetry"
 	gogopkg "github.com/chainreactors/gogo/v2/pkg"
 	"github.com/chainreactors/neutron/operators"
 	neutronhttp "github.com/chainreactors/neutron/protocols/http"
@@ -302,7 +302,7 @@ func TestZombieWithContextNilReceiver(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. aiscan wrapper: GogoScanStream rejects nil engine
+// 7. cyber wrapper: GogoScanStream rejects nil engine
 // ---------------------------------------------------------------------------
 
 func TestGogoScanStreamRejectsNilEngine(t *testing.T) {
@@ -343,7 +343,7 @@ func TestZombieWeakpassStreamRejectsNilEngine(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. aiscan wrapper: context.Background() is properly passed to SDK engine
+// 8. cyber wrapper: context.Background() is properly passed to SDK engine
 //    (verifies the NewContext().WithContext(ctx) chain does not produce nil)
 // ---------------------------------------------------------------------------
 
@@ -481,7 +481,13 @@ func TestZombieStatsHandlerSafeAfterCancel(t *testing.T) {
 		WithTimeout(1).
 		WithStatsHandler(func(s sdktypes.Stats) {})
 
-	ch, err := eng.Execute(zCtx, sdkzombie.NewBruteTask([]sdkzombie.Target{{IP: "127.0.0.1", Port: "1", Service: "ssh"}}))
+	task := sdkzombie.NewBruteTask([]sdkzombie.Target{{IP: "127.0.0.1", Port: "1", Service: "ssh"}})
+	// Keep this cancellation regression bounded to one attempt. The SDK's
+	// default dictionaries are intentionally large and their unauthenticated
+	// expansion can outlive a canceled test under the race detector.
+	task.Users = []string{"test"}
+	task.Passwords = []string{"test"}
+	ch, err := eng.Execute(zCtx, task)
 	if err != nil {
 		t.Fatalf("Execute error = %v", err)
 	}
@@ -492,7 +498,7 @@ func TestZombieStatsHandlerSafeAfterCancel(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. aiscan wrapper context chain: verify the full
+// 10. cyber wrapper context chain: verify the full
 //     NewContext().WithContext(ctx) chain used in each wrapper
 // ---------------------------------------------------------------------------
 
@@ -596,10 +602,10 @@ func testNeutronTemplate(id string) *templates.Template {
 	}
 }
 
-// Regression: aiscan drives gogo through the SDK, whose applyInjectedNeutron
+// Regression: cyber drives gogo through the SDK, whose applyInjectedNeutron
 // populates gogo's pkg.TemplateMap but must also populate pkg.ChainExec.
 // engine.NeutronScan calls pkg.ChainExec.Execute on every open host when
-// Exploit != "none" (aiscan's default is "auto"); a nil ChainExec turns that
+// Exploit != "none" (cyber's default is "auto"); a nil ChainExec turns that
 // into a nil-receiver panic caught only by the ants pool ("worker exits from
 // panic"), silently dropping the host's result.
 func TestGogoEngineInjectsChainExecutor(t *testing.T) {

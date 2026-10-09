@@ -5,11 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
+	"github.com/chainreactors/cyber/core/telemetry"
 	"github.com/chainreactors/neutron/common"
 	"github.com/chainreactors/neutron/templates"
 	"github.com/chainreactors/sdk/neutron"
 	"github.com/chainreactors/sdk/pkg/association"
+	sdktypes "github.com/chainreactors/sdk/pkg/types"
 )
 
 var ErrNoNeutronTemplates = errors.New("no neutron templates selected")
@@ -26,6 +27,7 @@ func NeutronExecuteStream(ctx context.Context, eng *neutron.Engine, index *assoc
 	if eng == nil {
 		return nil, fmt.Errorf("neutron engine is not available")
 	}
+
 	if opts.Debug {
 		common.NeutronLog = telemetry.EnableLogsDebug()
 	} else {
@@ -45,23 +47,11 @@ func NeutronExecuteStream(ctx context.Context, eng *neutron.Engine, index *assoc
 		return nil, err
 	}
 
-	out := make(chan *neutron.ExecuteResult)
-	go func() {
-		defer telemetry.SDKGoRecover("neutron")
-		defer close(out)
-		for result := range resultCh {
-			execResult, ok := result.(*neutron.ExecuteResult)
-			if !ok {
-				continue
-			}
-			select {
-			case out <- execResult:
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return out, nil
+	return forwardResults(ctx, resultCh, func(result sdktypes.Result) (*neutron.ExecuteResult, bool) {
+
+		value, ok := result.(*neutron.ExecuteResult)
+		return value, ok && value != nil
+	}, nil), nil
 }
 
 // FingerAllowedIDs builds the set of template IDs allowed by the given

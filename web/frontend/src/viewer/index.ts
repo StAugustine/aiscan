@@ -16,7 +16,10 @@ export interface SubagentRunTimelineItem {
   items: ViewerTimelineItem[]
 }
 
-export type ViewerTimelineItem = CyberTimelineItem | SubagentRunTimelineItem
+// Host presentation only: reuse timeline entries inside an approved tool turn.
+export type ViewerTimelineItem = Exclude<CyberTimelineItem, { kind: 'assistant_response' }>
+  | (Extract<CyberTimelineItem, { kind: 'assistant_response' }> & { steps?: CyberTimelineItem[] })
+  | SubagentRunTimelineItem
 
 export {
   stripAnsiControl,
@@ -31,12 +34,18 @@ export {
 
 export { default as MessageBubble, StreamingCursor } from '../../cyber-ui/packages/viewer/src/components/chat/MessageBubble'
 export { default as ToolCallDisplay, CodeCallDisplay, BlockingOutputDisplay, OutputSection } from '../../cyber-ui/packages/viewer/src/components/chat/ToolCallDisplay'
+export { ToolResultDisplay, type ToolResultDisplayProps } from '../../cyber-ui/packages/viewer/src/components/chat/ToolResultDisplay'
+export { ToolDefinitionCard } from '../../cyber-ui/packages/viewer/src/components/chat/ToolDefinitionCard'
 export { default as ChatThinking, ThinkingDots } from '../../cyber-ui/packages/viewer/src/components/chat/ChatThinking'
 export { default as AssistantResponse } from '../../cyber-ui/packages/viewer/src/components/chat/AssistantResponse'
 export { default as ChatInput } from '../../cyber-ui/packages/viewer/src/components/chat/ChatInput'
 export { AgentVoiceCard } from '../../cyber-ui/packages/viewer/src/components/chat/AgentVoiceCard'
 export { ChatPanel } from '../../cyber-ui/packages/viewer/src/components/chat/ChatPanel'
-export { reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
+export { createAOPTimelineReducer, reduceAOPToTimeline } from '../../cyber-ui/packages/viewer/src/lib/aop-reducer'
+export { observation, observationRef, observationKind, createObservationReducer } from '../../cyber-ui/packages/viewer/src/lib/observations'
+export { useObservations } from '../../cyber-ui/packages/viewer/src/lib/use-observations'
+export { ObservationDisplay, type ObservationLabels } from '../../cyber-ui/packages/viewer/src/components/observability/ObservationDisplay'
+export { ObservabilityPanel } from '../../cyber-ui/packages/viewer/src/components/observability/ObservabilityPanel'
 
 export type {
   TimelineRendererConfig,
@@ -50,6 +59,6 @@ export type { Event as AOPEvent } from '@cyber/aop'
 export type { MessageBubbleProps, MessageBubbleVariant } from '../../cyber-ui/packages/viewer/src/components/chat/MessageBubble'
 export type { ChatThinkingProps } from '../../cyber-ui/packages/viewer/src/components/chat/ChatThinking'
 export type { AssistantResponseProps } from '../../cyber-ui/packages/viewer/src/components/chat/AssistantResponse'
-export type { ToolCallDisplayProps, CodeCallDisplayProps, BlockingOutputDisplayProps } from '../../cyber-ui/packages/viewer/src/components/chat/ToolCallDisplay'
+export type { ToolCallDisplayProps, ToolCallLabels, CodeCallDisplayProps, BlockingOutputDisplayProps } from '../../cyber-ui/packages/viewer/src/components/chat/ToolCallDisplay'
 export type { ChatInputProps, CommandHint, ComposerHelpContent, ComposerHelpItem, ComposerHelpPrefix, ChatAttachment, AttachmentMode, Mentionable, MentionPopupApi, PopupNavigationCommand, PopupNavigationKey } from '../../cyber-ui/packages/viewer/src/components/chat/ChatInput'
 export type { AgentVoiceCardProps } from '../../cyber-ui/packages/viewer/src/components/chat/AgentVoiceCard'

@@ -3,32 +3,41 @@ package service
 import (
 	"context"
 	"errors"
+	protobuf "google.golang.org/protobuf/proto"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"reflect"
+	"sync/atomic"
 	"testing"
 
+	"github.com/chainreactors/cyber/agent/provider"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/eventbus"
+	"github.com/chainreactors/cyber/core/events"
+	procbus "github.com/chainreactors/cyber/core/proc"
+
 	"connectrpc.com/connect"
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/extension"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	consoleapi "github.com/chainreactors/aiscan/pkg/console/api"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	profile "github.com/chainreactors/aiscan/pkg/profile"
-	rpc "github.com/chainreactors/aiscan/pkg/rpc"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/extension"
+	types "github.com/chainreactors/cyber/core/types"
+	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
+	profile "github.com/chainreactors/cyber/pkg/profile"
+	rpc "github.com/chainreactors/cyber/pkg/rpc"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
+	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 )
 
 func TestScanArgsForSelectedAnalysisOptions(t *testing.T) {
-	scan := &types.Scan{
+	scan := &scanpb.Scan{
 		Target:  "127.0.0.1",
 		Mode:    "full",
-		Options: &types.ScanOptions{Verify: true, Sniper: true, Deep: true},
+		Options: &scanpb.ScanOptions{Verify: protobuf.Bool(true), Sniper: true},
 	}
 
 	got := scanArgsForScan(scan)
-	want := []string{"-i", "127.0.0.1", "--mode", "full", "--verify=high", "--sniper", "--deep"}
+	want := []string{"-i", "127.0.0.1", "--mode", "full", "--verify=on", "--sniper"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("scan args = %#v, want %#v", got, want)
 	}
@@ -42,7 +51,7 @@ func TestServiceStatusReportsLLMAvailability(t *testing.T) {
 }
 
 func TestRunTurnRejectsMissingSessionBeforePersisting(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "messages.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "messages.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,15 +75,15 @@ func TestRunTurnRejectsMissingSessionBeforePersisting(t *testing.T) {
 }
 
 func TestRemovedChatAndScanRoutesReturnNotFoundBeforeSPAFallback(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "messages.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "messages.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 	svc := NewService(ServiceConfig{Store: store})
-	handler := newHandler(svc, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := newHandler(svc, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), "")
+	}))
 	for _, test := range []struct {
 		method string
 		path   string
@@ -125,7 +134,7 @@ func TestParseCommand(t *testing.T) {
 
 func newMenuTestService(t *testing.T) *Service {
 	t.Helper()
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "web.db"), ScanSchema)
 	if err != nil {
 		t.Fatalf("NewSQLiteStore() error = %v", err)
 	}
@@ -158,7 +167,7 @@ func TestSessionMenuMergeAndFallback(t *testing.T) {
 // frontend "/" menu uses and proves it returns the protobuf command catalog.
 func TestSessionCommandsConnectRPC(t *testing.T) {
 	svc := newMenuTestService(t)
-	srv := httptest.NewServer(newHandler(svc, nil, nil, ""))
+	srv := httptest.NewServer(newHandler(svc, nil))
 	defer srv.Close()
 
 	client := rpc.NewSessionServiceClient(srv.Client(), srv.URL, connect.WithProtoJSON())
@@ -177,6 +186,59 @@ func TestSessionCommandsConnectRPC(t *testing.T) {
 	}
 	if names["/scan"] {
 		t.Error("ListCommands leaked deferred scan command")
+	}
+}
+
+// A node only recreates a session it has lost from memory, and it resumes with
+// an empty context. The hub still holds the transcript, so it must say so
+// instead of letting the operator believe the agent remembers the conversation.
+func TestSessionRecreationBroadcastsContextResetNotice(t *testing.T) {
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "recreate.db"), ScanSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	svc := NewService(ServiceConfig{Store: store})
+	createStoredSession(t, store, "s1")
+
+	svc.BroadcastAOPEvent("s1", &aop.Event{
+		Emitter: "agent",
+		Payload: &aop.Event_Message{Message: &aop.Message{Id: "m1", Role: "assistant", Content: []*aop.Content{aop.Text("hello")}}},
+	})
+	svc.BroadcastAOPEvent("s1", &aop.Event{
+		Emitter: "agent",
+		Payload: &aop.Event_SessionStarted{SessionStarted: &aop.SessionStarted{}},
+	})
+
+	events, err := store.ListAOPEvents(context.Background(), "s1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if last.GetMessage().GetRole() != "system" {
+		t.Fatalf("last event = %v, want the context-reset notice", last)
+	}
+	metadata, ok, err := types.GetWebMessage(last)
+	if err != nil || !ok {
+		t.Fatalf("notice metadata = %v, %v, %v", metadata, ok, err)
+	}
+	if metadata.GetCode() != SysSessionContextReset {
+		t.Fatalf("notice code = %q, want %q", metadata.GetCode(), SysSessionContextReset)
+	}
+
+	// The first session_started for a session with no durable history is a
+	// normal open and must stay silent.
+	createStoredSession(t, store, "s2")
+	svc.BroadcastAOPEvent("s2", &aop.Event{
+		Emitter: "agent",
+		Payload: &aop.Event_SessionStarted{SessionStarted: &aop.SessionStarted{}},
+	})
+	fresh, err := store.ListAOPEvents(context.Background(), "s2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 1 {
+		t.Fatalf("fresh session persisted %d events, want 1", len(fresh))
 	}
 }
 
@@ -255,103 +317,106 @@ func TestForwardUncorrelatedEventForAgentOpenSession(t *testing.T) {
 }
 
 type recordingProfile struct {
-	extensions *extension.Set
-	app        *apppkg.App
+	extensions         *extension.Set
+	app                *apptest.Fixture
+	registerNamespaces func(*aop.NamespaceMux) error
 }
 
 func (p *recordingProfile) Load(ctx context.Context) error  { return p.extensions.Load(ctx) }
 func (p *recordingProfile) Close(ctx context.Context) error { return p.extensions.Close(ctx) }
-func (p *recordingProfile) App() (*apppkg.App, error) {
-	if p == nil || p.extensions == nil || !p.extensions.Active() {
-		return nil, errors.New("recording profile is not active")
-	}
-	return p.app, nil
-}
-func (p *recordingProfile) Runtime() (*agentext.Runtime, error) {
+
+func (p *recordingProfile) Runtime() (*agentsession.Runtime, error) {
 	return nil, errors.New("recording profile has no runtime")
 }
-func (p *recordingProfile) RegisterResourceNamespaces(*aop.NamespaceMux) error {
+func (p *recordingProfile) RegisterNamespaces(mux *aop.NamespaceMux) error {
 	if p == nil || p.extensions == nil || !p.extensions.Active() {
 		return errors.New("recording profile is not active")
+	}
+	if p.registerNamespaces != nil {
+		return p.registerNamespaces(mux)
 	}
 	return nil
 }
 
-var _ profile.Application = (*recordingProfile)(nil)
+var _ profile.Profile = (*recordingProfile)(nil)
 
-func newRecordingProfile(t *testing.T) (*recordingProfile, *apppkg.App, func() bool) {
+func newRecordingProfile(t *testing.T) (*recordingProfile, *provider.State, func() bool) {
 	t.Helper()
-	resource := newTestApp(t, apppkg.Config{SkipEngines: true}, apppkg.AppServices{})
-	extensions, err := extension.New(extension.Entry{ID: "application", Extension: resource})
+	resource := apptest.NewFixture(t, nil, nil)
+	var closed atomic.Bool
+	extensions, err := extension.New(extension.Func{CloseFunc: func(context.Context) error {
+		closed.Store(true)
+		return nil
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	value := &recordingProfile{extensions: extensions, app: resource.App}
+	value := &recordingProfile{extensions: extensions, app: resource}
 	t.Cleanup(func() { _ = value.Close(context.Background()) })
 	if err := value.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	app, err := value.App()
+	app, err := value.Providers()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return value, app, func() bool {
-		return app.Closed()
-	}
+	return value, app, closed.Load
 }
 
-func TestSwapAppDefersOldCloseUntilActiveLeaseReleases(t *testing.T) {
-	old, oldApp, oldClosed := newRecordingProfile(t)
+func TestSwapProfileCancelsAndDrainsOldWork(t *testing.T) {
+	old, _, oldClosed := newRecordingProfile(t)
 	next, _, _ := newRecordingProfile(t)
 	svc := NewService(ServiceConfig{Profile: old})
 	defer svc.Close(context.Background())
-
-	leased, release := svc.acquireApp()
-	if leased != oldApp {
-		t.Fatal("acquireApp() returned the wrong app")
+	ctx, ok := svc.beginWork()
+	if !ok {
+		t.Fatal("work rejected")
 	}
-	if err := svc.swapProfile(next); err != nil {
+	drained := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		if oldClosed() {
+			t.Error("profile closed before work drained")
+		}
+		if _, ok := svc.beginWork(); ok {
+			t.Error("admitted old work after cancellation")
+			svc.work.Done()
+		}
+		svc.work.Done()
+		close(drained)
+	}()
+	if err := svc.swapProfile(next, nil); err != nil {
 		t.Fatal(err)
 	}
-	if oldClosed() {
-		t.Fatal("old app closed while a scan still held a lease")
-	}
-	release()
-	if !oldClosed() {
-		t.Fatal("old app remained open after the final lease released")
+	<-drained
+	if !oldClosed() || svc.profile != next {
+		t.Fatal("old profile not replaced")
 	}
 }
-
-func TestServiceCloseRetainsLeasedProfileAndRetries(t *testing.T) {
-	p, app, closed := newRecordingProfile(t)
+func TestServiceCloseCancelsWorkAndRetriesDrain(t *testing.T) {
+	p, _, closed := newRecordingProfile(t)
 	svc := NewService(ServiceConfig{Profile: p})
-	leased, release := svc.acquireApp()
-	defer release()
-	if leased != app {
-		t.Fatal("wrong shared app")
+	work, ok := svc.beginWork()
+	if !ok {
+		t.Fatal("work rejected")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := svc.Close(ctx); !errors.Is(err, extension.ErrCloseIncomplete) || !errors.Is(err, context.Canceled) {
-		t.Fatalf("Close = %v", err)
+	if err := svc.Close(ctx); !errors.Is(err, extension.ErrCloseIncomplete) {
+		t.Fatalf("Close=%v", err)
 	}
-	if closed() {
-		t.Fatal("profile closed while leased")
+	if work.Err() == nil || closed() {
+		t.Fatal("close did not cancel before draining")
 	}
-	if next, done := svc.acquireApp(); next != nil {
-		done()
-		t.Fatal("service admitted work after closing")
+	if svc.providers() != nil {
+		t.Fatal("closed service exposed providers")
 	}
-	release()
-	release() // A request can only release its lease once.
+	svc.work.Done()
 	if err := svc.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !closed() {
-		t.Fatal("profile remained open after release")
-	}
-	if len(svc.profiles) != 0 {
-		t.Fatal("completed profiles remained owned")
+	if !closed() || svc.profile != nil {
+		t.Fatal("profile not closed")
 	}
 }
 
@@ -361,16 +426,16 @@ func TestSwapProfileRejectsClosingServiceWithoutTakingOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	candidate, _, closed := newRecordingProfile(t)
-	if err := svc.swapProfile(candidate); err == nil {
+	if err := svc.swapProfile(candidate, nil); err == nil {
 		t.Fatal("closing service accepted a profile")
 	}
-	if _, err := candidate.App(); err != nil {
+	if _, err := candidate.Providers(); err != nil {
 		t.Fatalf("rejected candidate was closed by service: %v", err)
 	}
 	if closed() {
 		t.Fatal("service released a candidate it did not own")
 	}
-	if len(svc.profiles) != 0 {
+	if svc.profile != nil {
 		t.Fatal("service retained rejected candidate")
 	}
 }
@@ -379,4 +444,39 @@ func (*recordingProfile) AgentStatus() *aop.AgentStatus { return &aop.AgentStatu
 
 func (*recordingProfile) ConsoleBindings() *consoleapi.Bindings { return nil }
 
-func (*recordingProfile) Capabilities() []string { return nil }
+func (p *recordingProfile) Active() bool {
+	return p != nil && p.extensions != nil && p.extensions.Active()
+}
+
+func (p *recordingProfile) Providers() (*provider.State, error) {
+	if !p.Active() {
+		return nil, errors.New("profile is not active")
+	}
+	return p.app.Providers, nil
+}
+
+func (p *recordingProfile) Events() (*events.Stream, error) {
+	if !p.Active() {
+		return nil, errors.New("profile is not active")
+	}
+	return p.app.Stream, nil
+}
+
+func (p *recordingProfile) Progress() (*eventbus.Bus[*toolpb.Progress], error) { return nil, nil }
+func (p *recordingProfile) Processes() (*procbus.Manager, error)               { return nil, nil }
+
+func TestScanVerifyPresenceSurvivesArgumentMapping(t *testing.T) {
+	for _, tc := range []struct {
+		value *bool
+		want  string
+	}{{nil, ""}, {protobuf.Bool(false), "--verify=off"}, {protobuf.Bool(true), "--verify=on"}} {
+		args := scanArgsForScan(&scanpb.Scan{Target: "localhost", Mode: "quick", Options: &scanpb.ScanOptions{Verify: tc.value}})
+		if tc.want == "" {
+			if len(args) != 4 {
+				t.Fatalf("missing option became explicit: %v", args)
+			}
+		} else if args[len(args)-1] != tc.want {
+			t.Fatalf("args=%v want %s", args, tc.want)
+		}
+	}
+}

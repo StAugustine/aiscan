@@ -4,46 +4,54 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
+	"os"
+	"runtime"
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent"
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	coretool "github.com/chainreactors/aiscan/core/tool"
-	prompt "github.com/chainreactors/aiscan/agent/prompt"
-	"github.com/chainreactors/aiscan/skills"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/prompt"
+	"github.com/chainreactors/cyber/agent/provider"
+	"github.com/chainreactors/cyber/agent/skills"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/hooks"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 // ---------------------------------------------------------------------------
-// Runtime exposes session operations. Extension alone owns activation and drain.
+// Runtime exposes session operations. Resource owns activation and drain.
 // ---------------------------------------------------------------------------
 
 type Runtime struct {
+	// Logger is borrowed from the installation; SetOutput keeps existing consumers attached.
+	Logger           telemetry.Logger
 	commands         []Command
 	commandIndex     map[string]Command
-	history HistoryStore
-	commandMu sync.RWMutex
-	option           *cfg.Option
-	logger           telemetry.Logger
-	runtimeConfig    Config
+	history          HistoryStore
+	config           Config
 	primarySessionID string
-	app              *Environment
+	providers        *provider.State
+	events           *events.Stream
+	hooks            *hooks.Registry
+	tools            coretool.Executor
+	commandRegistry  coretool.CommandExecutor
+	skills           *skills.Store
+	shell            coretool.Tool
 	nodeName         string
-	systemPrompt     string
+	promptTarget     prompt.Target
+	commandName      string
+	loadedSkills     []prompt.LoadedSkill
 	heartbeat        time.Duration
-	config           agent.Config
+	agentConfig      agent.Config
 	resumeMessages   []*aop.Message
 	resumeSessionID  string
 	ctx              context.Context
 	cancel           context.CancelFunc
-	providerMu       sync.Mutex
 	mu               sync.RWMutex
 	sessions         map[string]*sessionState
 	runs             map[string]*Run
-	requestSeq       uint64
 	closeOnce        sync.Once
 	closeDone        chan struct{}
 	closeErr         error
@@ -55,24 +63,69 @@ type Runtime struct {
 	maxPending       int
 }
 
-type PromptConfig = prompt.PromptConfig
-type LoadedSkill = prompt.LoadedSkill
-var BuildSystemPrompt = prompt.BuildSystemPrompt
-
 type Config struct {
-	History HistoryStore
-	BaseSkills       []string
-	Commands         []Command
-	Application      *Environment
-	NodeName         string
-	Preamble         string
-	Option           *cfg.Option
-	Logger           telemetry.Logger
-	PrimarySessionID string
-	PromptConfig     *PromptConfig
-	MaxPending       int
-	// Loop supplies the algorithm; this extension owns admission and drain.
+	History    HistoryStore
+	BaseSkills []string
+	Commands   []Command
+	Providers  *provider.State
+	Events     *events.Stream
+
+	// Capabilities are borrowed from their owning extensions.
+	Hooks                 *hooks.Registry
+	Tools                 coretool.Executor
+	CommandRegistry       coretool.CommandExecutor
+	Skills                *skills.Store
+	Shell                 coretool.Tool
+	NodeName              string
+	Heartbeat             time.Duration
+	Resume                string
+	SelectedSkills        []string
+	CaptureProviderFrames bool
+	Logger                telemetry.Logger
+	PrimarySessionID      string
+	PromptResolver        prompt.Resolver
+	PromptTarget          prompt.Target
+	// CommandName identifies the command-focused worker session (e.g. a
+	// single-command run); empty for a general conversational session.
+	CommandName string
+	// SkipBaseSkills disables BaseSkills injection for focused worker sessions
+	// that receive their skills explicitly.
+	SkipBaseSkills bool
+	MaxPending     int
+	// Loop supplies the installed reasoning algorithm.
 	Loop agent.Loop
+}
+
+// Accessors lend the runtime capabilities used by host presentation.
+// PrimarySessionID identifies the session that receives restored history.
+func (rt *Runtime) PrimarySessionID() string { return rt.primarySessionID }
+
+func (rt *Runtime) Skills() *skills.Store {
+	if rt == nil {
+		return nil
+	}
+	return rt.skills
+}
+
+func (rt *Runtime) CommandRegistry() coretool.CommandExecutor {
+	if rt == nil {
+		return nil
+	}
+	return rt.commandRegistry
+}
+
+func (rt *Runtime) Hooks() *hooks.Registry {
+	if rt == nil {
+		return nil
+	}
+	return rt.hooks
+}
+
+func (rt *Runtime) Tools() coretool.Executor {
+	if rt == nil {
+		return nil
+	}
+	return rt.tools
 }
 
 // NodeName is the profile-selected name shared by sessions and node transports.
@@ -85,9 +138,16 @@ func (rt *Runtime) NodeName() string {
 	return rt.nodeName
 }
 
-// Load activates session work under scope.Lifetime. Init bounds initialization
-// only; caller contexts cannot extend the owning extension's lifetime.
-func (rt *Runtime) Start(ctx, lifetime context.Context) error {
+// Start activates session work under the owner's lifetime. The initialization
+// context cannot extend that lifetime.
+func (r *Resource) Start(ctx, lifetime context.Context) error {
+	if r == nil || r.runtime == nil {
+		return ErrUnavailable
+	}
+	return r.runtime.start(ctx, lifetime)
+}
+
+func (rt *Runtime) start(ctx, lifetime context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -102,8 +162,7 @@ func (rt *Runtime) Start(ctx, lifetime context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	application, option := rt.app, rt.option
-	logger, rc := rt.logger, rt.runtimeConfig
+	logger, rc := rt.Logger, rt.config
 	runtimeCtx, runtimeCancel := context.WithCancel(lifetime)
 	rt.ctx, rt.cancel = runtimeCtx, runtimeCancel
 	rt.primarySessionID = rc.PrimarySessionID
@@ -111,86 +170,58 @@ func (rt *Runtime) Start(ctx, lifetime context.Context) error {
 	if rt.primarySessionID == "" {
 		rt.primarySessionID = "task"
 	}
-	rt.heartbeat = time.Duration(option.Heartbeat) * time.Minute
-	rt.app = application
-	provider, providerConfig := rt.app.ProviderState()
-	if rt.app != nil {
-		rt.app.SetLogger(logger)
-		logger = rt.app.Logger()
-	}
+	rt.heartbeat = rc.Heartbeat
+	provider, providerConfig := rt.providers.Current()
 	var resumeCounter int64
-	if option.Resume != "" {
-		data, err := rt.history.Load(ctx, option.Resume)
+	if rc.Resume != "" {
+		if rt.history == nil {
+			return fmt.Errorf("session history is not installed")
+		}
+		data, err := rt.history.Load(ctx, rc.Resume)
 		if err != nil {
 			return fmt.Errorf("resume session: %w", err)
 		}
 		rt.resumeMessages = data.Messages
 		rt.resumeSessionID = data.SessionID
 		resumeCounter = data.MessageCounter
-		logger.Importantf("resumed %d messages from %s", len(data.Messages), option.Resume)
+		logger.Importantf("resumed %d messages from %s", len(data.Messages), rc.Resume)
 	}
 
-	nodeName := rc.NodeName
-	if nodeName == "" {
-		nodeName = "aiscan"
+	rt.nodeName = rc.NodeName
+	rt.promptTarget = rc.PromptTarget
+	if rt.promptTarget == "" {
+		rt.promptTarget = prompt.MainSystem
 	}
-	rt.nodeName = nodeName
-	executor := coretool.EmptyExecutor()
-	if rt.app.Tools != nil {
-		executor = rt.app.Tools
-	}
-
-	store := rt.app.Skills
-	if store == nil {
-		store = skills.NewStore(nil)
-	}
-	pc := &PromptConfig{
-		Tools:       executor,
-		ScannerDocs: rt.app.Commands.UsageDocs(),
-		Skills:      store.Skills,
-		NodeName:    nodeName,
-	}
-	if rc.PromptConfig != nil {
-		promptConfig := *rc.PromptConfig
-		promptConfig.LoadedSkills = append([]LoadedSkill(nil), rc.PromptConfig.LoadedSkills...)
-		pc = &promptConfig
-	}
-	pc.CustomPreamble = strings.TrimSpace(pc.CustomPreamble + "\n" + rc.Preamble)
-	skillNames := option.Skills
-	if !pc.ScannerAgentMode {
+	rt.commandName = rc.CommandName
+	skillNames := rc.SelectedSkills
+	if !rc.SkipBaseSkills {
 		skillNames = append(append([]string(nil), rc.BaseSkills...), skillNames...)
 	}
 	for _, name := range skillNames {
-		if promptHasLoadedSkill(pc, name) {
+		if promptHasLoadedSkill(rt.loadedSkills, name) {
 			continue
 		}
-		body := store.ReadBody(name)
-		if body == "" {
-			body = skills.ReadFile("skills/" + name + ".md")
-		}
-		if body == "" {
-			body = skills.ReadFile(name)
-		}
+		body := rt.skills.ReadBody(name)
 		if body != "" {
-			pc.LoadedSkills = append(pc.LoadedSkills, LoadedSkill{Name: name, Body: body})
+			rt.loadedSkills = append(rt.loadedSkills, prompt.LoadedSkill{Name: name, Body: body})
 		}
 	}
-	rt.systemPrompt = BuildSystemPrompt(pc, nil)
-	logger.Debugf("system prompt length: %d chars", len(rt.systemPrompt))
 
-	rt.config = agent.Config{
+	rt.agentConfig = agent.Config{
 		Loop:                  rc.Loop,
 		Provider:              provider,
-		Tools:                 executor,
+		Tools:                 rt.tools,
 		Model:                 providerConfig.Model,
 		MaxTokens:             providerConfig.MaxTokens,
 		ContextWindow:         providerConfig.ContextWindow,
 		Logger:                logger,
 		CacheRetention:        agent.CacheShort,
-		Bus:                   rt.app,
-		Hooks:                 rt.app.Hooks,
-		CaptureProviderFrames: option.CaptureProviderFrames,
+		Bus:                   rt.events,
+		Hooks:                 rt.hooks,
+		CaptureProviderFrames: rc.CaptureProviderFrames,
 		MessageCounter:        resumeCounter,
+		SystemPromptFn:        rt.resolveSystemPrompt,
+		PromptResolver:        rc.PromptResolver,
 	}
 
 	if err := ctx.Err(); err != nil {
@@ -201,7 +232,7 @@ func (rt *Runtime) Start(ctx, lifetime context.Context) error {
 }
 
 // ready rejects business admission until the owning profile has completed
-// Load. Lifecycle wiring such as RegisterNamespaces and Observe may happen
+// Load. Lifecycle wiring such as namespace binding and Observe may happen
 // earlier, but their handlers cannot create sessions or runs through this
 // gate.
 func (rt *Runtime) ready() error {
@@ -216,8 +247,8 @@ func (rt *Runtime) ready() error {
 	return nil
 }
 
-func promptHasLoadedSkill(pc *PromptConfig, name string) bool {
-	for _, loaded := range pc.LoadedSkills {
+func promptHasLoadedSkill(values []prompt.LoadedSkill, name string) bool {
+	for _, loaded := range values {
 		if loaded.Name == name {
 			return true
 		}
@@ -225,7 +256,54 @@ func promptHasLoadedSkill(pc *PromptConfig, name string) bool {
 	return false
 }
 
-func (rt *Runtime) Close(ctx context.Context) error {
+func (rt *Runtime) resolveSystemPrompt(ctx context.Context, config *agent.Config) (string, error) {
+	resolver := rt.agentConfig.PromptResolver
+	if config != nil && config.PromptResolver != nil {
+		resolver = config.PromptResolver
+	}
+	if resolver == nil {
+		return "", nil
+	}
+	hostname, _ := os.Hostname()
+	input := prompt.Context{Target: rt.promptTarget, Agent: prompt.AgentContext{
+		NodeName: rt.nodeName, CommandName: rt.commandName,
+		OS: runtime.GOOS, Arch: runtime.GOARCH, Hostname: hostname,
+		Now: time.Now(), Windows: runtime.GOOS == "windows",
+		LoadedSkills: append([]prompt.LoadedSkill(nil), rt.loadedSkills...),
+	}}
+	if config != nil {
+		input.Agent.Name, input.Agent.Model = config.AgentName, config.Model
+		if config.Tools != nil {
+			for _, definition := range config.Tools.ToolDefinitions() {
+				input.Agent.Tools = append(input.Agent.Tools, prompt.Tool{Name: definition.Name, Description: definition.Description})
+			}
+		}
+	}
+	if rt.commandRegistry != nil {
+		input.Agent.CommandDocs = rt.commandRegistry.UsageDocs()
+	}
+	if rt.skills != nil {
+		for _, value := range rt.skills.All() {
+			if !value.Internal {
+				input.Agent.Skills = append(input.Agent.Skills, prompt.Skill{Name: value.Name, Description: value.Description, Location: value.Location})
+			}
+		}
+	}
+	result := resolver.Build(ctx, input)
+	for _, diagnostic := range result.Diagnostics {
+		rt.Logger.Warnf("prompt contribution=%q section=%q: %s", diagnostic.Contribution, diagnostic.Section, diagnostic.Message)
+	}
+	return result.Prompt, nil
+}
+
+func (r *Resource) Close(ctx context.Context) error {
+	if r == nil || r.runtime == nil {
+		return nil
+	}
+	return r.runtime.close(ctx)
+}
+
+func (rt *Runtime) close(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -278,83 +356,31 @@ func (rt *Runtime) Close(ctx context.Context) error {
 	}
 }
 
-func (rt *Runtime) SetLogger(logger telemetry.Logger) {
+// Active reports whether the runtime accepts work.
+func (rt *Runtime) Active() bool {
 	if rt == nil {
-		return
+		return false
 	}
-	if logger == nil {
-		logger = telemetry.NopLogger()
-	}
-	if rt.app != nil {
-		rt.app.SetLogger(logger)
-		logger = rt.app.Logger()
-	}
-	rt.mu.Lock()
-	rt.config.Logger = logger
-	for _, sess := range rt.sessions {
-		sess.agent.SetLogger(logger)
-	}
-	rt.mu.Unlock()
+	rt.lifecycle.Lock()
+	defer rt.lifecycle.Unlock()
+	return rt.loaded && !rt.closing
 }
 
-// ReloadProvider rebuilds application configuration and updates this Runtime's
-// template and existing sessions. In-flight runs retain their snapshot.
-func (rt *Runtime) ReloadProvider(option *cfg.Option) (agent.Provider, string, error) {
-	if option == nil {
-		return nil, "", fmt.Errorf("provider option is required")
+// ProviderState is the model this runtime reasons with, and its configuration.
+func (rt *Runtime) ProviderState() (agent.Provider, agent.ProviderConfig) {
+	if rt == nil || rt.providers == nil {
+		return nil, agent.ProviderConfig{}
 	}
-	provider, resolved, err := rt.reloadProvider(rt.app.ResolveProvider(option))
-	return provider, resolved.Model, err
+	return rt.providers.Current()
 }
 
-func (rt *Runtime) reloadProvider(config agent.ProviderConfig) (agent.Provider, agent.ProviderConfig, error) {
-	if rt == nil || rt.app == nil {
-		return nil, agent.ProviderConfig{}, fmt.Errorf("agent runtime is not configured")
+// ProviderFallbacks are the configured alternatives to the active model.
+func (rt *Runtime) ProviderFallbacks() []provider.Entry {
+	if rt == nil || rt.providers == nil {
+		return nil
 	}
-	rt.providerMu.Lock()
-	defer rt.providerMu.Unlock()
-	provider, resolved, err := rt.app.ReloadProvider(rt.ctx, config)
-	if err != nil {
-		return nil, agent.ProviderConfig{}, err
-	}
-	rt.applyProvider(provider, resolved)
-	return provider, resolved, nil
+	return rt.providers.Fallbacks()
 }
-
-func (rt *Runtime) ReloadResolvedProvider(config agent.ProviderConfig) (agent.Provider, agent.ProviderConfig, error) {
- return rt.reloadProvider(config)
-}
-
-// SetProvider atomically updates the runtime template and every existing
-// conversation session. Runs already in flight keep their provider snapshot.
-func (rt *Runtime) SetProvider(provider agent.Provider, providerConfig agent.ProviderConfig) {
-	if rt == nil {
-		return
-	}
-	rt.providerMu.Lock()
-	defer rt.providerMu.Unlock()
-	if rt.app != nil {
-		rt.app.SetProvider(provider, providerConfig)
-	}
-	rt.applyProvider(provider, providerConfig)
-}
-
-func (rt *Runtime) applyProvider(provider agent.Provider, providerConfig agent.ProviderConfig) {
-	rt.mu.Lock()
-	rt.config.Provider = provider
-	if providerConfig.Model != "" {
-		rt.config.Model = providerConfig.Model
-	}
-	rt.config.MaxTokens = providerConfig.MaxTokens
-	rt.config.ContextWindow = providerConfig.ContextWindow
-	for _, sess := range rt.sessions {
-		sess.agent.SetProviderConfig(provider, providerConfig)
-	}
-	rt.mu.Unlock()
-}
-
-// App returns the concrete application used by this runtime.
-func (rt *Runtime) App() *Environment { return rt.app }
 
 // Context ends when the runtime shuts down. It is nil before Load.
 func (rt *Runtime) Context() context.Context { return rt.ctx }

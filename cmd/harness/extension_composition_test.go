@@ -4,6 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/hooks"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/pkg/cli"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,32 +17,25 @@ import (
 	"path/filepath"
 	"testing"
 
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/extension"
-	"github.com/chainreactors/aiscan/core/hooks"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/cli"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/toolset"
-	"github.com/chainreactors/aiscan/pkg/web"
+	"github.com/chainreactors/cyber/pkg/web"
 	flags "github.com/jessevdk/go-flags"
 )
 
-// A feature unknown to all product option structs uses the same declaration,
+// A feature unknown to all application option structs uses the same declaration,
 // ownership and dependency rules across five independent domains.
 type compositionOptions struct {
 	Text  string `long:"fixture-text" config:"text" json:"text"`
 	Count int    `long:"fixture-count" config:"count" json:"count"`
 }
 
-var compositionHook = hooks.Point[string, struct{}]{Kind: "fixture.executed"}
+var compositionHook = hooks.NewPoint[string, struct{}]("fixture.executed")
 
 type compositionFeature struct {
 	options      compositionOptions
 	path         string
 	hooks        *hooks.Registry
-	tools        *toolset.Registry
-	commands     *commands.Registry
+	tools        *coretool.ToolRegistry
+	commands     *coretool.CommandRegistry
 	file         *os.File
 	subscription *hooks.Subscription
 	observed     string
@@ -44,10 +43,10 @@ type compositionFeature struct {
 
 func (e *compositionFeature) Name() string        { return "fixture" }
 func (e *compositionFeature) Description() string { return "Fixture with explicit dependencies" }
-func (e *compositionFeature) Definition() *tool.Definition {
-	return tool.Def(e.Name(), e.Description(), struct{}{})
+func (e *compositionFeature) Definition() *coretool.Definition {
+	return coretool.Def(e.Name(), e.Description(), struct{}{})
 }
-func (e *compositionFeature) Execute(ctx context.Context, _ string) (*tool.Result, error) {
+func (e *compositionFeature) Execute(ctx context.Context, _ string) (*coretool.Result, error) {
 	text := fmt.Sprintf("%s:%d", e.options.Text, e.options.Count)
 	if _, err := e.file.WriteString(text); err != nil {
 		return nil, err
@@ -55,7 +54,7 @@ func (e *compositionFeature) Execute(ctx context.Context, _ string) (*tool.Resul
 	if _, err := compositionHook.Emit(ctx, e.hooks, text); err != nil {
 		return nil, err
 	}
-	return tool.TextResult(text), nil
+	return coretool.TextResult(text), nil
 }
 func (e *compositionFeature) Load(scope *extension.Scope) error {
 	if err := scope.Init().Err(); err != nil {
@@ -67,12 +66,12 @@ func (e *compositionFeature) Load(scope *extension.Scope) error {
 	}
 	e.file = file
 	e.subscription = compositionHook.On(e.hooks, "fixture", func(_ context.Context, text string) (struct{}, error) { e.observed = text; return struct{}{}, nil })
-	if err := e.tools.Register("fixture", e); err != nil {
+	if err := extension.Add[coretool.Tool](scope, e); err != nil {
 		return err
 	}
-	return e.commands.Register("fixture", "fixture", commands.Command{Name: "fixture", Run: func(ctx context.Context, _ *commands.Execution) (any, error) {
+	return extension.Add(scope, coretool.Command{Name: "fixture", Run: func(ctx context.Context, _ *coretool.Execution) (any, error) {
 		result, err := e.tools.ExecuteTool(ctx, "fixture", "{}")
-		return tool.ResultText(result), err
+		return coretool.ResultText(result), err
 	}})
 }
 func (e *compositionFeature) Close(ctx context.Context) error {
@@ -96,14 +95,14 @@ func (compositionAuth) RegisterRoutes(*http.ServeMux)             {}
 
 func TestExtensionCompositionWithoutCentralFeatureChanges(t *testing.T) {
 	sections := cfg.NewSections()
-	if err := sections.Register("fixture", cfg.Section{Key: "fixture", New: func() any { return &compositionOptions{Count: 9} }, Environment: func(s cfg.Sources) (map[string]any, map[string]any, error) {
+	if _, err := sections.Add(cfg.Section{Key: "fixture", New: func() any { return &compositionOptions{Count: 9} }, Environment: func(s cfg.Sources) (map[string]any, map[string]any, error) {
 		value, _ := s.LookupEnv("FIXTURE_TEXT")
 		return map[string]any{"text": value}, nil, nil
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	arguments := cli.New(flags.NewNamedParser("fixture-host", 0))
-	if err := arguments.Group("fixture", "", "fixture", cfg.FlagGroup{Name: "Fixture", Options: &compositionOptions{}}); err != nil {
+	if err := arguments.Group("", "fixture", cfg.FlagGroup{Name: "Fixture", Options: &compositionOptions{}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := arguments.Parse([]string{"--fixture-count=0"}); err != nil {
@@ -117,11 +116,11 @@ func TestExtensionCompositionWithoutCentralFeatureChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hooks := hooks.New()
-	tools := toolset.NewRegistry(hooks)
-	commandRegistry := commands.NewRegistry(hooks)
-	feature := &compositionFeature{options: *options, path: filepath.Join(t.TempDir(), "owned.txt"), hooks: hooks, tools: tools, commands: commandRegistry}
-	set, err := extension.New(extension.Entry{ID: "fixture", Extension: feature}, extension.Entry{ID: "tools", DependsOn: []string{"fixture"}, Extension: tools}, extension.Entry{ID: "commands", DependsOn: []string{"tools"}, Extension: commandRegistry})
+	hookRegistry := hooks.New()
+	tools := coretool.NewToolRegistry()
+	commandRegistry := coretool.NewCommandRegistry()
+	feature := &compositionFeature{options: *options, path: filepath.Join(t.TempDir(), "owned.txt"), hooks: hookRegistry, tools: tools, commands: commandRegistry}
+	set, err := extension.New(extension.Provided[*hooks.Registry](hookRegistry), tools, commandRegistry, feature)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +129,8 @@ func TestExtensionCompositionWithoutCentralFeatureChanges(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	handler, err := web.NewHandler(compositionAuth{}, nil, web.Route{Source: "fixture", Pattern: "GET /fixture", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		result, err := commandRegistry.Execute(r.Context(), "fixture", &commands.Execution{})
+	handler, err := web.NewHandler(compositionAuth{}, nil, web.Route{Pattern: "GET /fixture", Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		result, err := commandRegistry.Execute(r.Context(), "fixture", &coretool.Execution{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			return

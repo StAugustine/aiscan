@@ -12,10 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent/hooks"
+	"github.com/chainreactors/cyber/agent/inbox"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/telemetry"
+	types "github.com/chainreactors/cyber/core/types"
 )
 
 type imageDisabler interface {
@@ -161,8 +163,62 @@ func computeRetryDelay(attempt int, jitterFrac float64) time.Duration {
 	return delay
 }
 
+// Only model work receives this short-lived cancellation scope. Tools and the
+// task lifetime keep their original context, so interruption cannot kill work.
+func requestWithInboxInterrupt(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int) (*assistantTurn, *aop.TokenUsage, error) {
+	if cfg.Inbox == nil {
+		return requestWithRetry(ctx, cfg, em, messages, tools, turn)
+	}
+	signal := cfg.Inbox.InterruptSignal()
+	select {
+	case <-signal:
+		return nil, nil, inbox.ErrInterrupted
+	default:
+	}
+	requestCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-signal:
+			cancel(inbox.ErrInterrupted)
+		case <-finished:
+		case <-requestCtx.Done():
+		}
+	}()
+	assistant, usage, err := requestWithRetry(requestCtx, cfg, em, messages, tools, turn)
+	if ctx.Err() != nil {
+		return nil, usage, ctx.Err()
+	}
+	// Check the signal as well as the context: delivery can race a completed
+	// response before the cancellation goroutine runs.
+	select {
+	case <-signal:
+		return nil, usage, inbox.ErrInterrupted
+	default:
+	}
+	return assistant, usage, err
+}
+
 func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int) (*assistantTurn, *aop.TokenUsage, error) {
 	var lastErr error
+	total := &aop.TokenUsage{Detail: map[string]uint64{}}
+	record := func(usage *aop.TokenUsage) {
+		total.Detail["requests"]++
+		if usage == nil {
+			total.Detail["usage_missing"]++
+			return
+		}
+		total.InputTokens += usage.InputTokens
+		total.OutputTokens += usage.OutputTokens
+		total.TotalTokens += usage.TotalTokens
+		for key, value := range usage.Detail {
+			total.Detail[key] += value
+		}
+		// Billing includes failed attempts; context size describes only the last.
+		total.Detail["context_tokens"] = uint64(provider.UsageTotalTokens(usage))
+	}
 	maxAttempts := cfg.MaxRetries + 1
 	if cfg.MaxRetries < 0 {
 		maxAttempts = 1
@@ -171,6 +227,7 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 	// retries (including the image-downgrade retry) reuse it — consumers merge
 	// deltas and the final message by id.
 	messageID := em.allocMessageID()
+	discard := false
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			delay := retryDelayFor(attempt-1, lastErr)
@@ -178,18 +235,23 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return nil, nil, ctx.Err()
+				return nil, total, ctx.Err()
+			}
+			if discard {
+				em.messageWithID(messageID, "assistant", nil)
 			}
 		}
 
-		assistant, usage, err := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
+		assistant, usage, streamed, err := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
+		record(usage)
 		if err == nil {
-			return assistant, usage, nil
+			return assistant, total, nil
 		}
 		lastErr = err
+		discard = streamed
 
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, nil, ctxErr
+			return nil, total, ctxErr
 		}
 
 		if provider.IsImageUnsupportedError(err) {
@@ -197,22 +259,37 @@ func requestWithRetry(ctx context.Context, cfg Config, em *aopEmitter, messages 
 			if d, ok := cfg.Provider.(imageDisabler); ok {
 				d.DisableImages()
 			}
-			assistant, usage, retryErr := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
-			if retryErr == nil {
-				return assistant, usage, nil
+			if streamed {
+				em.messageWithID(messageID, "assistant", nil)
 			}
-			return nil, nil, retryErr
+			assistant, usage, _, retryErr := requestAssistantMessageWithUsage(ctx, cfg, em, messages, tools, turn, messageID)
+			record(usage)
+			if retryErr == nil {
+				return assistant, total, nil
+			}
+			return nil, total, retryErr
 		}
 
 		if !isRetryableError(err) {
-			return nil, nil, err
+			return nil, total, err
 		}
 	}
-	return nil, nil, lastErr
+	return nil, total, lastErr
 }
 
-func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, error) {
+func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEmitter, messages []*aop.Message, tools []*aop.ToolDefinition, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, bool, error) {
+	policy, policyErr := hooks.ModelRequestPolicy.Emit(ctx, cfg.Hooks, hooks.ModelRequestEvent{ContextEvent: hooks.ContextEvent{SessionID: cfg.SessionID, TurnID: cfg.TurnID, Turn: turn, Messages: cloneModelMessages(messages)}, Purpose: "execution"})
+	if policyErr != nil {
+		return nil, nil, false, fmt.Errorf("model request policy: %w", policyErr)
+	}
+	if policy.Deny != nil {
+		return nil, nil, false, policy.Deny
+	}
+	if policy.DisableTools {
+		tools = nil
+	}
 	req := &ChatCompletionRequest{
+		Purpose:        policy.Purpose,
 		Model:          cfg.Model,
 		Messages:       messages,
 		Tools:          tools,
@@ -221,10 +298,13 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 		CacheRetention: cfg.CacheRetention,
 		SessionID:      cfg.SessionID,
 	}
+	if req.Purpose == "" {
+		req.Purpose = "execution"
+	}
 	estimatedInputTokens := estimateRequestTokens(messages, tools)
 	maxTokens, err := clampMaxTokens(cfg.MaxTokens, cfg.ContextWindow, estimatedInputTokens)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot create LLM request at turn %d: %w", turn, err)
+		return nil, nil, false, fmt.Errorf("cannot create LLM request at turn %d: %w", turn, err)
 	}
 	req.MaxTokens = maxTokens
 	em.status(statusLLMRequest, &types.LLMRequestDetail{
@@ -232,28 +312,42 @@ func requestAssistantMessageWithUsage(ctx context.Context, cfg Config, em *aopEm
 	})
 	if cfg.Stream {
 		if streaming, ok := cfg.Provider.(StreamingProvider); ok {
-			return streamAssistantMessageWithUsage(ctx, streaming, req, em, cfg.Logger, turn, messageID)
+			assistant, usage, streamed, err := streamAssistantMessageWithUsage(ctx, streaming, req, em, cfg.Logger, turn, messageID)
+			if err == nil && policy.DisableTools && len(provider.MessageToolCalls(assistant.message)) > 0 {
+				return nil, usage, streamed, fmt.Errorf("model request policy forbids tool calls for %s", req.Purpose)
+			}
+			return assistant, usage, streamed, err
 		}
 	}
 
 	resp, err := cfg.Provider.ChatCompletion(ctx, req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("LLM call failed at turn %d: %w", turn, err)
+	var usage *aop.TokenUsage
+	if resp != nil {
+		usage = resp.Usage
 	}
-	if len(resp.Choices) == 0 {
-		return nil, nil, fmt.Errorf("%w at turn %d", errEmptyResponse, turn)
+	if err != nil {
+		return nil, usage, false, fmt.Errorf("LLM call failed at turn %d: %w", turn, err)
+	}
+	if resp == nil || len(resp.Choices) == 0 {
+		return nil, usage, false, fmt.Errorf("%w at turn %d", errEmptyResponse, turn)
 	}
 	choice := resp.Choices[0]
 	msg := choice.Message
 	if msg == nil {
-		msg = &aop.Message{Role: "assistant"}
+		return nil, usage, false, fmt.Errorf("LLM protocol error at turn %d: choice 0 has no message", turn)
+	}
+	if policy.DisableTools && len(provider.MessageToolCalls(msg)) > 0 {
+		return nil, usage, false, fmt.Errorf("model request policy forbids tool calls for %s", req.Purpose)
+	}
+	if provider.MessageText(msg) == "" && len(provider.MessageToolCalls(msg)) == 0 {
+		return nil, usage, false, fmt.Errorf("LLM protocol error at turn %d: response message has no final text or tool call", turn)
 	}
 	msg.Id = messageID
 	if len(msg.Content) > 0 {
 		em.messageProto(msg)
 	}
 	logUsage(cfg.Logger, resp.Usage)
-	return &assistantTurn{message: msg, finishReason: choice.FinishReason}, resp.Usage, nil
+	return &assistantTurn{message: msg, finishReason: choice.FinishReason}, resp.Usage, false, nil
 }
 
 func clampMaxTokens(configured, contextWindow, contextTokens int) (int, error) {
@@ -287,26 +381,27 @@ func estimateRequestTokens(messages []*aop.Message, tools []*aop.ToolDefinition)
 	return total
 }
 
-func streamAssistantMessageWithUsage(ctx context.Context, p StreamingProvider, req *ChatCompletionRequest, em *aopEmitter, logger telemetry.Logger, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, error) {
+func streamAssistantMessageWithUsage(ctx context.Context, p StreamingProvider, req *ChatCompletionRequest, em *aopEmitter, logger telemetry.Logger, turn int, messageID string) (*assistantTurn, *aop.TokenUsage, bool, error) {
 	events, err := p.ChatCompletionStream(ctx, req)
 	if err != nil {
-		return nil, nil, fmt.Errorf("LLM stream failed at turn %d: %w", turn, err)
+		return nil, nil, false, fmt.Errorf("LLM stream failed at turn %d: %w", turn, err)
 	}
 
 	builder := newMessageBuilder()
+	streamed := false
 	seenReasoning := false
 	finishReason := ""
 	var usage *aop.TokenUsage
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, usage, streamed, ctx.Err()
 		case event, ok := <-events:
 			if !ok {
 				goto streamDone
 			}
 			if event.Err != nil {
-				return nil, nil, fmt.Errorf("LLM stream failed at turn %d: %w", turn, event.Err)
+				return nil, usage, streamed, fmt.Errorf("LLM stream failed at turn %d: %w", turn, event.Err)
 			}
 			if event.Usage != nil {
 				usage = event.Usage
@@ -319,11 +414,15 @@ func streamAssistantMessageWithUsage(ctx context.Context, p StreamingProvider, r
 			}
 			builder.Apply(event)
 			if delta := event.MessageDelta; delta != nil {
-				if reasoning := delta.GetReasoning(); reasoning != "" {
+				if _, ok := delta.Value.(*aop.MessageDelta_Reasoning); ok {
 					seenReasoning = true
+				}
+				if reasoning := delta.GetReasoning(); reasoning != "" {
+					streamed = true
 					em.messageDelta(messageID, 0, partReasoning, reasoning)
 				}
 				if text := delta.GetText(); text != "" {
+					streamed = true
 					textIndex := 0
 					if seenReasoning {
 						textIndex = 1
@@ -334,6 +433,9 @@ func streamAssistantMessageWithUsage(ctx context.Context, p StreamingProvider, r
 		}
 	}
 streamDone:
+	if err := ctx.Err(); err != nil {
+		return nil, usage, streamed, err
+	}
 
 	msg := builder.Message()
 	msg.Id = messageID
@@ -341,5 +443,5 @@ streamDone:
 		em.messageProto(msg)
 	}
 	logUsage(logger, usage)
-	return &assistantTurn{message: msg, finishReason: finishReason}, usage, nil
+	return &assistantTurn{message: msg, finishReason: finishReason}, usage, streamed, nil
 }

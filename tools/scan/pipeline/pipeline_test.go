@@ -21,29 +21,27 @@ func TestWorkerPanic(t *testing.T) {
 	var mu sync.Mutex
 	var results []string
 
-	p, err := New(context.Background(), Config{
-		Capabilities: []Capability{
-			{
-				Name:   "crasher",
-				Routes: []Route{{From: ""}},
-				Run: func(_ context.Context, e Event, emit func(Event)) {
-					if e.Key() == "panic" {
-						panic("boom")
-					}
-					mu.Lock()
-					results = append(results, e.Key())
-					mu.Unlock()
-				},
+	p, err := New(context.Background(), []Capability[testEvent]{
+		{
+			Name:   "crasher",
+			Routes: []Route[testEvent]{{From: ""}},
+			Run: func(_ context.Context, e testEvent, emit func(testEvent)) {
+				if e.Key() == "panic" {
+					panic("boom")
+				}
+				mu.Lock()
+				results = append(results, e.Key())
+				mu.Unlock()
 			},
 		},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	done := make(chan struct{})
 	go func() {
-		p.Run([]Event{
+		p.Run([]testEvent{
 			testEvent{"before"},
 			testEvent{"panic"},
 			testEvent{"after"},
@@ -73,40 +71,38 @@ func TestDispatcherPanic(t *testing.T) {
 	var count int
 	var mu sync.Mutex
 
-	p, err := New(context.Background(), Config{
-		Capabilities: []Capability{
-			{
-				Name:   "counter",
-				Routes: []Route{{From: ""}},
-				Run: func(_ context.Context, e Event, emit func(Event)) {
-					// Emit an event that routes to "sinker".
-					emit(testEvent{fmt.Sprintf("out:%s", e.Key())})
-					mu.Lock()
-					count++
-					mu.Unlock()
-				},
-			},
-			{
-				Name: "sinker",
-				Routes: []Route{{
-					From: "counter",
-					Accept: func(e Event) bool {
-						return true
-					},
-				}},
-				Run: func(_ context.Context, e Event, emit func(Event)) {
-					// just consume
-				},
+	p, err := New(context.Background(), []Capability[testEvent]{
+		{
+			Name:   "counter",
+			Routes: []Route[testEvent]{{From: ""}},
+			Run: func(_ context.Context, e testEvent, emit func(testEvent)) {
+				// Emit an event that routes to "sinker".
+				emit(testEvent{fmt.Sprintf("out:%s", e.Key())})
+				mu.Lock()
+				count++
+				mu.Unlock()
 			},
 		},
-	})
+		{
+			Name: "sinker",
+			Routes: []Route[testEvent]{{
+				From: "counter",
+				Accept: func(e testEvent) bool {
+					return true
+				},
+			}},
+			Run: func(_ context.Context, e testEvent, emit func(testEvent)) {
+				// just consume
+			},
+		},
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	done := make(chan struct{})
 	go func() {
-		p.Run([]Event{testEvent{"a"}, testEvent{"b"}})
+		p.Run([]testEvent{{"a"}, {"b"}})
 		close(done)
 	}()
 

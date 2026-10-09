@@ -2,10 +2,10 @@ package agent
 
 import (
 	"context"
-	aop "github.com/chainreactors/aiscan/aop"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/tool"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"fmt"
+	aop "github.com/chainreactors/cyber/aop"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	types "github.com/chainreactors/cyber/core/types"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,9 +19,13 @@ type streamEventCollector struct {
 	mu       sync.Mutex
 	deltas   []*aop.MessageDelta
 	messages []*aop.Message
+	events   []*aop.Event
 }
 
 func (c *streamEventCollector) handler(event *aop.Event) {
+	c.mu.Lock()
+	c.events = append(c.events, event)
+	c.mu.Unlock()
 	switch eventKind(event) {
 	case "message.delta":
 		if d := event.GetMessageDelta(); d != nil {
@@ -118,8 +122,9 @@ func TestStreamDeltasAndFinalMessageShareMessageID(t *testing.T) {
 // flakyStreamProvider fails the first stream attempt with a retryable error,
 // then streams successfully.
 type flakyStreamProvider struct {
-	calls  atomic.Int32
-	events []ChatCompletionStreamEvent
+	calls   atomic.Int32
+	events  []ChatCompletionStreamEvent
+	partial []ChatCompletionStreamEvent
 }
 
 func (p *flakyStreamProvider) Name() string { return "flaky-stream" }
@@ -129,13 +134,17 @@ func (p *flakyStreamProvider) ChatCompletion(context.Context, *ChatCompletionReq
 }
 
 func (p *flakyStreamProvider) ChatCompletionStream(ctx context.Context, _ *ChatCompletionRequest) (<-chan ChatCompletionStreamEvent, error) {
+	events := p.events
 	if p.calls.Add(1) == 1 {
-		return nil, retryableTimeoutError{}
+		if len(p.partial) == 0 {
+			return nil, retryableTimeoutError{}
+		}
+		events = append(append([]ChatCompletionStreamEvent(nil), p.partial...), ChatCompletionStreamEvent{Err: retryableTimeoutError{}})
 	}
 	ch := make(chan ChatCompletionStreamEvent)
 	go func() {
 		defer close(ch)
-		for _, event := range p.events {
+		for _, event := range events {
 			select {
 			case ch <- event:
 			case <-ctx.Done():
@@ -185,10 +194,90 @@ func TestMessageIDStableAcrossStreamRetry(t *testing.T) {
 	}
 }
 
+func TestPartialStreamRetryReplacesFailedAttempt(t *testing.T) {
+	for _, reasoning := range []bool{false, true} {
+		t.Run(fmt.Sprint(reasoning), func(t *testing.T) {
+			collector := &streamEventCollector{}
+			partial := []ChatCompletionStreamEvent{textDelta("stale answer")}
+			if reasoning {
+				partial = append([]ChatCompletionStreamEvent{reasoningDelta("stale thought")}, partial...)
+			}
+			llm := &flakyStreamProvider{partial: partial, events: reasoningStreamEvents()}
+			_, err := NewAgent(Config{Loop: StandardLoop{}, Provider: llm, Model: "test", Stream: true, MaxRetries: 1, Bus: testBus(collector.handler)}).Run(context.Background(), TextInput("hi"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			collector.mu.Lock()
+			defer collector.mu.Unlock()
+			var text, thought string
+			resets := 0
+			for _, event := range collector.events {
+				if message := event.GetMessage(); message != nil && message.Role == "assistant" {
+					if len(message.Content) > 0 {
+						break
+					} // Assert before the successful final snapshot.
+					resets++
+					text, thought = "", ""
+				}
+				if delta := event.GetMessageDelta(); delta != nil {
+					text += delta.GetText()
+					thought += delta.GetReasoning()
+				}
+			}
+			if text != "ans-wer" || thought != "think-hard" || resets != 1 {
+				t.Fatalf("before final reconciliation: text=%q thought=%q resets=%d", text, thought, resets)
+			}
+		})
+	}
+}
+
+type terminalStreamProvider struct{}
+
+func (terminalStreamProvider) Name() string { return "terminal-stream" }
+func (terminalStreamProvider) ChatCompletion(context.Context, *ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	return nil, fmt.Errorf("bad request")
+}
+func (terminalStreamProvider) ChatCompletionStream(ctx context.Context, _ *ChatCompletionRequest) (<-chan ChatCompletionStreamEvent, error) {
+	ch := make(chan ChatCompletionStreamEvent)
+	go func() {
+		defer close(ch)
+		for _, event := range []ChatCompletionStreamEvent{textDelta("stale answer"), {Err: fmt.Errorf("bad request")}} {
+			select {
+			case ch <- event:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return ch, nil
+}
+
+func TestPartialStreamFailureWithoutRetryKeepsAttempt(t *testing.T) {
+	collector := &streamEventCollector{}
+	_, err := NewAgent(Config{Loop: StandardLoop{}, Provider: terminalStreamProvider{}, Model: "test", Stream: true, Bus: testBus(collector.handler)}).Run(context.Background(), TextInput("hi"))
+	if err == nil {
+		t.Fatal("expected stream error")
+	}
+	collector.mu.Lock()
+	defer collector.mu.Unlock()
+	var text string
+	for _, event := range collector.events {
+		if message := event.GetMessage(); message != nil && message.Role == "assistant" {
+			t.Fatalf("stream discarded without a replacement attempt: %+v", message)
+		}
+		if delta := event.GetMessageDelta(); delta != nil {
+			text += delta.GetText()
+		}
+	}
+	if text != "stale answer" {
+		t.Fatalf("kept text = %q", text)
+	}
+}
+
 func TestStatusPreservesTypedExtension(t *testing.T) {
 	bus := coreevents.New()
 	var emitted *aop.Event
-	bus.Observe(coreevents.ObserverFunc(func(event *aop.Event) { emitted = event }))
+	bus.Observe(func(event *aop.Event) { emitted = event })
 	emitter := newAOPEmitter(bus, "agent-1", "session-1", "", "", nil, 0)
 	emitter.status(types.CompactStateEnd, &types.CompactDetail{
 		TokensBefore: 1000,
@@ -208,12 +297,12 @@ func TestStatusPreservesTypedExtension(t *testing.T) {
 func TestToolResultEmitterPreservesAllProtocolFields(t *testing.T) {
 	bus := coreevents.New()
 	var emitted *aop.Event
-	bus.Observe(coreevents.ObserverFunc(func(event *aop.Event) { emitted = event }))
+	bus.Observe(func(event *aop.Event) { emitted = event })
 	emitter := newAOPEmitter(bus, "agent-1", "session-1", "", "", nil, 0).turn("turn-1")
-	emitter.toolResult(&aop.ToolCall{Id: "call-1", Name: "scan"}, []*aop.Content{
-		aop.Text("done"),
-		aop.Image("image/png", []byte("image")),
-	}, &tool.Result{}, true, true, 12)
+	emitter.toolResult(&aop.ToolResult{
+		CallId: "call-1", Name: "scan", Terminate: true, IsError: true, DurationMs: 12,
+		Output: []*aop.Content{aop.Text("done"), aop.Image("image/png", []byte("image"))},
+	})
 
 	result := emitted.GetToolResult()
 	if result == nil || result.CallId != "call-1" || result.Name != "scan" || !result.Terminate || !result.IsError || result.DurationMs != 12 {

@@ -3,11 +3,11 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/chainreactors/cyber/pkg/aopconn"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	web "github.com/chainreactors/aiscan/pkg/web"
+	aop "github.com/chainreactors/cyber/aop"
+	types "github.com/chainreactors/cyber/core/types"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
@@ -17,6 +17,11 @@ func (p *AgentPool) ServeNode(parent context.Context, stream aop.EnvelopeStream)
 	if p == nil || stream == nil {
 		return fmt.Errorf("node AOP stream is unavailable")
 	}
+	parent, release, err := p.admitStream(parent, stream)
+	if err != nil {
+		return err
+	}
+	defer release()
 	first, err := stream.Recv()
 	if err != nil {
 		return err
@@ -34,7 +39,7 @@ func (p *AgentPool) ServeNode(parent context.Context, stream aop.EnvelopeStream)
 		return fmt.Errorf("AgentHello node_id is required")
 	}
 
-	connection, err := web.NewConnection(parent, stream)
+	connection, err := aopconn.NewConnection(parent, stream)
 	if err != nil {
 		return err
 	}
@@ -60,16 +65,12 @@ func (p *AgentPool) ServeNode(parent context.Context, stream aop.EnvelopeStream)
 		runtime:      runtimeInfo,
 		status:       &aop.AgentStatus{},
 		stats:        &aop.AgentStats{},
-		done:         make(chan struct{}),
 	}
-	namespaceMux, err := p.newAgentNamespaceMux(ctx, agent)
-	if err != nil {
+	namespaceMux := aop.NewNamespaceMux(ctx)
+	defer func() { _ = namespaceMux.Close(context.Background()) }()
+	if err := p.registerAgentNamespaces(namespaceMux, agent); err != nil {
 		return fmt.Errorf("register node namespaces: %w", err)
 	}
-	defer func() {
-		connection.Close()
-		_ = namespaceMux.Close(context.Background())
-	}()
 	accepted, err := aop.Wrap(generateID(), first.Id, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_AgentAccepted{
 		AgentAccepted: &aop.AgentAccepted{NodeId: hello.NodeId, Capabilities: append([]string(nil), hello.Capabilities...)},
 	}})
@@ -93,7 +94,6 @@ func (p *AgentPool) ServeNode(parent context.Context, stream aop.EnvelopeStream)
 	p.register(agent)
 	defer func() {
 		p.unregister(agent)
-		close(agent.done)
 	}()
 
 	dispatch := func(dispatchCtx context.Context, envelope *aop.Envelope, send aop.SendFunc) error {
@@ -106,5 +106,5 @@ func (p *AgentPool) ServeNode(parent context.Context, stream aop.EnvelopeStream)
 		}
 		return nil
 	}
-	return connection.Run(nil, dispatch)
+	return connection.Run(dispatch)
 }

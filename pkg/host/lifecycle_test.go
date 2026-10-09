@@ -9,16 +9,16 @@ import (
 	"testing"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestCloseCancelsAndWaitsForDispatch(t *testing.T) {
-	entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	entered, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	mux := testMux(t, func(ctx context.Context, _ *aop.Envelope, _ proto.Message, _ aop.SendFunc) error {
 		close(entered)
 		<-ctx.Done()
-		close(cancelled)
+		close(canceled)
 		<-release
 		return ctx.Err()
 	})
@@ -30,7 +30,7 @@ func TestCloseCancelsAndWaitsForDispatch(t *testing.T) {
 	closed := make(chan struct{})
 	go func() { h.Close(); close(closed) }()
 	select {
-	case <-cancelled:
+	case <-canceled:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not cancel dispatch")
 	}
@@ -126,10 +126,13 @@ func TestStreamOwnerCanInterruptBlockedRead(t *testing.T) {
 	defer writer.Close()
 	h := New(aop.NewNamespaceMux(t.Context()))
 	// The embedding owns this pipe, so it may close it on communication cancel.
-	stop := context.AfterFunc(h.Context(), func() { _ = reader.CloseWithError(context.Canceled) })
+	stop := context.AfterFunc(h.Context(), func() { _ = writer.CloseWithError(context.Canceled) })
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- h.Serve(NewStdio(reader, io.Discard)) }()
+	if _, err := writer.Write([]byte(" ")); err != nil {
+		t.Fatal(err)
+	}
 	h.Close()
 	select {
 	case err := <-done:

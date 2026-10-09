@@ -15,26 +15,24 @@ import (
 	"time"
 
 	"github.com/carapace-sh/carapace"
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/eventbus"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	outputpkg "github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	consoleapi "github.com/chainreactors/aiscan/pkg/console/api"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/agent/provider"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/eventbus"
+	types "github.com/chainreactors/cyber/core/types"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
+	outputpkg "github.com/chainreactors/cyber/pkg/output"
 	"github.com/chainreactors/tui/console"
 	rlterm "github.com/chainreactors/tui/readline/terminal"
 	"github.com/spf13/cobra"
 )
 
 const agentPromptCommandName = "__prompt"
-const agentConsoleInterruptCommandName = "aiscan-interrupt"
-const agentConsoleCtrlCCommandName = "aiscan-ctrl-c"
-const agentConsoleToggleVerbosityCommandName = "aiscan-toggle-verbosity"
+const agentConsoleInterruptCommandName = "cyber-interrupt"
+const agentConsoleCtrlCCommandName = "cyber-ctrl-c"
+const agentConsoleToggleVerbosityCommandName = "cyber-toggle-verbosity"
 const agentConsoleEscapeSequenceWait = 10 * time.Millisecond
 
 // Some terminal applications leave focus reporting or Windows Terminal's
@@ -42,7 +40,7 @@ const agentConsoleEscapeSequenceWait = 10 * time.Millisecond
 // remain active, ordinary keys can arrive as strings such as
 // "\x1b[191;53;47;1;0;1_" and leak into the editable line. Reset them at the
 // application boundary before every read rather than teaching the shared
-// readline package about an aiscan-specific terminal lifecycle.
+// readline package about an cyber-specific terminal lifecycle.
 const agentConsoleResetInputModes = "\x1b[?1004l\x1b[?9001l"
 
 var errAgentConsoleExit = errors.New("agent console exit")
@@ -50,9 +48,9 @@ var errAgentConsoleExit = errors.New("agent console exit")
 type AgentConsole struct {
 	ctx            context.Context
 	option         *cfg.Option
-	runtime        *agentext.Runtime
+	runtime        *agentsession.Runtime
 	bindings       *consoleapi.Bindings
-	session        *agentext.Session
+	session        *agentsession.Session
 	console        *console.Console
 	terminal       *rlterm.Terminal
 	menu           *console.Menu
@@ -86,7 +84,7 @@ type AgentConsole struct {
 	pendingExit          atomic.Bool
 }
 
-func newAgentConsole(ctx context.Context, rt *agentext.Runtime, session *agentext.Session, option *cfg.Option, t *rlterm.Terminal, bindings *consoleapi.Bindings) *AgentConsole {
+func newAgentConsole(ctx context.Context, rt *agentsession.Runtime, session *agentsession.Session, option *cfg.Option, t *rlterm.Terminal, bindings *consoleapi.Bindings) *AgentConsole {
 	if option == nil {
 		option = &cfg.Option{}
 	}
@@ -140,9 +138,9 @@ func newAgentConsole(ctx context.Context, rt *agentext.Runtime, session *agentex
 		stdout:       stdout,
 		stderr:       stderr,
 	}
-	if isTerminal && isLocalAgentTerminal(t) && resolveRenderMode(renderModeValue(option)) == ModeInteractive {
+	if isTerminal && !repl.fastInputEnabled() && resolveRenderMode(renderModeValue(option)) == ModeInteractive {
 		bridge := newReadlineConsoleBridge(c.Shell(), t.Out)
-		output.SetReadlineMode(bridge)
+		output.recapWriter = bridge
 		repl.readlineBridge = bridge
 		c.Shell().OnReadlineReady = func() {
 			bridge.SetReady(true)
@@ -150,14 +148,17 @@ func newAgentConsole(ctx context.Context, rt *agentext.Runtime, session *agentex
 		c.Shell().OnReadlineDone = func() {
 			bridge.SetReady(false)
 		}
-		repl.stdout = bridge
-		repl.stderr = bridge
+		if isLocalAgentTerminal(t) {
+			output.SetReadlineMode(bridge)
+			repl.stdout = bridge
+			repl.stderr = bridge
+		}
 	}
 	menu.Prompt().Primary = func() string {
 		return agentComposerPrompt(output, repl.readlineBridge)
 	}
 	repl.workMu.Lock()
-	repl.subscription = rt.Observe(coreevents.ObserverFunc(repl.handleEvent))
+	repl.subscription = rt.Observe(repl.handleEvent)
 	repl.workMu.Unlock()
 	repl.configureCompletionKey()
 	repl.configureInterruptKey()
@@ -185,7 +186,7 @@ func (r *AgentConsole) Start() error {
 		return fmt.Errorf("create console history directory: %w", err)
 	}
 	r.menu.AddHistorySourceFile("history", history)
-	r.activateConsoleLogger()
+	r.runtime.Logger.SetOutput(r.stderr)
 	if r.option.EvalCriteria != "" {
 		if err := r.command("/eval " + r.option.EvalCriteria); err != nil {
 			return err
@@ -198,19 +199,6 @@ func (r *AgentConsole) Start() error {
 	return r.startReadline()
 }
 
-func (r *AgentConsole) activateConsoleLogger() {
-	if r == nil {
-		return
-	}
-	consoleLogger := telemetry.NewLogger(telemetry.LogConfig{
-		Debug:  r.option != nil && r.option.Debug,
-		Quiet:  r.option != nil && r.option.Quiet,
-		Output: r.stderr,
-		Color:  r.option == nil || !r.option.NoColor,
-	})
-	r.runtime.SetLogger(consoleLogger)
-}
-
 func (r *AgentConsole) startFastInput() error {
 	reader := bufio.NewReader(r.terminal.In)
 	for {
@@ -220,7 +208,7 @@ func (r *AgentConsole) startFastInput() error {
 
 		r.promptCompactIfNeeded()
 
-		fmt.Fprint(r.stderr, r.promptString())
+		fmt.Fprint(r.stderr, agentPromptString(r.ensureOutput()))
 		r.setReadlineActive(true)
 		line, err := readFastInputLine(r.ctx, reader)
 		r.setReadlineActive(false)
@@ -386,10 +374,6 @@ func (r *AgentConsole) handleInputLine(line string) (bool, error) {
 	return false, err
 }
 
-func (r *AgentConsole) promptString() string {
-	return agentPromptString(r.ensureOutput())
-}
-
 func agentPromptString(output *AgentOutput) string {
 	if output != nil && output.color.Enabled {
 		return output.color.Code(outputpkg.ANSIBold+outputpkg.ANSICyan) + "aiscan" +
@@ -410,18 +394,14 @@ func agentComposerPrompt(output *AgentOutput, bridge *readlineConsoleBridge) str
 }
 
 func (r *AgentConsole) fastInputEnabled() bool {
-	isTerminal := false
-	if r != nil && r.terminal != nil && r.terminal.Control != nil {
-		isTerminal = r.terminal.Control.IsTerminal()
-	}
 	mode := ""
 	if r != nil && r.option != nil {
 		mode = r.option.REPLMode
 	}
-	return fastInputEnabledForMode(mode, isTerminal)
+	return fastInputEnabledForMode(mode)
 }
 
-func fastInputEnabledForMode(mode string, _ bool) bool {
+func fastInputEnabledForMode(mode string) bool {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	switch mode {
 	case "rich", "readline", "console":
@@ -496,6 +476,12 @@ func (r *AgentConsole) allCommands() []*cobra.Command {
 	if r.bindings != nil && r.bindings.Commands != nil {
 		cmds = append(cmds, r.bindings.Commands(consoleapi.View{Out: r.stdout, Err: r.stderr, Table: r.printBoxTable,
 			Command: r.command, RefreshStatus: func() { fmt.Fprint(r.stdout, r.renderStatus()) },
+			SessionID: func() string {
+				if r.session != nil {
+					return r.session.ID()
+				}
+				return ""
+			},
 		})...)
 	}
 	return cmds
@@ -535,7 +521,7 @@ func (r *AgentConsole) providerCommands() []*cobra.Command {
 	return []*cobra.Command{
 		{
 			Use:                "/provider",
-			Short:              "查看/管理 LLM provider 配置",
+			Short:              "查看 LLM provider 配置",
 			DisableFlagParsing: true,
 			RunE: func(c *cobra.Command, args []string) error {
 				fields := splitArgs(args)
@@ -543,18 +529,12 @@ func (r *AgentConsole) providerCommands() []*cobra.Command {
 					fmt.Fprint(r.stdout, r.renderProviders())
 					return nil
 				}
-				switch fields[0] {
-				case "set", "use":
-					return r.configureProvider(fields[1:])
-				default:
-					fmt.Fprintf(r.stderr, "unknown subcommand: %s (use: list, set)\n", fields[0])
-				}
-				return nil
+				return fmt.Errorf("provider configuration is changed through the Profile; use /provider to view it")
 			},
 		},
 		{
 			Use:                "/model",
-			Short:              "查看/切换当前 provider 的模型",
+			Short:              "查看/切换当前会话的模型",
 			DisableFlagParsing: true,
 			RunE: func(c *cobra.Command, args []string) error {
 				ctx := c.Context()
@@ -599,7 +579,7 @@ func (r *AgentConsole) ensureOutput() *AgentOutput {
 }
 
 func (r *AgentConsole) refreshPromptAfterAsyncRun() {
-	if r == nil || r.readlineBridge != nil || !r.readlineActive.Load() {
+	if r == nil || !r.readlineActive.Load() || (r.output != nil && r.output.readline) {
 		return
 	}
 	if r.ctx != nil && r.ctx.Err() != nil {
@@ -651,65 +631,15 @@ func (r *AgentConsole) forceExit() {
 }
 
 func (r *AgentConsole) renderProviders() string {
-	_, pc := r.runtime.App().ProviderState()
+	_, pc := r.runtime.ProviderState()
 	if pc.Provider == "" {
 		return "\n  No providers configured.\n\n"
 	}
 	rows := []helpRow{{Command: "#1  " + pc.Provider, Detail: pc.Model + "  ● active"}}
-	for i, p := range r.runtime.App().Providers.Fallbacks() {
+	for i, p := range r.runtime.ProviderFallbacks() {
 		rows = append(rows, helpRow{Command: fmt.Sprintf("#%d  %s", i+2, p.Provider.Name()), Detail: p.Model + "  ○ configured"})
 	}
 	return r.renderPanel("providers", renderHelpRows(rows, r.output.color.Enabled), r.output.color.Enabled)
-}
-
-func (r *AgentConsole) configureProvider(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: /provider set --provider openai --base-url <url> --api-key <key> --model <model>")
-	}
-	if r.Running() {
-		return fmt.Errorf("cannot change provider while a task is running")
-	}
-
-	pc := r.providerConfig()
-	for i := 0; i < len(args); i++ {
-		key := args[i]
-		value := ""
-		if k, v, ok := strings.Cut(key, "="); ok {
-			key, value = k, v
-		} else {
-			if i+1 >= len(args) {
-				return fmt.Errorf("%s requires a value", key)
-			}
-			i++
-			value = args[i]
-		}
-		value = strings.TrimSpace(value)
-		switch strings.TrimLeft(key, "-") {
-		case "provider":
-			pc.Provider = value
-		case "base-url", "base_url":
-			pc.BaseURL = value
-		case "api-key", "api_key":
-			pc.APIKey = value
-		case "model":
-			pc.Model = value
-		case "proxy":
-			pc.Proxy = value
-		default:
-			return fmt.Errorf("unknown provider option: %s", key)
-		}
-	}
-
-	resolved, err := r.applyProviderConfig(pc)
-	if err != nil {
-		return err
-	}
-	if resolved.Model != "" {
-		fmt.Fprintf(r.stdout, "Provider ready: %s / %s\n", resolved.Provider, resolved.Model)
-	} else {
-		fmt.Fprintf(r.stdout, "Provider ready: %s\n", resolved.Provider)
-	}
-	return nil
 }
 
 const modelListTimeout = 10 * time.Second
@@ -922,13 +852,12 @@ func (r *AgentConsole) configureModelInteractive(ctx context.Context) error {
 }
 
 func (r *AgentConsole) applyModel(model string) error {
-	pc := r.providerConfig()
-	pc.Model = model
-	resolved, err := r.applyProviderConfig(pc)
-	if err != nil {
+	if err := r.session.SetModel(model); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.stdout, "Model ready: %s / %s\n", resolved.Provider, resolved.Model)
+	r.output.SetContextWindow(r.session.ContextWindow())
+	pc := r.providerConfig()
+	fmt.Fprintf(r.stdout, "Model ready: %s / %s\n", pc.Provider, pc.Model)
 	return nil
 }
 
@@ -1015,44 +944,11 @@ func (r *AgentConsole) pickerSize() (int, int) {
 	return width, height
 }
 
-func (r *AgentConsole) applyProviderConfig(pc agent.ProviderConfig) (agent.ProviderConfig, error) {
-	if pc.Model != r.providerConfig().Model {
-		pc.Images = nil
-		pc.ContextWindow = 0
-	}
-	resolved, err := agent.ResolveProvider(&pc)
-	if err != nil {
-		return agent.ProviderConfig{}, err
-	}
-	prov, err := agent.NewProviderFromResolved(resolved)
-	if err != nil {
-		return agent.ProviderConfig{}, err
-	}
-
-	r.runtime.SetProvider(prov, *resolved)
-	contextWindow := resolved.ContextWindow
-	if contextWindow <= 0 {
-		contextWindow = agent.ModelContextWindow(resolved.Model)
-	}
-	r.output.SetContextWindow(contextWindow)
-	if r.option != nil {
-		r.option.Provider = resolved.Provider
-		r.option.BaseURL = resolved.BaseURL
-		r.option.APIKey = resolved.APIKey
-		r.option.Model = resolved.Model
-		r.option.MaxTokens = resolved.MaxTokens
-		r.option.ContextWindow = resolved.ContextWindow
-		r.option.LLMProxy = resolved.Proxy
-	}
-
-	return *resolved, nil
-}
-
 func (r *AgentConsole) pseudoCommandNames() []string {
-	if r.runtime.App().Commands == nil {
+	if r.runtime.CommandRegistry() == nil {
 		return nil
 	}
-	return r.runtime.App().Commands.Names()
+	return r.runtime.CommandRegistry().Names()
 }
 
 func splitArgs(args []string) []string {
@@ -1123,6 +1019,10 @@ func (r *AgentConsole) providerConfig() agent.ProviderConfig {
 	if r == nil || r.runtime == nil {
 		return agent.ProviderConfig{}
 	}
-	_, pc := r.runtime.App().ProviderState()
+	_, pc := r.runtime.ProviderState()
+	if r.session != nil {
+		pc.Model = r.session.Model()
+		pc.ContextWindow = r.session.ContextWindow()
+	}
 	return pc
 }

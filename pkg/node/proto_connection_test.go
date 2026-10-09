@@ -4,37 +4,42 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/chainreactors/aiscan/core/extension"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	execpb "github.com/chainreactors/aiscan/aop/exec"
-	filepb "github.com/chainreactors/aiscan/aop/file"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	trafficpb "github.com/chainreactors/aiscan/aop/traffic"
-	"github.com/chainreactors/aiscan/cmd/harness"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/eventbus"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	coretool "github.com/chainreactors/aiscan/core/tool"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	toolnode "github.com/chainreactors/aiscan/pkg/node/tool"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	proxytool "github.com/chainreactors/aiscan/tools/proxy"
+	"github.com/chainreactors/cyber/agent"
+	loopext "github.com/chainreactors/cyber/exts/agent"
+	promptext "github.com/chainreactors/cyber/exts/prompt"
+
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	filepb "github.com/chainreactors/cyber/aop/file"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	trafficpb "github.com/chainreactors/cyber/aop/traffic"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/hooks"
+	"github.com/chainreactors/cyber/core/namespaces"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	types "github.com/chainreactors/cyber/core/types"
+	"github.com/chainreactors/cyber/pkg/aopws"
+	"github.com/chainreactors/cyber/pkg/testutil/apptest"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
+
+	proxyext "github.com/chainreactors/cyber/exts/proxy"
+	sessionext "github.com/chainreactors/cyber/exts/session"
+	toolnode "github.com/chainreactors/cyber/pkg/node/tool"
 	"github.com/gorilla/websocket"
 	protobuf "google.golang.org/protobuf/proto"
 )
@@ -45,7 +50,7 @@ var testUpgrader = websocket.Upgrader{CheckOrigin: func(*http.Request) bool { re
 
 func testToolExecutor(t *testing.T, tools ...coretool.Tool) coretool.Executor {
 	t.Helper()
-	return harness.Tools(t, tools...)
+	return hosttest.Tools(t, tools...)
 }
 
 func (singleDeliveryProbeTool) Name() string { return "single_delivery_probe" }
@@ -60,45 +65,23 @@ func (singleDeliveryProbeTool) Execute(context.Context, string) (*coretool.Resul
 	return coretool.TextResult("probe result"), nil
 }
 
-type trackingAgentEndpoint struct {
-	bus        *eventbus.Bus[*aop.Event]
-	subscribed *bool
-}
-
-func (e *trackingAgentEndpoint) Observe(observer coreevents.Observer) *eventbus.Subscription[*aop.Event] {
-	*e.subscribed = true
-	return e.bus.Subscribe(observer.ObserveEvent)
-}
-
-func (e *trackingAgentEndpoint) Publish(event *aop.Event) { e.bus.Emit(event) }
-
-type silentAgentEndpoint struct{ bus *eventbus.Bus[*aop.Event] }
-
-func newSilentAgentEndpoint() *silentAgentEndpoint {
-	return &silentAgentEndpoint{bus: eventbus.New[*aop.Event]()}
-}
-
-func (e *silentAgentEndpoint) Observe(observer coreevents.Observer) *eventbus.Subscription[*aop.Event] {
-	return e.bus.Subscribe(observer.ObserveEvent)
-}
-
-func (e *silentAgentEndpoint) Publish(event *aop.Event) { e.bus.Emit(event) }
-
-type panicAgentEndpoint struct{}
-
-func (panicAgentEndpoint) Observe(coreevents.Observer) *eventbus.Subscription[*aop.Event] {
-	return nil
-}
-func (panicAgentEndpoint) Publish(*aop.Event) { panic("send event boom") }
-
 type handshakeThenEOFStream struct {
-	helloID string
-	recvs   int
+	helloID   string
+	recvs     int
+	eventSent chan struct{}
 }
 
 func (s *handshakeThenEOFStream) Send(envelope *aop.Envelope) error {
 	if s.helloID == "" {
 		s.helloID = envelope.GetId()
+	}
+	if s.eventSent != nil {
+		message, err := aop.Unwrap(envelope)
+		if err == nil {
+			if value, ok := message.(*aop.ProtocolMessage); ok && value.GetEvent() != nil {
+				close(s.eventSent)
+			}
+		}
 	}
 	return nil
 }
@@ -108,23 +91,27 @@ func (s *handshakeThenEOFStream) Recv() (*aop.Envelope, error) {
 	if s.recvs == 1 {
 		return aop.MustWrap("accepted", s.helloID, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_AgentAccepted{AgentAccepted: &aop.AgentAccepted{NodeId: "runner-1"}}}), nil
 	}
+	if s.eventSent != nil {
+		select {
+		case <-s.eventSent:
+		case <-time.After(time.Second):
+			return nil, errors.New("event published with command catalog was not forwarded")
+		}
+	}
 	return nil, io.EOF
 }
 
 func TestServeAgentConnectionSubscribesBeforePublishingMenu(t *testing.T) {
-	stream := new(handshakeThenEOFStream)
-	subscribed := false
+	stream := &handshakeThenEOFStream{eventSent: make(chan struct{})}
 	menuCalled := false
+	events := coreevents.New()
 	cc := connectionConfig{
-		Name:     "runner-1",
-		NodeID:   "runner-1",
-		Registry: commands.NewRegistry(nil),
-		Agent:    &trackingAgentEndpoint{bus: eventbus.New[*aop.Event](), subscribed: &subscribed},
+		Name:   "runner-1",
+		NodeID: "runner-1",
+		Events: events,
 		Menu: func() []*types.CommandSpec {
 			menuCalled = true
-			if !subscribed {
-				t.Error("command catalog was published before event subscription")
-			}
+			events.Publish(&aop.Event{SessionId: "test"})
 			return nil
 		},
 	}
@@ -139,8 +126,6 @@ func TestServeAgentConnectionSubscribesBeforePublishingMenu(t *testing.T) {
 func TestToolOperationPanicIsReportedAndCleanedUp(t *testing.T) {
 	var logs bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Debug: true, Output: &logs})
-	operations := make(map[string]context.CancelFunc)
-	var operationsMu sync.Mutex
 	failure := make(chan *aop.ProtocolError, 1)
 	send := func(_ string, message protobuf.Message) {
 		protocol := message.(*aop.ProtocolMessage)
@@ -153,12 +138,12 @@ func TestToolOperationPanicIsReportedAndCleanedUp(t *testing.T) {
 	}
 	arguments, _ := aop.JSONValue(map[string]any{})
 	request := &toolpb.Call{Call: &aop.ToolCall{Id: "op-panic", Name: "missing", Arguments: arguments}}
-	handleAgentToolMessage(
+	handler := &toolnode.CallHandler{Executor: coretool.EmptyExecutor(), Logger: logger, Publish: func(*aop.Event) { panic("send event boom") }, Send: send}
+	handler.Handle(
 		context.Background(),
-		connectionConfig{Registry: commands.NewRegistry(nil), Logger: logger, Agent: panicAgentEndpoint{}},
 		&aop.Envelope{Id: "op-panic"},
 		&toolpb.ProtocolMessage{Message: &toolpb.ProtocolMessage_Call{Call: request}},
-		send, &operationsMu, operations, make(map[string]time.Time),
+		nil,
 	)
 
 	select {
@@ -169,12 +154,7 @@ func TestToolOperationPanicIsReportedAndCleanedUp(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for operation failure")
 	}
-	operationsMu.Lock()
-	_, tracked := operations["op-panic"]
-	operationsMu.Unlock()
-	if tracked {
-		t.Fatal("panicking operation was not cleaned up")
-	}
+	handler.Close()
 	if got := logs.String(); !strings.Contains(got, "send event boom") || !strings.Contains(got, "op-panic") {
 		t.Fatalf("panic log = %s", got)
 	}
@@ -183,49 +163,13 @@ func TestToolOperationPanicIsReportedAndCleanedUp(t *testing.T) {
 // Canceling a call does not stop a scanner that ignores its context, so the
 // hub having given up must also close that call's artifact window — otherwise
 // the rest of the crawl crosses the wire only to be rejected on arrival.
-func TestCancelOperationSealsTheCallArtifactWindow(t *testing.T) {
-	var operationsMu sync.Mutex
-	operations := make(map[string]context.CancelFunc)
-	sealed := make(map[string]time.Time)
-	canceled := false
-	operations["op-1"] = func() { canceled = true }
-
-	handleAgentCoreMessage(
-		context.Background(),
-		nil,
-		&aop.Envelope{Id: "cancel-1"},
-		&aop.ProtocolMessage{Message: &aop.ProtocolMessage_CancelOperation{CancelOperation: &aop.CancelOperation{TargetId: "op-1"}}},
-		func(string, protobuf.Message) { t.Error("cancel must not answer on the wire") },
-		func(*aop.Envelope) { t.Error("cancel must not reach the runtime") },
-		&operationsMu, operations, sealed,
-	)
-
-	if !canceled {
-		t.Fatal("cancel did not reach the operation")
-	}
-	if !callIsSealed(&operationsMu, sealed, "op-1") {
-		t.Fatal("canceled call was left able to emit artifacts")
-	}
-	if callIsSealed(&operationsMu, sealed, "agent-loop-call") {
-		t.Fatal("a call this connection never dispatched must not be sealed")
-	}
-}
-
 func TestManagerToolResultUsesSingleDeliveryPath(t *testing.T) {
 	ctx := context.Background()
-	app := newTestApp(t, apppkg.Config{
-		SkipEngines: true,
-		Logger:      telemetry.NopLogger(),
-	}, apppkg.AppServices{})
+	app := apptest.NewFixture(t, telemetry.NopLogger(), nil)
 
-	appSet := loadNodeTestApplication(t, ctx, app)
-	defer appSet.Close(context.Background())
-	rt, err := agentext.New(agentext.Config{Application: app.App, Option: &cfg.Option{}, Logger: telemetry.NopLogger()})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rtSet := harness.Set(t, extension.Entry{ID: "rt", Extension: rt})
+	rt := sessionext.New(agentsession.Config{Logger: telemetry.NopLogger()})
+	ns := namespaces.New()
+	rtSet := hosttest.Set(t, append(apptest.Entries(t, app), ns, promptext.New(), loopext.New(agent.StandardLoop{}), rt, sessionext.NewProtocol())...)
 	if err := rtSet.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +178,7 @@ func TestManagerToolResultUsesSingleDeliveryPath(t *testing.T) {
 	registry := testToolExecutor(t, singleDeliveryProbeTool{})
 	runtimeEvents := make(chan *aop.Event, 1)
 	var runtimeToolCalls atomic.Int32
-	unsubscribe := rt.Runtime().Observe(coreevents.ObserverFunc(func(event *aop.Event) {
+	unsubscribe := rt.Runtime().Observe(func(event *aop.Event) {
 		if event == nil {
 			return
 		}
@@ -244,7 +188,7 @@ func TestManagerToolResultUsesSingleDeliveryPath(t *testing.T) {
 		if event.GetToolResult() != nil {
 			runtimeEvents <- event
 		}
-	}))
+	})
 	defer unsubscribe.Cancel()
 	directMessages := make(chan protobuf.Message, 2)
 	send := func(_ string, message protobuf.Message) { directMessages <- message }
@@ -257,20 +201,11 @@ func TestManagerToolResultUsesSingleDeliveryPath(t *testing.T) {
 		Name:      "single_delivery_probe",
 		Arguments: arguments,
 	}}
-	handleAgentToolMessage(
-		ctx,
-		connectionConfig{
-			Executor: registry,
-			Logger:   telemetry.NopLogger(),
-			Agent:    rt.Runtime(),
-		},
-		&aop.Envelope{Id: "single-delivery-op"},
-		&toolpb.ProtocolMessage{Message: &toolpb.ProtocolMessage_Call{Call: request}},
-		send,
-		&sync.Mutex{},
-		make(map[string]context.CancelFunc),
-		make(map[string]time.Time),
-	)
+	handler := &toolnode.CallHandler{Executor: registry, Logger: telemetry.NopLogger(), Publish: rt.Runtime().Publish, Send: send}
+	defer handler.Close()
+	if err := handler.Handle(ctx, &aop.Envelope{Id: "single-delivery-op"}, &toolpb.ProtocolMessage{Message: &toolpb.ProtocolMessage_Call{Call: request}}, nil); err != nil {
+		t.Fatal(err)
+	}
 
 	select {
 	case event := <-runtimeEvents:
@@ -290,39 +225,7 @@ func TestManagerToolResultUsesSingleDeliveryPath(t *testing.T) {
 	}
 }
 
-func TestExecRequestCompletesWithOutput(t *testing.T) {
-	command := "printf hello"
-	if runtime.GOOS == "windows" {
-		command = "echo|set /p=hello"
-	}
-	var messages []*execpb.ProtocolMessage
-	handleExecRequest(context.Background(), &execpb.Request{Command: command, TimeoutSeconds: 5}, t.TempDir(), "exec-1", func(_ string, message protobuf.Message) {
-		if value, ok := message.(*execpb.ProtocolMessage); ok {
-			messages = append(messages, value)
-		}
-	})
-	if len(messages) != 2 || string(messages[0].GetOutput().Data) != "hello" || messages[1].GetResult().State != "completed" {
-		t.Fatalf("unexpected messages: %#v", messages)
-	}
-}
-
-func TestExecRequestReportsExitCode(t *testing.T) {
-	command := "exit 7"
-	if runtime.GOOS == "windows" {
-		command = "exit /b 7"
-	}
-	var result *execpb.Result
-	handleExecRequest(context.Background(), &execpb.Request{Command: command, TimeoutSeconds: 5}, t.TempDir(), "exec-2", func(_ string, message protobuf.Message) {
-		if value, ok := message.(*execpb.ProtocolMessage); ok && value.GetResult() != nil {
-			result = value.GetResult()
-		}
-	})
-	if result == nil || result.ExitCode != 7 {
-		t.Fatalf("result = %+v, want exit code 7", result)
-	}
-}
-
-func TestDefaultManagerDoesNotAdvertiseRunnerFileRPCs(t *testing.T) {
+func TestAgentHelloOmitsFileManagementCapabilities(t *testing.T) {
 	hello, err := BuildHello("agent", coretool.EmptyExecutor(), "agent", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -334,103 +237,45 @@ func TestDefaultManagerDoesNotAdvertiseRunnerFileRPCs(t *testing.T) {
 	}
 }
 
-func TestFileListReturnsStructuredEntries(t *testing.T) {
-	base := t.TempDir()
-	if err := os.WriteFile(filepath.Join(base, "note.txt"), []byte("body"), 0o644); err != nil {
+func TestBuildHelloAddsProfileCapabilitiesWithoutDuplicates(t *testing.T) {
+	hello, err := BuildHelloWithCapabilities("agent", coretool.EmptyExecutor(), "agent", nil, "scan", "scan", "audit")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(base, "nested"), 0o755); err != nil {
-		t.Fatal(err)
+	if !slices.Contains(hello.Capabilities, "scan") || !slices.Contains(hello.Capabilities, "audit") {
+		t.Fatalf("profile capabilities = %v", hello.Capabilities)
 	}
-	value := fileList(&filepb.ListRequest{Path: "."}, base)
-	if value.err != nil {
-		t.Fatal(value.err)
+	count := 0
+	for _, capability := range hello.Capabilities {
+		if capability == "scan" {
+			count++
+		}
 	}
-	if value.result.Path != "." || len(value.result.Entries) != 2 {
-		t.Fatalf("result = %+v", value.result)
-	}
-	byName := map[string]*filepb.Entry{}
-	for _, entry := range value.result.Entries {
-		byName[entry.Name] = entry
-	}
-	if byName["note.txt"].IsDirectory || byName["note.txt"].Size != 4 {
-		t.Fatalf("file entry = %+v", byName["note.txt"])
-	}
-	if !byName["nested"].IsDirectory {
-		t.Fatalf("directory entry = %+v", byName["nested"])
+	if count != 1 {
+		t.Fatalf("scan capability duplicated: %v", hello.Capabilities)
 	}
 }
 
-func TestNativeFileRPCsResolveRelativeToRuntimeWorkdir(t *testing.T) {
-	base := t.TempDir()
-	if value := fileMkdir(&filepb.MkdirRequest{Path: "nested"}, base); value.err != nil {
-		t.Fatal(value.err)
-	}
-	path := filepath.Join("nested", "proof.txt")
-	if value := fileWrite(&filepb.WriteRequest{Path: path, Data: []byte("hello")}, base); value.err != nil {
-		t.Fatal(value.err)
-	}
-	value := fileRead(&filepb.ReadRequest{Path: path}, base)
-	if value.err != nil || string(value.result.Data) != "hello" {
-		t.Fatalf("read data = %q, err = %v", value.result.Data, value.err)
-	}
-}
-
-func TestFileReadReturnsBoundedChunks(t *testing.T) {
-	base := t.TempDir()
-	path := filepath.Join(base, "capture.mp4")
-	data := bytes.Repeat([]byte("frame"), 300_000)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	first := fileRead(&filepb.ReadRequest{Path: path, Limit: 256 * 1024}, base)
-	if first.err != nil {
-		t.Fatal(first.err)
-	}
-	if first.result.Offset != 0 || first.result.Eof || len(first.result.Data) != 256*1024 || first.result.Size != int64(len(data)) {
-		t.Fatalf("first chunk = %+v, bytes=%d", first.result, len(first.result.Data))
-	}
-	if first.result.MediaType != "video/mp4" {
-		t.Fatalf("media type = %q, want video/mp4", first.result.MediaType)
-	}
-	joined := append([]byte(nil), first.result.Data...)
-	offset := int64(len(joined))
-	for {
-		next := fileRead(&filepb.ReadRequest{Path: path, Offset: offset, Limit: maxFileReadChunkBytes + 1}, base)
-		if next.err != nil {
-			t.Fatal(next.err)
+func TestAgentRejectsUnsupportedFileOperation(t *testing.T) {
+	envelope := aop.MustWrap("read-1", "", &filepb.ProtocolMessage{Message: &filepb.ProtocolMessage_ReadRequest{ReadRequest: &filepb.ReadRequest{Path: "proof.txt"}}})
+	var response *aop.ProtocolMessage
+	handleAgentFileMessage(connectionConfig{}, envelope, &filepb.ProtocolMessage{Message: &filepb.ProtocolMessage_ReadRequest{ReadRequest: &filepb.ReadRequest{Path: "proof.txt"}}}, func(replyTo string, message protobuf.Message) {
+		if replyTo != envelope.Id {
+			t.Fatalf("reply target = %q", replyTo)
 		}
-		if next.result.Offset != offset || len(next.result.Data) > int(maxFileReadChunkBytes) {
-			t.Fatalf("chunk offset=%d bytes=%d, want offset=%d max=%d", next.result.Offset, len(next.result.Data), offset, maxFileReadChunkBytes)
-		}
-		joined = append(joined, next.result.Data...)
-		offset += int64(len(next.result.Data))
-		if next.result.Eof {
-			break
-		}
-	}
-	if !bytes.Equal(joined, data) {
-		t.Fatalf("joined bytes = %d, want %d", len(joined), len(data))
-	}
-}
-
-func TestFileReadDoesNotDecodePathEncodedRanges(t *testing.T) {
-	encoded := "aop-range://read?path=proof.txt&offset=1&limit=2"
-	value := fileRead(&filepb.ReadRequest{Path: encoded}, t.TempDir())
-	if value.err == nil {
-		t.Fatal("path-encoded range unexpectedly succeeded")
-	}
-	if value.result.Path != encoded {
-		t.Fatalf("result path = %q, want original path %q", value.result.Path, encoded)
+		response, _ = message.(*aop.ProtocolMessage)
+	})
+	if response.GetProtocolError().GetCode() != "OPERATION_FAILED" {
+		t.Fatalf("response = %+v", response)
 	}
 }
 
 func TestUploadWritesAbsolutePath(t *testing.T) {
-	const filename = "aiscan_test_upload_probe.txt"
+	const filename = "cyber_test_upload_probe.txt"
 	const body = "codex public proof\nkey=appImage/probe"
-	dest := filepath.Join(os.TempDir(), "aiscan-uploads", filename)
+	dest := filepath.Join(os.TempDir(), "cyber-uploads", filename)
 	t.Cleanup(func() { _ = os.Remove(dest) })
-	result, err := (&chatAgentHandler{}).Upload(&filepb.UploadRequest{SessionId: "sess-1", Filename: filename, Data: []byte(body)})
+	result, err := uploadNodeFile(&filepb.UploadRequest{SessionId: "sess-1", Filename: filename, Data: []byte(body)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,11 +345,10 @@ func TestServeAgentConnectionClosesStreamAfterWriteFailure(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- serveAgentConnection(context.Background(), connectionConfig{
-			Name:     "runner-1",
-			NodeID:   "runner-1",
-			Registry: commands.NewRegistry(nil),
-			Agent:    newSilentAgentEndpoint(),
-			Menu:     func() []*types.CommandSpec { return nil },
+			Name:   "runner-1",
+			NodeID: "runner-1",
+			Events: coreevents.New(),
+			Menu:   func() []*types.CommandSpec { return nil },
 		}, telemetry.NopLogger(), stream)
 	}()
 
@@ -576,14 +420,23 @@ func TestWebSocketStreamSetsReadAndWriteDeadlines(t *testing.T) {
 		recorded <- wrapped
 		return wrapped, nil
 	}
-	wsConn, response, err := dialer.DialContext(context.Background(), HTTPToWS(server.URL)+toolnode.DefaultWSPath, nil)
+	dialURL, _, err := aopws.DialURL(server.URL, toolnode.DefaultWSPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wsConn, response, err := dialer.DialContext(context.Background(), dialURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if response != nil && response.Body != nil {
 		response.Body.Close()
 	}
-	stream, err := newWebSocketEnvelopeStream(wsConn, false)
+	stream, err := aopws.New(context.Background(), wsConn, aopws.Options{
+		Encoding:     aopws.Binary,
+		WriteTimeout: websocketWriteWait,
+		PingInterval: websocketPingPeriod,
+		PongTimeout:  websocketPongWait,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -602,7 +455,7 @@ func TestWebSocketStreamSetsReadAndWriteDeadlines(t *testing.T) {
 	}
 }
 
-func TestWebSocketStreamTimesOutSilentPeer(t *testing.T) {
+func TestWebSocketStreamClosesWhenContextEnds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := testUpgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -613,34 +466,24 @@ func TestWebSocketStreamTimesOutSilentPeer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	stream, err := dialProtoWebSocket(context.Background(), connectionConfig{ServerURL: server.URL})
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stream, err := dialProtoWebSocket(ctx, connectionConfig{ServerURL: server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	if err := stream.conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
-		t.Fatal(err)
-	}
 	_, err = stream.Recv()
-	var netErr net.Error
-	if !errors.As(err, &netErr) || !netErr.Timeout() {
-		t.Fatalf("Recv error = %v, want timeout", err)
+	if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("Recv error = %v, context error = %v; want context deadline closure", err, ctx.Err())
 	}
-}
-
-func loadNodeTestApplication(t *testing.T, ctx context.Context, application *apppkg.Resource) *extension.Set {
-	return harness.AppLoad(t, ctx, application)
 }
 
 func TestConcreteRuntimeControlRepliesReachNodeConnection(t *testing.T) {
-	app := newTestApp(t, apppkg.Config{SkipEngines: true, Logger: telemetry.NopLogger()}, apppkg.AppServices{})
-	appSet := loadNodeTestApplication(t, t.Context(), app)
-	defer appSet.Close(context.Background())
-	rt, err := agentext.New(agentext.Config{Application: app.App, Option: &cfg.Option{}, Logger: telemetry.NopLogger()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rtSet := harness.Set(t, extension.Entry{ID: "rt", Extension: rt})
+	app := apptest.NewFixture(t, telemetry.NopLogger(), nil)
+	rt := sessionext.New(agentsession.Config{Logger: telemetry.NopLogger()})
+	ns := namespaces.New()
+	rtSet := hosttest.Set(t, append(apptest.Entries(t, app), ns, promptext.New(), loopext.New(agent.StandardLoop{}), rt, sessionext.NewProtocol())...)
 	if err := rtSet.Load(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -651,8 +494,9 @@ func TestConcreteRuntimeControlRepliesReachNodeConnection(t *testing.T) {
 			OpenSessionRequest: &aop.OpenSessionRequest{SessionId: "embedded"},
 		}}),
 	}
-	err = serveAgentConnection(context.Background(), connectionConfig{
-		Name: "embedded", NodeID: "embedded", Registry: app.App.Commands, Agent: rt.Runtime(), Control: rt.Runtime(),
+	err := serveAgentConnection(context.Background(), connectionConfig{
+		Name: "embedded", NodeID: "embedded", Events: app.Stream,
+		RegisterNamespaces: ns.Bind,
 	}, telemetry.NopLogger(), stream)
 	if err != io.EOF {
 		t.Fatalf("connection: %v", err)
@@ -714,15 +558,13 @@ func TestTrafficNamespaceRepliesReachTheWire(t *testing.T) {
 			Message: &trafficpb.ProtocolMessage_Query{Query: &trafficpb.Query{State: true}},
 		}),
 	}
-	hub := proxytool.NewProxyHub(proxytool.NewState(""), proxytool.NewFlowStore(8), t.TempDir(), false, nil)
-	defer hub.Close(context.Background())
+	ns := namespaces.New()
+	registry := coretool.NewCommandRegistry()
+	hosttest.Load(t, t.Context(), extension.Provided(hooks.New()), ns, registry, proxyext.New(proxyext.Config{WorkDir: t.TempDir()}))
 	cc := connectionConfig{
-		Name: "runner-1", NodeID: "runner-1",
-		Registry: commands.NewRegistry(nil), Agent: newSilentAgentEndpoint(),
-		RegisterResourceNamespaces: func(mux *aop.NamespaceMux) error {
-			return proxytool.RegisterTrafficNamespace(mux, hub.ProxyHub)
-		},
+		Name: "runner-1", NodeID: "runner-1", Events: coreevents.New(), RegisterNamespaces: ns.Bind,
 	}
+
 	if err := serveAgentConnection(context.Background(), cc, telemetry.NopLogger(), stream); err != io.EOF {
 		t.Fatalf("serveAgentConnection error = %v, want EOF", err)
 	}

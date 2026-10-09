@@ -7,20 +7,39 @@ import (
 	"strings"
 	"sync"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	consoleapi "github.com/chainreactors/aiscan/pkg/console/api"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
+	agentsession "github.com/chainreactors/cyber/agent/session"
+	aop "github.com/chainreactors/cyber/aop"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	consoleapi "github.com/chainreactors/cyber/pkg/console/api"
 	rlterm "github.com/chainreactors/tui/readline/terminal"
 )
 
-func runRemoteConsole(ctx context.Context, rt *agentext.Runtime, session *agentext.Session, option *cfg.Option, input io.Reader, output io.Writer, control *rlterm.StreamControl, bindings *consoleapi.Bindings) error {
+func runRemoteConsole(ctx context.Context, rt *agentsession.Runtime, session *agentsession.Session, option *cfg.Option, input io.Reader, output io.Writer, control *rlterm.StreamControl, bindings *consoleapi.Bindings) error {
 	if control == nil {
 		control = rlterm.NewControl(true, 80, 24)
 	}
 	writer := &remoteTerminalWriter{w: output}
-	return newAgentConsole(ctx, rt, session, option, rlterm.Stream(input, writer, writer, control), bindings).Start()
+	return newAgentConsole(ctx, rt, session, option, rlterm.Stream(remoteTerminalReader{ctx, input}, writer, writer, control), bindings).Start()
 }
+
+// proc closes the input pipe on cancellation. Windows readline only recognizes
+// EOF as an end of input, so translate canceled reads at the terminal boundary.
+type remoteTerminalReader struct {
+	ctx context.Context
+	io.Reader
+}
+
+func (r remoteTerminalReader) Read(p []byte) (int, error) {
+	if r.ctx.Err() != nil {
+		return 0, io.EOF
+	}
+	n, err := r.Reader.Read(p)
+	if err != nil && r.ctx.Err() != nil {
+		err = io.EOF
+	}
+	return n, err
+}
+
 func isSessionBootstrapEvent(event *aop.Event) bool {
 	if event == nil || event.TurnId != "" {
 		return false

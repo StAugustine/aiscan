@@ -2,73 +2,33 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"sync"
-	"time"
+	"log/slog"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/extension"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	profile "github.com/chainreactors/aiscan/pkg/profile"
-	web "github.com/chainreactors/aiscan/pkg/web"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
+	"github.com/chainreactors/cyber/agent/provider"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/pkg/aopconn"
+	profile "github.com/chainreactors/cyber/pkg/profile"
 )
 
-func (s *Service) aiAvailable() bool {
-	app, release := s.acquireApp()
-	defer release()
-	if app == nil {
-		return false
-	}
-	provider, _ := app.ProviderState()
-	return provider != nil
-}
-
-func (s *Service) acquireApp() (*apppkg.App, func()) {
-	if s == nil {
-		return nil, func() {}
-	}
+func (s *Service) providers() *provider.State {
 	s.appMu.Lock()
-	p := s.profile
-	if profile.IsNil(p) {
-		s.appMu.Unlock()
-		return nil, func() {}
+	defer s.appMu.Unlock()
+	if s.closing || s.workContext.Err() != nil || s.profile == nil {
+		return nil
 	}
-	app, err := p.App()
-	if err != nil {
-		s.appMu.Unlock()
-		return nil, func() {}
-	}
-	s.profiles[p]++
-	s.appMu.Unlock()
-
-	var once sync.Once
-	return app, func() {
-		once.Do(func() {
-			s.appMu.Lock()
-			s.profiles[p]--
-			retired := p != s.profile && s.profiles[p] == 0
-			s.applicationChangedLocked()
-			s.appMu.Unlock()
-			if retired {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				// Incomplete cleanup stays in profiles for Service.Close.
-				_ = s.closeApplication(ctx, p)
-			}
-		})
-	}
+	providers, _ := s.profile.Providers()
+	return providers
 }
 
-// swapProfile transfers ownership only after validation. Retirement errors are
-// retained by Service; they do not undo publication of a new profile.
-func (s *Service) swapProfile(next profile.Application) error {
-	if s == nil || profile.IsNil(next) {
+// swapProfile runs under configGate. Stop admission before cancellation; wait
+// without appMu so accepted work can finish its own cleanup.
+func (s *Service) swapProfile(next profile.Profile, commit func() error) error {
+	if s == nil || next == nil {
 		return fmt.Errorf("service and profile are required")
 	}
-	if _, err := next.App(); err != nil {
-		return err
+	if !next.Active() {
+		return fmt.Errorf("profile is not active")
 	}
 	s.appMu.Lock()
 	if s.closing {
@@ -78,101 +38,58 @@ func (s *Service) swapProfile(next profile.Application) error {
 	prev := s.profile
 	if prev == next {
 		s.appMu.Unlock()
+		if commit != nil {
+			return commit()
+		}
 		return nil
 	}
-	if _, owned := s.profiles[next]; owned {
-		s.appMu.Unlock()
-		return fmt.Errorf("profile is already retiring")
-	}
-	s.profile = next
-	s.profiles[next] = 0
-	s.applicationChangedLocked()
+	s.stopWork()
 	s.appMu.Unlock()
-	if !profile.IsNil(prev) {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = s.closeApplication(ctx, prev)
-	}
-	return nil
-}
-
-func (s *Service) applicationChangedLocked() {
-	close(s.appChanged)
-	s.appChanged = make(chan struct{})
-}
-
-func (s *Service) closeApplication(ctx context.Context, p profile.Application) error {
-	select {
-	case s.profileClose <- struct{}{}:
-		defer func() { <-s.profileClose }()
-	case <-ctx.Done():
-		return errors.Join(extension.ErrCloseIncomplete, ctx.Err())
-	}
-	s.appMu.Lock()
-	refs, owned := s.profiles[p]
-	ready := owned && p != s.profile && refs == 0
-	s.appMu.Unlock()
-	if !ready {
-		return nil
-	}
-	err := p.Close(ctx)
-	s.appMu.Lock()
-	if !errors.Is(err, extension.ErrCloseIncomplete) {
-		delete(s.profiles, p)
-		s.appError = errors.Join(s.appError, err)
-	}
-	s.applicationChangedLocked()
-	s.appMu.Unlock()
-	if errors.Is(err, extension.ErrCloseIncomplete) {
-		return err
-	}
-	return nil
-}
-
-// ServeApplication performs the Application Endpoint initialization and then
-// hands the unified Connection to the api business dispatcher.
-func (s *Service) ServeApplication(ctx context.Context, stream aop.EnvelopeStream) error {
-	if s == nil || s.api == nil || stream == nil {
-		return fmt.Errorf("application AOP stream is unavailable")
-	}
-	first, err := stream.Recv()
-	if err != nil {
-		return err
-	}
-	connection, err := web.NewConnection(ctx, stream)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
-
-	if message, unwrapErr := aop.Unwrap(first); unwrapErr == nil {
-		if core, ok := message.(*aop.ProtocolMessage); ok && core.GetAgentHello() != nil {
-			protocolErr, wrapErr := aop.Wrap(generateID(), first.GetId(), &aop.ProtocolMessage{Message: &aop.ProtocolMessage_ProtocolError{ProtocolError: &aop.ProtocolError{
-				Code: "WRONG_ENDPOINT", Message: "AgentHello is only accepted by the node endpoint",
-			}}})
-			if wrapErr == nil {
-				_ = connection.Send(protocolErr)
-			}
-			return fmt.Errorf("AgentHello sent to application endpoint")
+	s.work.Wait()
+	if commit != nil {
+		if err := commit(); err != nil {
+			// The previous profile is still active. Reopen its existing admission
+			// gate after a failed file commit; the candidate remains pending.
+			s.appMu.Lock()
+			s.workContext, s.stopWork = context.WithCancel(context.Background())
+			s.appMu.Unlock()
+			return err
 		}
 	}
-
-	backends := &managementapi.ApplicationBackends{
-		RegisterNamespaces: s.applicationNamespaces,
-		Sessions:           s.api.Sessions,
-		Scans:              s.api.Scans,
-		Commands:           s,
-		Files:              s,
-		NewID:              generateID,
+	if prev != nil {
+		if err := prev.Close(context.Background()); err != nil {
+			slog.Error("close previous profile", "error", err)
+		}
 	}
-	if s.agents != nil {
-		backends.PTY = s.agents
-	}
-	return managementapi.ServeApplication(connection, first, backends)
+	s.appMu.Lock()
+	s.profile = next
+	s.workContext, s.stopWork = context.WithCancel(context.Background())
+	s.appMu.Unlock()
+	return nil
 }
 
-var (
-	_ managementapi.PTYRouter       = (*AgentPool)(nil)
-	_ managementapi.CommandExecutor = (*Service)(nil)
-	_ managementapi.FileUploader    = (*Service)(nil)
-)
+// ServeApplication performs Application Endpoint initialization and dispatches
+// application business messages through the unified Connection.
+func (s *Service) ServeApplication(ctx context.Context, stream aop.EnvelopeStream) error {
+	if s == nil || s.api == nil || s.api.Sessions == nil || stream == nil {
+		return fmt.Errorf("application AOP stream is unavailable")
+	}
+	workCtx, admitted := s.beginWork()
+	if !admitted {
+		return fmt.Errorf("web service is switching or closing")
+	}
+	defer s.work.Done()
+	connection, err := aopconn.NewConnection(workCtx, stream)
+	if err != nil {
+		return err
+	}
+	stopRequest := context.AfterFunc(ctx, connection.Close)
+	defer stopRequest()
+	s.appMu.Lock()
+	p := s.profile
+	s.appMu.Unlock()
+	if p == nil {
+		return s.serveApplication(connection, nil)
+	}
+	return s.serveApplication(connection, p.RegisterNamespaces)
+}

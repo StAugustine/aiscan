@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/agent"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 // LoopCommand is a pseudo-command invoked via bash:
@@ -19,11 +19,11 @@ import (
 //	bash(command="loop stop loop-a1b2c3d4")
 type loopCommand struct{}
 
-func NewCommand() commands.Command {
+func NewCommand() coretool.Command {
 	value := &loopCommand{}
-	return commands.Command{
+	return coretool.Command{
 		Name: value.Name(), Usage: value.Usage(),
-		DescriptionPath: "aiscan://skills/aiscan/okf/runtime/loop.md",
+		DescriptionPath: "cyber://skills/runtime/loop.md",
 		Run:             value.Run,
 	}
 }
@@ -51,7 +51,7 @@ Examples:
   loop 5m monitor targets                   every 5 minutes`
 }
 
-func (c *loopCommand) Run(ctx context.Context, execution *commands.Execution) (any, error) {
+func (c *loopCommand) Run(ctx context.Context, execution *coretool.Execution) (any, error) {
 	scheduler := agent.LoopSchedulerFromContext(ctx)
 	if scheduler == nil {
 		return nil, fmt.Errorf("loop scheduler is not configured")

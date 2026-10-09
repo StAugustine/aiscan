@@ -5,24 +5,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	browserutil "github.com/chainreactors/cyber/tools/headless"
 	"github.com/projectdiscovery/gologger"
+	"github.com/projectdiscovery/katana/pkg/navigation"
+	katanaoutput "github.com/projectdiscovery/katana/pkg/output"
+	katanatypes "github.com/projectdiscovery/katana/pkg/types"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/chainreactors/aiscan/pkg/commands"
-	browserutil "github.com/chainreactors/aiscan/pkg/headless"
-	"github.com/projectdiscovery/katana/pkg/navigation"
-	katanaoutput "github.com/projectdiscovery/katana/pkg/output"
-	katanatypes "github.com/projectdiscovery/katana/pkg/types"
 )
 
 func TestConfigureBrowserOptionsPriority(t *testing.T) {
@@ -156,7 +154,7 @@ func TestRunHonorsContextCancellation(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		var output bytes.Buffer
-		_, err := New().Run(ctx, &commands.Execution{
+		_, err := New().Run(ctx, &coretool.Execution{
 			Args:   []string{"-u", srv.URL, "-d", "1", "-timeout", "30"},
 			Stdout: &output,
 			Stderr: &output,
@@ -207,7 +205,7 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
 	t.Setenv(browserutil.PathEnv, binary.Path)
 
 	const (
-		sessionToken  = "aiscan-session-42"
+		sessionToken  = "cyber-session-42"
 		workspacePath = "/workspace/session-42?view=issues"
 	)
 	var rootHits atomic.Int32
@@ -223,7 +221,7 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
 		rootHits.Add(1)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html>
-<html><head><title>AIScan Workspace Login</title></head>
+<html><head><title>Cyber Workspace Login</title></head>
 <body><main id="app">Signing in...</main>
 <script>
 (async () => {
@@ -233,8 +231,8 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
     body: JSON.stringify({username: 'analyst', workspace: 'security'})
   });
   const session = await response.json();
-  localStorage.setItem('aiscan.token', session.token);
-  document.cookie = 'aiscan_session=' + session.token + '; Path=/; SameSite=Lax';
+  localStorage.setItem('cyber.token', session.token);
+  document.cookie = 'cyber_session=' + session.token + '; Path=/; SameSite=Lax';
   location.assign(session.next);
 })();
 </script></body></html>`)
@@ -249,7 +247,7 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
 		fmt.Fprintf(w, `{"token":%q,"next":%q}`, sessionToken, workspacePath)
 	})
 	mux.HandleFunc("/workspace/session-42", func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("aiscan_session")
+		cookie, err := r.Cookie("cyber_session")
 		if err != nil || cookie.Value != sessionToken {
 			http.Error(w, "authentication required", http.StatusUnauthorized)
 			return
@@ -268,7 +266,7 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse headless options: %v", err)
 	}
-	if err := configureBrowserOptions(options); err != nil {
+	if err := configureBrowserOptionsWith(options, browserutil.Discover); err != nil {
 		t.Fatalf("configure browser options: %v", err)
 	}
 	if options.SystemChromePath != binary.Path || !options.UseInstalledChrome {
@@ -280,7 +278,7 @@ func TestE2EHeadlessReusesDiscoveredBrowser(t *testing.T) {
 	var output bytes.Buffer
 	command := New()
 	command.WorkDir = t.TempDir()
-	_, err = command.Run(ctx, &commands.Execution{
+	_, err = command.Run(ctx, &coretool.Execution{
 		Args:   []string{"-u", srv.URL, "-hl", "-d", "2", "-timeout", "15", "-ct", "45s", "-j"},
 		Stdout: &output,
 		Stderr: &output,
@@ -303,7 +301,7 @@ type ownedTestWriter struct {
 
 func (w *ownedTestWriter) Close() error { w.closed++; return nil }
 func TestEmbeddedCrawlerOwnsOutputWithoutChangingProcessState(t *testing.T) {
-	before := *gologger.DefaultLogger
+	before := fmt.Sprintf("%#v", gologger.DefaultLogger)
 	path := filepath.Join(t.TempDir(), "not-created", "results.json")
 	options := &katanatypes.Options{OutputFile: path, Silent: true, RateLimit: 1}
 	writer := &ownedTestWriter{}
@@ -315,7 +313,7 @@ func TestEmbeddedCrawlerOwnsOutputWithoutChangingProcessState(t *testing.T) {
 	if crawler.Logger != logger || crawler.OutputWriter != writer {
 		t.Fatal("lost injected output")
 	}
-	if !reflect.DeepEqual(before, *gologger.DefaultLogger) {
+	if fmt.Sprintf("%#v", gologger.DefaultLogger) != before {
 		t.Fatal("modified global logger")
 	}
 	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {

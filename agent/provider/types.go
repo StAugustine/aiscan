@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 )
 
 // CacheRetention controls prompt caching behavior across providers.
@@ -22,14 +22,17 @@ const (
 // back into aop types; nothing upstream of this package sees vendor JSON.
 
 type ChatCompletionRequest struct {
-	Model          string
-	Messages       []*aop.Message
-	Tools          []*aop.ToolDefinition
-	MaxTokens      int
-	Temperature    *float64
-	Stream         bool
-	CacheRetention CacheRetention
-	SessionID      string
+	Purpose         string // Host-only request purpose; never serialized to the provider.
+	Model           string
+	Messages        []*aop.Message
+	Tools           []*aop.ToolDefinition
+	MaxTokens       int
+	Temperature     *float64
+	Stream          bool
+	CacheRetention  CacheRetention
+	SessionID       string
+	ReasoningEffort string // Optional inference hint; empty uses the provider default.
+	JSONOutput      bool   // Request a JSON object from adapters that support structured output.
 }
 
 type ChatCompletionResponse struct {
@@ -91,6 +94,7 @@ func IsImageUnsupportedError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "image_url") ||
 		strings.Contains(msg, "image url") ||
+		strings.Contains(msg, "not a multimodal model") ||
 		(strings.Contains(msg, "image") && strings.Contains(msg, "not support"))
 }
 

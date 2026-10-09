@@ -1,8 +1,11 @@
 package hooks
 
 import (
-	aop "github.com/chainreactors/aiscan/aop"
-	corehooks "github.com/chainreactors/aiscan/core/hooks"
+	"context"
+	"github.com/chainreactors/cyber/agent/inbox"
+	aop "github.com/chainreactors/cyber/aop"
+	corehooks "github.com/chainreactors/cyber/core/hooks"
+	"github.com/chainreactors/cyber/core/types"
 )
 
 // Aliases keep event definitions readable without pulling agent in (that
@@ -44,9 +47,8 @@ type RunStartResult struct {
 	Prepend      []*Msg
 }
 
-var BeforeRun = corehooks.Point[RunStartEvent, RunStartResult]{
-	Kind: "before_run",
-	Reduce: corehooks.Fold(func(acc *RunStartResult, ev *RunStartEvent, out RunStartResult) {
+var BeforeRun = corehooks.NewPoint[RunStartEvent, RunStartResult]("before_run").WithReducer(
+	corehooks.Fold(func(acc *RunStartResult, ev *RunStartEvent, out RunStartResult) {
 		if out.SystemPrompt != nil {
 			// Fold into the event so the next handler edits the new prompt.
 			ev.SystemPrompt = *out.SystemPrompt
@@ -54,29 +56,68 @@ var BeforeRun = corehooks.Point[RunStartEvent, RunStartResult]{
 		}
 		acc.Prepend = append(acc.Prepend, out.Prepend...)
 	}),
-}
+)
 
 type ContextEvent struct {
 	SessionID string
+	TurnID    string
 	Turn      int
 	Messages  []*Msg
 }
+
+// BeforeModel runs once at a decision boundary, outside model retry and request
+// serialization. Its result can only append messages to the durable transcript.
+// The input is an isolated snapshot; handlers cannot edit the existing prefix.
+var BeforeModel = corehooks.NewPoint[ContextEvent, []*Msg]("before_model").WithReducer(
+	corehooks.Fold(func(acc *[]*Msg, _ *ContextEvent, out []*Msg) {
+		*acc = append(*acc, out...)
+	}),
+)
+
+// AfterModel observes each accepted, complete model output once, outside retry.
+// Messages ends with that assistant output. Handlers receive an isolated snapshot
+// and cannot replace the output or dispatch its tool calls.
+var AfterModel = corehooks.NewPoint[ContextEvent, struct{}]("after_model")
+
+// ModelRequestPolicy is applied to every request, including retries and streams.
+// Restrictions combine monotonically: a handler cannot restore denied tools.
+type ModelRequestEvent struct {
+	ContextEvent
+	Purpose string
+}
+type ModelPolicy struct {
+	Purpose      string
+	DisableTools bool
+	Deny         error
+}
+
+var ModelRequestPolicy = corehooks.NewPoint[ModelRequestEvent, ModelPolicy]("model_request_policy").WithReducer(
+	corehooks.Fold(func(acc *ModelPolicy, ev *ModelRequestEvent, out ModelPolicy) {
+		acc.DisableTools = acc.DisableTools || out.DisableTools
+		if out.Deny != nil {
+			acc.Deny = out.Deny
+		}
+		if out.Purpose != "" {
+			acc.Purpose = out.Purpose
+			ev.Purpose = out.Purpose
+		}
+	}),
+)
 
 // ContextResult replaces the whole message list; nil means unchanged.
 type ContextResult struct {
 	Messages []*Msg
 }
 
-var Context = corehooks.Point[ContextEvent, ContextResult]{
-	Kind: "context",
-	Reduce: corehooks.Fold(func(acc *ContextResult, ev *ContextEvent, out ContextResult) {
+var Context = corehooks.NewPoint[ContextEvent, ContextResult]("context").WithReducer(
+	corehooks.Fold(func(acc *ContextResult, ev *ContextEvent, out ContextResult) {
 		if out.Messages == nil {
 			return
 		}
 		ev.Messages = out.Messages
 		acc.Messages = out.Messages
 	}),
-}
+)
 
 type RunEndEvent struct {
 	SessionID      string
@@ -89,19 +130,29 @@ type RunEndEvent struct {
 	Err            error
 }
 
-var RunEnd = corehooks.Point[RunEndEvent, struct{}]{Kind: "run_end"}
+var RunEnd = corehooks.NewPoint[RunEndEvent, struct{}]("run_end")
 
+// SessionEvent lends Deliver only for this execution's lifetime. The owner
+// closes admission before SessionEnd; extensions never own or close the Inbox.
 type SessionEvent struct {
-	SessionID string
-	ParentID  string
-	AgentName string
-	Model     string
-	Reason    string
+	ParentToolCallID string
+	Delegation       *types.DelegationDetail
+	Input            string
+	Primary          bool
+	Deliver          func(context.Context, inbox.Message) error
+	Output           string
+	Stop             StopReason
+	Err              error
+	SessionID        string
+	ParentID         string
+	AgentName        string
+	Model            string
+	Reason           string
 }
 
 var (
-	SessionStart = corehooks.Point[SessionEvent, struct{}]{Kind: "session_start"}
-	SessionEnd   = corehooks.Point[SessionEvent, struct{}]{Kind: "session_end"}
+	SessionStart = corehooks.NewPoint[SessionEvent, struct{}]("session_start").WithErrorPolicy(corehooks.FailClosed)
+	SessionEnd   = corehooks.NewPoint[SessionEvent, struct{}]("session_end")
 )
 
 type CompactEvent struct {
@@ -116,7 +167,6 @@ type CancelResult struct {
 	Reason string
 }
 
-var BeforeCompact = corehooks.Point[CompactEvent, CancelResult]{
-	Kind:   "before_compact",
-	Reduce: corehooks.StopWhen[CompactEvent](func(r CancelResult) bool { return r.Cancel }),
-}
+var BeforeCompact = corehooks.NewPoint[CompactEvent, CancelResult]("before_compact").WithReducer(
+	corehooks.StopWhen[CompactEvent](func(r CancelResult) bool { return r.Cancel }),
+)

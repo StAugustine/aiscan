@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	gogocore "github.com/chainreactors/gogo/v2/core"
 	"github.com/chainreactors/sdk/gogo"
 	"github.com/chainreactors/utils/parsers"
@@ -63,7 +63,7 @@ func (c *Command) QuickReference() string {
   -P port        Print the current runtime port presets
   NOTE: Do not infer top100/top1000/top2k/top12k/full as port presets from another release; use -P port for the current runtime list.
   NOTE: "total ports: 1" means the normalized plan has one port; it does not mean a complete port scan.
-  See aiscan://skills/aiscan/okf/easm/gogo.md for the full command contract.
+  See cyber://skills/cyber/okf/easm/gogo.md for the full command contract.
   -e             Enable exploit/neutron scan
   -v             Enable active fingerprint scan
   Examples:
@@ -74,11 +74,11 @@ func (c *Command) QuickReference() string {
     gogo -i 10.0.0.1 -p top2 -f results.jsonl -O jl`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("gogo", &err)
 	args := execution.Args
 	args = c.normalizeArgs(args)
-	egress := commands.ResolveExecutionEgress(execution, c.Proxy)
+	egress := coretool.ResolveExecutionEgress(execution, c.Proxy)
 	args = c.injectProxyURL(args, egress.ProxyURL)
 
 	if toolargs.BoolFlagEnabled(args, "--debug") {
@@ -112,15 +112,6 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	}
 	fmt.Fprint(execution.Stdout, buf.String())
 	return nil, nil
-}
-
-// TestInjectProxy is exported for cross-package testing.
-func (c *Command) TestInjectProxy(args []string) []string {
-	return c.injectProxy(args)
-}
-
-func (c *Command) injectProxy(args []string) []string {
-	return c.injectProxyURL(args, c.Proxy)
 }
 
 func (c *Command) injectProxyURL(args []string, proxy string) []string {

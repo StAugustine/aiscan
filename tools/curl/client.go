@@ -24,9 +24,9 @@ import (
 	"sync"
 	"time"
 
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	traffic "github.com/chainreactors/aiscan/aop/traffic"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	traffic "github.com/chainreactors/cyber/aop/traffic"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 // A single stable, modern Chrome identity. Keeping one fingerprint per process
@@ -58,7 +58,7 @@ var browserDefaults = []Header{
 // browser naturalization defaults, performs the exchange, and writes
 // curl-shaped output. Egress and workDir are per-invocation; nothing here
 // mutates the shared Command.
-func (c *Command) do(ctx context.Context, req *Request, egress commands.Egress, workDir string, stdout, stderr io.Writer) error {
+func (c *Command) do(ctx context.Context, req *Request, egress coretool.Egress, workDir string, stdout, stderr io.Writer) error {
 	if req.Version {
 		_, err := fmt.Fprintln(stdout, compatibilityVersion)
 		return err
@@ -72,18 +72,12 @@ func (c *Command) do(ctx context.Context, req *Request, egress commands.Egress, 
 			proxyURL = "http://" + proxyURL
 		}
 	}
-	if len(req.Resolve) > 0 && proxyURL != "" {
-		// A standard library HTTP proxy owns the destination dial and therefore
-		// cannot safely honor a local host mapping without also changing CONNECT
-		// and TLS-SNI behavior. Fail explicitly instead of silently ignoring the
-		// option (or bypassing the observed proxy path).
-		return fmt.Errorf("curl: --resolve cannot be used with a proxy")
-	}
-
 	client, err := c.buildClient(proxyURL, caPath, req)
 	if err != nil {
 		return err
 	}
+	// Each invocation owns its transport, including mapping-specific tunnels.
+	defer client.Transport.(*http.Transport).CloseIdleConnections()
 	trace, err := openASCIITrace(req.TraceASCII, workDir, stdout, stderr)
 	if err != nil {
 		return err
@@ -211,7 +205,7 @@ func (c *Command) do(ctx context.Context, req *Request, egress commands.Egress, 
 		fmt.Fprint(stdout, expandWriteOut(req.WriteOut, resp, written))
 	}
 
-	c.emitArtifact(ctx, traffic.ExchangeFromHTTP(resp.Request, resp, nil, nil), written)
+	c.emitArtifact(ctx, traffic.FlowFromHTTP(resp.Request, resp, nil, nil), written)
 	return nil
 }
 
@@ -222,7 +216,7 @@ func (c *Command) failResponse(ctx context.Context, client *http.Client, req *Re
 	if req.WriteOut != "" {
 		fmt.Fprint(stdout, expandWriteOut(req.WriteOut, resp, 0))
 	}
-	c.emitArtifact(ctx, traffic.ExchangeFromHTTP(resp.Request, resp, nil, nil), 0)
+	c.emitArtifact(ctx, traffic.FlowFromHTTP(resp.Request, resp, nil, nil), 0)
 	return fmt.Errorf("curl: (22) The requested URL returned error: %s", resp.Status)
 }
 
@@ -253,27 +247,20 @@ func (c *Command) buildClient(proxyURL, caPath string, req *Request) (*http.Clie
 	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	dialContext := dialer.DialContext
-	if len(req.Resolve) > 0 {
-		resolve := makeResolveMap(req.Resolve)
-		dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err == nil {
-				entry, ok := lookupResolve(resolve, host, port)
-				if ok {
-					var lastErr error
-					for _, mapped := range entry.Addresses {
-						conn, dialErr := dialer.DialContext(ctx, network, net.JoinHostPort(mapped, port))
-						if dialErr == nil {
-							return conn, nil
-						}
-						lastErr = dialErr
-					}
-					if lastErr != nil {
-						return nil, lastErr
-					}
-				}
-			}
-			return dialer.DialContext(ctx, network, address)
+	var proxyAddress *url.URL
+	if proxyURL != "" {
+		var err error
+		proxyAddress, err = url.Parse(proxyURL)
+		if err != nil || proxyAddress.Hostname() == "" {
+			return nil, fmt.Errorf("curl: invalid proxy URL")
+		}
+	}
+	mapped := len(req.Resolve) > 0 || len(req.ConnectTo) > 0
+	if mapped {
+		var err error
+		dialContext, err = mappedDialer(req, proxyAddress, tlsConfig, dialTimeout)
+		if err != nil {
+			return nil, err
 		}
 	}
 	forceHTTP2 := req.HTTP2 || !req.HTTP11
@@ -290,12 +277,8 @@ func (c *Command) buildClient(proxyURL, caPath string, req *Request) (*http.Clie
 		IdleConnTimeout:     90 * time.Second,
 		TLSHandshakeTimeout: dialTimeout,
 	}
-	if proxyURL != "" {
-		parsed, err := url.Parse(proxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("curl: invalid proxy %q: %w", proxyURL, err)
-		}
-		transport.Proxy = http.ProxyURL(parsed)
+	if proxyAddress != nil && !mapped {
+		transport.Proxy = http.ProxyURL(proxyAddress)
 	}
 
 	jar, _ := cookiejar.New(nil)
@@ -841,8 +824,8 @@ func resolveKey(host, port string) string {
 	return host + ":" + strings.TrimSpace(port)
 }
 
-func (c *Command) emitArtifact(ctx context.Context, exchange *traffic.Exchange, size int64) {
-	if c.Events == nil || exchange == nil || exchange.Response == nil {
+func (c *Command) emitArtifact(ctx context.Context, flow *traffic.Flow, size int64) {
+	if c.Events == nil || flow == nil || flow.GetRequest() == nil || flow.GetResponse() == nil {
 		return
 	}
 	summary := struct {
@@ -851,20 +834,20 @@ func (c *Command) emitArtifact(ctx context.Context, exchange *traffic.Exchange, 
 		ContentType string `json:"content_type,omitempty"`
 		BodyLength  int64  `json:"body_length"`
 	}{
-		URL:         exchange.Request.URL,
-		Status:      exchange.Response.StatusCode,
-		ContentType: headerValue(exchange.Response.Headers, "Content-Type"),
+		URL:         flow.GetRequest().GetUrl(),
+		Status:      int(flow.GetResponse().GetStatusCode()),
+		ContentType: headerValue(flow.GetResponse().GetHeaders(), "Content-Type"),
 		BodyLength:  size,
 	}
-	// The compact observation follows CSTX's web schema, which the server reads
-	// as its "spray" artifact; aiscan names the producer.
-	c.EmitArtifactCtx(ctx, "aiscan", toolpb.ArtifactKindWeb, summary.URL, summary)
+	// The compact observation follows CSTX's spray artifact schema. The event
+	// emitter records the producer independently.
+	c.EmitArtifactCtx(ctx, "spray", toolpb.ArtifactKindWeb, summary.URL, summary)
 }
 
-func headerValue(headers []traffic.Pair, name string) string {
+func headerValue(headers []*traffic.Header, name string) string {
 	for _, h := range headers {
-		if strings.EqualFold(h.Name, name) {
-			return h.Value
+		if h != nil && strings.EqualFold(h.GetName(), name) {
+			return h.GetValue()
 		}
 	}
 	return ""
@@ -986,12 +969,17 @@ func writeVerboseResponse(w io.Writer, resp *http.Response) {
 
 // expandWriteOut supports the curl -w variables the agent uses most.
 func expandWriteOut(format string, resp *http.Response, size int64) string {
+	redirects := 0
+	for request := resp.Request; request != nil && request.Response != nil; request = request.Response.Request {
+		redirects++
+	}
 	replacer := strings.NewReplacer(
 		"%{http_code}", strconv.Itoa(resp.StatusCode),
 		"%{response_code}", strconv.Itoa(resp.StatusCode),
 		"%{url_effective}", resp.Request.URL.String(),
 		"%{content_type}", resp.Header.Get("Content-Type"),
 		"%{size_download}", strconv.FormatInt(size, 10),
+		"%{num_redirects}", strconv.Itoa(redirects),
 		"\\n", "\n", "\\t", "\t", "\\r", "\r",
 	)
 	return replacer.Replace(format)

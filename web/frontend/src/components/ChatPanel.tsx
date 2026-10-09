@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import i18n from '../i18n'
 import {
   AlertTriangle,
+  Box,
+  Bug,
   CheckCircle2,
   ChevronDown,
   ExternalLink,
   FileText,
+  Fingerprint,
   GitBranch,
   Layers,
   Link2,
   Loader2,
   MessageSquare,
   Network,
-  Radar,
-  RefreshCw,
+  Shield,
   Sparkles,
   Target,
   User,
@@ -25,13 +28,14 @@ import {
 import { cn } from '@cyber/theme'
 import { Button, Callout, DisclosureCard, Tooltip, TooltipContent, TooltipTrigger } from '@cyber/ui'
 import BrandMark from './brand/BrandMark'
-import { MarkdownContent } from '@/markdown'
+import BrandLogo from './brand/BrandLogo'
+import { CodeBlock, MarkdownContent } from '@/markdown'
 import {
   AssistantResponse,
   ChatPanel as ViewerChatPanel,
   ChatThinking,
   MessageBubble as ChatMessageBubble,
-  reduceAOPToTimeline,
+  createAOPTimelineReducer,
   resolveTimelineRenderer,
   summarizeArgs,
   type ChatAttachment,
@@ -44,46 +48,40 @@ import {
   type ViewerTimelineItem,
   type AOPEvent,
 } from '@/viewer'
-import { fetchSessionCommands, uploadChatFile } from '../api'
-import type { AgentListMetadata, CommandSpec, SCONode } from '../api'
+import { fetchSessionCommands, uploadChatFile, type ChatSendOptions } from '../api'
+import { BudgetWarningSchema, CommandDetailSchema, CompactDetailSchema, DelegationDetailSchema, EvalDetailSchema, WebMessageMetadataSchema } from '../cyber-proto'
+import { anyUnpack } from '@bufbuild/protobuf/wkt'
+import type { AgentListMetadata, CommandSpec } from '../api'
 import type { ChatMessage, TimelineItem } from '../hooks/useChatSession'
-import InstrumentIdle from './InstrumentIdle'
-import ScannerToolCall from './chat/ScannerToolCall'
+import { ToolResultsProvider, ToolCallResult } from './chat/ToolCallResult'
+import { ObservedEvent } from './ObservabilityPanel'
+import { observation } from '@/viewer'
 import SubagentRunCard from './chat/SubagentRunCard'
+import { GuardrailReviewCard } from './GuardrailReviews'
+import { groupGuardrailTurns, guardrailTimelineEvents, isGuardrailBoundary, withGuardrailReviews } from '../lib/guardrail-view'
+import { withRecaps } from '../lib/recap-view'
+import { isJEVBoundary, jevTimelineEvents, projectJEV, runtimeEvents, withJEV } from '../lib/jev-view'
+import { withWorkflows, type WorkflowTurn } from '../lib/workflow-view'
+import { Workflow } from './chat/Workflow'
+import './chat/JEVTimeline'
+import { ReviewState, type Review } from '../cyber-proto'
 import type { IOAConsoleTarget } from '../lib/ioa-navigation'
 
-const webUserAgent = 'aiscan.web'
+const webUserAgent = 'cyber.web'
 
 function toExtensionItem(item: TimelineItem): ExtensionTimelineItem | null {
   switch (item.kind) {
-    case 'scan_started':
-    case 'scan_progress':
-      return {
-        id: item.id,
-        kind: 'extension',
-        timestamp: item.timestamp,
-        extensionType: 'scan_started',
-        data: { scanID: item.scanID || '', lines: item.scanLines || [] },
-      }
     case 'scan_complete':
       return {
         id: item.id,
         kind: 'extension',
         timestamp: item.timestamp,
         extensionType: 'scan_complete',
-        data: { scanID: item.scanID || '', nodes: item.scanNodes },
+        data: { scanID: item.scanID || '' },
       }
     default:
       return null
   }
-}
-
-// Scan-result markers are persisted as AOP `message` events (role=system with
-// ext metadata.event_type) so they survive reload — but the platform timeline
-// already renders them as scan cards. Drop them from the stream handed to the
-// AOP reducer so they don't also appear as bare "scan complete" bubbles.
-function isPlatformMarkerEvent(event: AOPEvent): boolean {
-  return false
 }
 
 // Agent and evaluator prompts also use role=user in AOP, but they are internal
@@ -103,57 +101,234 @@ function eventText(event: AOPEvent): string {
     .join('\n')
 }
 
-function presentAOPEvent(event: AOPEvent): AOPEvent {
-  return event
-}
-
-function extensionBlock(event: AOPEvent): Record<string, unknown> {
-  return Object.fromEntries(event.extensions.map((extension) => [extension.typeUrl, extension.typeUrl]))
-}
-
 function eventTimestamp(event: AOPEvent): number {
   if (!event.emittedAt) return 0
   return Number(event.emittedAt.seconds) * 1000 + event.emittedAt.nanos / 1_000_000
+}
+
+// Evaluator/compaction/budget banners ride on `status` events with a typed
+// detail in the Any extension. The detail schemas are app-owned (cmd/gen routes
+// types/agent.proto to this side only), so the shared reducer cannot decode
+// them — it drops `status` outright and would otherwise leave EvalNote and
+// friends unreachable. Translate the events here, where the schemas live, into
+// the same extension timeline items the renderers already expect.
+function statusTimelineItem(event: AOPEvent, index: number): ExtensionTimelineItem | null {
+  if (event.payload.case !== 'status') return null
+  const state = event.payload.value.state
+  const base = {
+    id: `${event.id || index}:${state}`,
+    kind: 'extension' as const,
+    timestamp: eventTimestamp(event),
+    actorName: event.emitter,
+  }
+  switch (state) {
+    case 'eval_end':
+    case 'eval_error': {
+      const value = event.extensions.map((extension) => anyUnpack(extension, EvalDetailSchema))
+        .find((candidate) => candidate !== undefined)
+      if (!value) return null
+      return {
+        ...base,
+        extensionType: 'eval',
+        data: {
+          round: value.round,
+          pass: state === 'eval_end' && value.pass,
+          reason: state === 'eval_error' ? value.error : value.reason,
+        },
+      }
+    }
+    case 'compact_end': {
+      const value = event.extensions.map((extension) => anyUnpack(extension, CompactDetailSchema))
+        .find((candidate) => candidate !== undefined)
+      if (!value) return null
+      return {
+        ...base,
+        extensionType: 'compact',
+        data: {
+          tokens_before: value.tokensBefore,
+          tokens_after: value.tokensAfter,
+          kept_messages: value.keptMessages,
+        },
+      }
+    }
+    case 'token_budget_warning': {
+      const value = event.extensions.map((extension) => anyUnpack(extension, BudgetWarningSchema))
+        .find((candidate) => candidate !== undefined)
+      if (!value) return null
+      return {
+        ...base,
+        extensionType: 'token_budget',
+        data: { context_tokens: value.contextTokens, token_budget: value.tokenBudget },
+      }
+    }
+    default:
+      return null
+  }
+}
+
+// The shared AOP reducer renders a system message from its text alone and never
+// decodes the cyber.web extension, so the hub's translatable code never reaches
+// SystemMessageContent and every backend notice falls back to English. Decode
+// the extensions here, where the schema lives, and hand the codes back by
+// message id so the reducer's items can be annotated in place.
+function systemMetadataByMessageID(events: AOPEvent[]): Map<string, Record<string, unknown>> {
+  const byMessageID = new Map<string, Record<string, unknown>>()
+  for (const event of events) {
+    if (event.payload.case !== 'message') continue
+    const messageID = event.payload.value.id
+    if (!messageID) continue
+    for (const extension of event.extensions) {
+      const decoded = anyUnpack(extension, WebMessageMetadataSchema)
+      if (!decoded) continue
+      byMessageID.set(messageID, {
+        code: decoded.code,
+        params: decoded.params,
+        agentList: decoded.agentList,
+        commands: decoded.commands,
+      })
+      break
+    }
+  }
+  return byMessageID
+}
+
+function statusTimelineItems(events: AOPEvent[]): ViewerTimelineItem[] {
+  return events
+    .map((event, index) => statusTimelineItem(event, index))
+    .filter((item): item is ExtensionTimelineItem => item !== null)
+}
+
+// A command result is the output of an operator slash command, identified by its
+// CommandDetail extension. It carries no turn id, so the shared reducer folds
+// every one of them into the single turn-less assistant card at the position of
+// the first result — and because that card is keyed by message id, any id the
+// node reuses collapses two results into one. CommandDetail is an app-owned
+// schema, so render these here, one item each, and keep them out of the reducer.
+function commandResultItem(event: AOPEvent, index: number): ViewerTimelineItem | null {
+  if (event.payload.case !== 'message' || event.payload.value.role !== 'assistant') return null
+  const detail = event.extensions
+    .map((extension) => anyUnpack(extension, CommandDetailSchema))
+    .find((candidate) => candidate !== undefined)
+  if (!detail) return null
+  return {
+    id: event.id || `command:${event.seq ?? index}`,
+    kind: 'message',
+    timestamp: eventTimestamp(event),
+    actorName: event.emitter,
+    role: 'assistant',
+    content: eventText(event),
+    streaming: false,
+    metadata: { commandLine: detail.line, presentation: detail.presentation },
+  }
+}
+
+// Split command results out of the event stream the reducer consumes. Their
+// order is preserved on both sides, so each result still renders at the point it
+// was emitted, right after the operator's command.
+function splitCommandResults(events: AOPEvent[]): {
+  messages: AOPEvent[]
+  commands: ViewerTimelineItem[]
+} {
+  const messages: AOPEvent[] = []
+  const commands: ViewerTimelineItem[] = []
+  events.forEach((event, index) => {
+    const item = commandResultItem(event, index)
+    if (item) commands.push(item)
+    else messages.push(event)
+  })
+  return { messages, commands }
+}
+
+// mergeTimelineItems walks `extra` in ascending time order, so a set assembled
+// from two sources has to be re-sorted before it is woven back in.
+function orderedTimelineItems(...groups: ViewerTimelineItem[][]): ViewerTimelineItem[] {
+  return groups.flat().sort((left, right) => left.timestamp - right.timestamp)
+}
+
+// A failed turn is published twice: once as a bare `error` event and again as
+// the `turnEnded.error` of the same turn. The shared reducer renders an error
+// divider for each, back to back, so every LLM failure shows up as the same
+// warning line twice. Drop a divider that repeats the one before it.
+function collapseRepeatedDividers(items: ViewerTimelineItem[]): ViewerTimelineItem[] {
+  const collapsed: ViewerTimelineItem[] = []
+  for (const item of items) {
+    const previous = collapsed[collapsed.length - 1]
+    if (item.kind === 'divider' && previous?.kind === 'divider' && previous.label === item.label) continue
+    collapsed.push(item)
+  }
+  return collapsed
+}
+
+// Weave the status items back into the reduced timeline at their emitted
+// position, leaving the existing items in their relative order.
+function mergeTimelineItems(base: ViewerTimelineItem[], extra: ViewerTimelineItem[]): ViewerTimelineItem[] {
+  if (!extra.length) return base
+  const merged: ViewerTimelineItem[] = []
+  let next = 0
+  for (const item of base) {
+    while (next < extra.length && extra[next].timestamp <= item.timestamp) merged.push(extra[next++])
+    merged.push(item)
+  }
+  return merged.concat(extra.slice(next))
 }
 
 function reduceConversationAOP(
   events: AOPEvent[],
   sourceEvents: AOPEvent[],
   streaming: boolean,
+  reducers: Map<string, ReturnType<typeof createAOPTimelineReducer>>,
 ): ViewerTimelineItem[] {
+  const reduce = (key: string, batch: AOPEvent[], live: boolean) => {
+    let reducer = reducers.get(key)
+    if (!reducer) {
+      reducer = createAOPTimelineReducer({
+        lifecycle: 'errors',
+        responseBoundary: event => isGuardrailBoundary(event) || isJEVBoundary(event) || (event.payload.case === 'status'
+          && ['eval_start', 'compact_start'].includes(event.payload.value.state)),
+      })
+      reducers.set(key, reducer)
+    }
+    return reducer(jevTimelineEvents(guardrailTimelineEvents(batch)), live) as ViewerTimelineItem[]
+  }
   const childStarts = new Map<string, AOPEvent>()
-  const visibleSessionIDs = new Set(events.map((event) => event.sessionId))
+  const bySession = new Map<string, AOPEvent[]>()
+  const endBySession = new Map<string, AOPEvent>()
+  const promptBySession = new Map<string, AOPEvent>()
+  for (const event of events) {
+    let group = bySession.get(event.sessionId)
+    if (!group) bySession.set(event.sessionId, group = [])
+    group.push(event)
+    if (event.payload.case === 'sessionEnded') endBySession.set(event.sessionId, event)
+  }
+  for (const event of sourceEvents) {
+    if (isInternalUserEvent(event) && !promptBySession.has(event.sessionId)) promptBySession.set(event.sessionId, event)
+  }
   for (const event of events) {
     if (event.payload.case !== 'sessionStarted') continue
     const data = event.payload.value
-    const ext = extensionBlock(event)
-    const delegated = !!data.parentToolCallId
-      || (ext.delegation !== null && typeof ext.delegation === 'object')
+    const delegated = !!data.parentToolCallId || event.extensions.some(extension => anyUnpack(extension, DelegationDetailSchema))
     // The root agent also points at the platform chat session, which is not an
     // AOP stream. Only fold a run when its parent is another visible AOP session.
-    if (delegated && data.parentSessionId && visibleSessionIDs.has(data.parentSessionId)) {
+    if (delegated && data.parentSessionId && bySession.has(data.parentSessionId)) {
       childStarts.set(event.sessionId, event)
     }
   }
 
   const childIDs = new Set(childStarts.keys())
-  const topLevel = reduceAOPToTimeline(
-    events.filter((event) => !childIDs.has(event.sessionId)).map(presentAOPEvent),
-    { streaming, lifecycle: 'errors' },
-  ) as ViewerTimelineItem[]
+  const topLevelEvents = events.filter((event) => !childIDs.has(event.sessionId))
+  const topLevelSplit = splitCommandResults(topLevelEvents)
+  const topLevel = collapseRepeatedDividers(mergeTimelineItems(
+    reduce('', topLevelSplit.messages, streaming),
+    orderedTimelineItems(statusTimelineItems(topLevelSplit.messages), topLevelSplit.commands),
+  ))
 
   const childRuns: ViewerTimelineItem[] = []
   for (const [sessionID, start] of childStarts) {
-    const childEvents = events.filter((event) => event.sessionId === sessionID)
-    const end = [...childEvents].reverse().find((event) => event.payload.case === 'sessionEnded')
+    const childEvents = bySession.get(sessionID) || []
+    const end = endBySession.get(sessionID)
     const endReason = end?.payload.case === 'sessionEnded' ? end.payload.value.reason : undefined
-    const ext = extensionBlock(start)
-    const delegation = ext.delegation && typeof ext.delegation === 'object'
-      ? ext.delegation as Record<string, unknown>
-      : ext
-    const promptEvent = sourceEvents.find(
-      (event) => event.sessionId === sessionID && isInternalUserEvent(event),
-    )
+    const delegation = start.extensions.map(extension => anyUnpack(extension, DelegationDetailSchema)).find(Boolean)
+    const promptEvent = promptBySession.get(sessionID)
     const stop = endReason
     const status = !end
       ? 'running'
@@ -163,19 +338,21 @@ function reduceConversationAOP(
           ? 'canceled'
           : 'completed'
     const timestamp = eventTimestamp(start)
-    const items = reduceAOPToTimeline(childEvents.map(presentAOPEvent), {
-      streaming: streaming && !end,
-      lifecycle: 'errors',
-    }).filter((item) => item.kind !== 'divider' || item.variant === 'warning') as ViewerTimelineItem[]
+    const childSplit = splitCommandResults(childEvents)
+    const items = collapseRepeatedDividers(mergeTimelineItems(
+      reduce(sessionID, childSplit.messages, streaming && !end)
+        .filter((item) => item.kind !== 'divider' || item.variant === 'warning'),
+      orderedTimelineItems(statusTimelineItems(childSplit.messages), childSplit.commands),
+    ))
 
     childRuns.push({
       id: `subagent:${sessionID}`,
       kind: 'subagent_run',
       timestamp: Number.isFinite(timestamp) ? timestamp : 0,
       actorName: start.emitter,
-      name: typeof delegation.agent_name === 'string' ? delegation.agent_name : start.emitter || 'Sub-agent',
-      prompt: typeof delegation.task === 'string' ? delegation.task : (promptEvent ? eventText(promptEvent) : ''),
-      mode: typeof delegation.run_mode === 'string' ? delegation.run_mode : undefined,
+      name: delegation?.agentName || start.emitter || 'Sub-agent',
+      prompt: delegation?.task || (promptEvent ? eventText(promptEvent) : ''),
+      mode: delegation?.runMode || undefined,
       sessionID,
       status,
       items,
@@ -195,7 +372,6 @@ function isUserMessageItem(
 
 function toViewerTimelineItem(
   item: TimelineItem,
-  scanResults: Map<string, SCONode[]>,
 ): ViewerTimelineItem | null {
   switch (item.kind) {
     case 'message': {
@@ -225,10 +401,6 @@ function toViewerTimelineItem(
         role: 'thinking',
         content: item.content || '',
       }
-    case 'scan_started':
-    case 'scan_progress':
-      if (item.scanID && scanResults.has(item.scanID)) return null
-      return toExtensionItem(item)
     case 'scan_complete':
       return toExtensionItem(item)
     default:
@@ -243,7 +415,9 @@ const threadOffsetClass = 'lg:mr-[10.75rem] xl:mr-[11.75rem] 2xl:mr-[14.75rem]'
 interface Props {
   timeline: TimelineItem[]
   aopEvents?: AOPEvent[]
-  scanResults: Map<string, SCONode[]>
+  guardrailUnavailable?: boolean
+  guardrailReviews: Review[]
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
   isThinking: boolean
   isBusy: boolean
   canPause: boolean
@@ -259,7 +433,8 @@ interface Props {
   onCreateSession?: (nodeID: string) => void
   onOpenTerminal?: (nodeID: string) => void
   onOpenIOA?: (target?: IOAConsoleTarget) => void
-  onSend: (content: string, opts?: { persist?: boolean; evalCriteria?: string; evalMaxRounds?: number }) => void
+  onSend: (content: string, opts?: ChatSendOptions & { sessionID?: string }) => Promise<boolean>
+  ensureSession: () => Promise<string | null>
   onPause: () => void
   onClearError: () => void
 }
@@ -267,7 +442,9 @@ interface Props {
 export default function ChatPanel({
   timeline,
   aopEvents = [],
-  scanResults,
+  guardrailReviews,
+  guardrailUnavailable = false,
+  onResolveGuardrail,
   isThinking,
   isBusy,
   canPause,
@@ -280,16 +457,17 @@ export default function ChatPanel({
   agentOffline,
   agentName,
   agents = [],
-  onCreateSession,
-  onOpenTerminal,
   onOpenIOA,
   onSend,
+  ensureSession,
   onPause,
   onClearError,
 }: Props) {
   const { t, i18n } = useTranslation('chat')
+  const aopReducers = useMemo(() => new Map<string, ReturnType<typeof createAOPTimelineReducer>>(), [activeSessionID])
+  const [attachmentError, setAttachmentError] = useState('')
   const agentEvents = useMemo(
-    () => aopEvents.filter((event) => !isPlatformMarkerEvent(event) && !isInternalUserEvent(event)),
+    () => runtimeEvents(aopEvents).filter((event) => !isInternalUserEvent(event)),
     [aopEvents],
   )
   const liveThinkingItem = useMemo<TimelineItem | null>(() => {
@@ -299,28 +477,25 @@ export default function ChatPanel({
   const viewerTimeline = useMemo<ViewerTimelineItem[]>(() => {
     const source = liveThinkingItem && agentEvents.length === 0 ? [...timeline, liveThinkingItem] : timeline
     const platformItems = source
-      .map((item) => toViewerTimelineItem(item, scanResults))
+      .map((item) => toViewerTimelineItem(item))
       .filter((item): item is ViewerTimelineItem => item !== null)
       .filter((item) => agentEvents.length === 0
         || item.kind === 'extension'
         || (item.kind === 'message' && item.role === 'user'))
-    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy)
+    const aopItems = reduceConversationAOP(agentEvents, aopEvents, isBusy, aopReducers)
+    const systemMetadata = systemMetadataByMessageID(agentEvents)
+    for (const item of aopItems) {
+      if (item.kind !== 'message' || item.role !== 'system') continue
+      const metadata = systemMetadata.get(item.id)
+      if (metadata) item.metadata = metadata
+    }
 
-    // The optimistic user bubble is stamped with the browser clock (Date.now at
-    // send time); every agent event is stamped by the agent host. This merged
-    // transcript is ordered purely by timestamp, so a browser running even a few
-    // seconds ahead of the agent host would sort the user's own message *after*
-    // the reply it triggered. The hub re-emits each user message into the AOP
-    // stream stamped with the server clock — the same clock domain as the agent's
-    // turn — so pair each optimistic bubble with that echo, adopt its timestamp,
-    // and drop the echo as a duplicate. User and assistant then share one clock
-    // and stay in causal order regardless of browser/host skew.
+    // Match the pending bubble to its canonical message ID and server clock.
     const matchedEchoes = new Set<ViewerTimelineItem>()
+    const userMessages = new Map(aopItems.filter(isUserMessageItem).map(item => [item.id, item]))
     for (const platform of platformItems) {
       if (!isUserMessageItem(platform)) continue
-      const echo = aopItems.find(
-        (item) => isUserMessageItem(item) && item.content === platform.content && !matchedEchoes.has(item),
-      )
+      const echo = userMessages.get(platform.id)
       if (echo) {
         platform.timestamp = echo.timestamp
         matchedEchoes.add(echo)
@@ -328,10 +503,10 @@ export default function ChatPanel({
     }
     const visibleAopItems = aopItems.filter((item) => !matchedEchoes.has(item))
 
-    return [...platformItems, ...visibleAopItems].sort(
+    return withWorkflows(withRecaps(withJEV(groupGuardrailTurns(withGuardrailReviews([...platformItems, ...visibleAopItems].sort(
       (left, right) => left.timestamp - right.timestamp || left.id.localeCompare(right.id),
-    )
-  }, [agentEvents, aopEvents, isBusy, liveThinkingItem, scanResults, timeline])
+    ), guardrailReviews, aopEvents, !guardrailUnavailable)), projectJEV(aopEvents)), aopEvents), aopEvents)
+  }, [agentEvents, aopEvents, aopReducers, isBusy, liveThinkingItem, timeline, guardrailReviews, guardrailUnavailable])
   // Keep the transcript geometry stable as IOA messages arrive. The right rail
   // is part of the desktop workspace even when the current session has no IOA
   // activity, so the conversation and composer never jump horizontally.
@@ -340,56 +515,32 @@ export default function ChatPanel({
     [t, viewerTimeline],
   )
   const inputFormClass = cn(contentOffsetClass, hasIOARail && threadOffsetClass)
+  const composerRootRef = useRef<HTMLDivElement>(null)
   const [persist, setPersist] = useState(false)
-  // Goal mode: describe done-when criteria in natural language and let an
-  // independent evaluator judge completion each round, re-driving the agent
-  // until it passes or the round budget is spent. (evalMaxRounds is the whole
-  // budget — it subsumes the old standalone "fixed turns" mode.)
-  const [evalCriteria, setEvalCriteria] = useState('')
-  const [evalMaxRounds, setEvalMaxRounds] = useState(3)
-  const evalRef = useRef<HTMLTextAreaElement>(null)
+  const activeSessionRef = useRef(activeSessionID)
+  useEffect(() => { activeSessionRef.current = activeSessionID }, [activeSessionID])
   // Screen-reader turn status. Streamed replies mutate the DOM silently, so
   // mirror the coarse turn phase into a polite live region below. It announces
   // transitions (thinking → responding → done), never the token stream itself
   // (a live region on the growing text would restart the reader on every delta).
-  const [liveStatus, setLiveStatus] = useState('')
+  const [livePhase, setLivePhase] = useState<'thinking' | 'done' | null>(null)
   const wasActiveRef = useRef(false)
 
-  // Composer seed — the mobile greeting's capability cards push a starter prompt
-  // into the composer through ChatInput's injectText (nonce-guarded append). Own
-  // the nonce here so each card tap reliably re-injects; still fold in an external
-  // injectText if one ever arrives (the asset-pool source is gone, so it's inert).
-  const [composerSeed, setComposerSeed] = useState<{ text: string; nonce: number }>(
-    () => injectText ?? { text: '', nonce: 0 },
-  )
-  useEffect(() => {
-    if (injectText && injectText.nonce > 0) setComposerSeed(injectText)
-  }, [injectText])
-  const seedComposer = useCallback((text: string) => {
-    setComposerSeed((s) => ({ text, nonce: s.nonce + 1 }))
-  }, [])
-
-  function sendOpts() {
+  function sendOpts(content: string) {
     if (!persist) return undefined
-    const criteria = evalCriteria.trim()
-    if (criteria) return { persist: true, evalCriteria: criteria, evalMaxRounds }
-    // Goal toggled on but no criteria typed → nothing for the evaluator to
-    // judge, so send as a plain one-off message rather than an open-ended run.
+    const criteria = content.trim()
+    if (criteria) return { persist: true, evalCriteria: criteria }
     return undefined
   }
 
-  // A Goal is a one-shot kickoff: once dispatched, clear the panel so the next
-  // message isn't silently re-sent as a fresh multi-round run against stale
-  // criteria, and so the composer visibly returns to plain-chat state.
+  // A Goal is a one-shot kickoff; the next message starts in plain-chat mode.
   function resetGoal() {
     setPersist(false)
-    setEvalCriteria('')
-    setEvalMaxRounds(3)
   }
 
   // The "/" and "!" menus come from SessionService/ListCommands: hub-scope
   // commands merged with the bound node's reported runtime, skill, and registry
-  // commands, so both menus mirror what that AIScan node can actually run.
+  // commands, so both menus mirror what that Cyber node can actually run.
   // Descriptions prefer the local i18n string (keyed cmd<Name>) and fall back to
   // the server's (used for dynamic skill commands that have no i18n key).
   const [chatCommands, setChatCommands] = useState<CommandHint[]>([])
@@ -429,12 +580,11 @@ export default function ChatPanel({
       return
     }
     let cancelled = false
-    const toHint = (spec: CommandSpec): CommandHint => {
-      const base = spec.name.startsWith('/') ? spec.name.slice(1) : ''
-      const key = base ? `cmd${base.charAt(0).toUpperCase()}${base.slice(1)}` : ''
-      const localized = key ? t(key, { defaultValue: '' }) : ''
-      return { cmd: spec.name, desc: localized || spec.description || '', usage: spec.usage }
-    }
+    const toHint = (spec: CommandSpec): CommandHint => ({
+      cmd: spec.name,
+      desc: commandDescription(t, spec.name, spec.description || ''),
+      usage: spec.usage,
+    })
     fetchSessionCommands(activeSessionID)
       .then((specs) => {
         if (cancelled) return
@@ -454,23 +604,9 @@ export default function ChatPanel({
   }, [activeSessionID, i18n.language, t])
 
   useEffect(() => {
-    // Goal (persist/eval) mode is per-session intent. ChatPanel doesn't remount
-    // on session switch, so clear it here — otherwise session A's done-when
-    // criteria stays toggled on and gets silently sent with the next message in
-    // session B (an unexpected multi-round agentic run against stale criteria).
+    // Goal mode is per-session intent; ChatPanel stays mounted on session switch.
     setPersist(false)
-    setEvalCriteria('')
-    setEvalMaxRounds(3)
   }, [activeSessionID])
-
-  // Auto-grow the goal criteria textarea (min ~2 rows, capped) so long
-  // natural-language goals stay readable instead of scrolling a one-liner.
-  useEffect(() => {
-    const el = evalRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 144) + 'px'
-  }, [evalCriteria, persist])
 
   // Derive the polite screen-reader status from the turn phase. `isBusy` keeps
   // the "working" state across tool-execution gaps (thinking false, no stream)
@@ -478,10 +614,10 @@ export default function ChatPanel({
   // every pause between tool calls.
   useEffect(() => {
     const active = isBusy || isThinking
-    if (active) setLiveStatus(t('a11yThinking'))
-    else if (wasActiveRef.current) setLiveStatus(t('a11yTurnDone'))
+    if (active) setLivePhase('thinking')
+    else if (wasActiveRef.current) setLivePhase('done')
     wasActiveRef.current = active
-  }, [isBusy, isThinking, t])
+  }, [isBusy, isThinking])
 
   const activeThinkingResponseID = useMemo(
     () => isThinking ? latestStreamingResponseID(viewerTimeline) : null,
@@ -489,34 +625,47 @@ export default function ChatPanel({
   )
 
   async function handleSendWithAttachments(content: string, attachments?: ChatAttachment[]) {
-    const opts = sendOpts()
-    const hadGoal = persist
-    if (!attachments?.length) {
-      onSend(content, opts)
-      if (hadGoal) resetGoal()
-      return
-    }
+    const sessionID = await ensureSession()
+    if (!sessionID) return false
+    const opts: ChatSendOptions = sendOpts(content) || {}
+    setAttachmentError('')
     const contextParts: string[] = []
-    for (const a of attachments) {
-      if (a.mode === 'context') {
-        const text = await a.file.text()
-        contextParts.push(`<file name="${a.file.name}">\n${text}\n</file>`)
-      } else if (a.mode === 'upload' && activeSessionID) {
-        try {
-          await uploadChatFile(activeSessionID, a.file)
-        } catch { /* upload error is surfaced by the Connect call */ }
+    try {
+      for (const a of attachments || []) {
+        if (a.file.type.startsWith('image/')) {
+          if (a.file.size > 20 * 1024 * 1024) throw new Error('Image exceeds 20 MiB limit')
+          opts.images ??= []
+          opts.images.push({ data: new Uint8Array(await a.file.arrayBuffer()), mediaType: a.file.type, filename: a.file.name })
+        } else if (a.mode === 'context') {
+          const text = await a.file.text()
+          contextParts.push(`<file name="${a.file.name}">\n${text}\n</file>`)
+        } else if (a.mode === 'upload') {
+          const uploaded = await uploadChatFile(sessionID, a.file)
+          contextParts.push(`Uploaded file: ${uploaded.path}`)
+        }
       }
+    } catch (err) {
+      if (!activeSessionRef.current || sessionID === activeSessionRef.current) setAttachmentError(err instanceof Error ? err.message : 'Failed to read attachment')
+      return false
     }
+    if (activeSessionRef.current && sessionID !== activeSessionRef.current) return false
     const fullContent = contextParts.length > 0
       ? `${FILE_CONTEXT_PREAMBLE}\n${contextParts.join('\n')}\n\n${content}`
       : content
-    if (fullContent.trim()) onSend(fullContent, opts)
-    if (hadGoal) resetGoal()
+    const accepted = await onSend(fullContent.trim(), { ...opts, sessionID })
+    if (accepted && persist) resetGoal()
+    return accepted
   }
 
   const renderViewerItem = useCallback(
-    (item: ViewerTimelineItem) => timelineContent(item, scanResults, activeThinkingResponseID),
-    [activeThinkingResponseID, scanResults],
+    (item: ViewerTimelineItem) => item.kind === 'extension' && item.extensionType === 'guardrail'
+      ? <div className="flex w-full gap-3" data-guardrail-timeline-entry>
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground" aria-hidden="true"><Shield className="h-3.5 w-3.5" /></div>
+          <div className="min-w-0 flex-1"><GuardrailReviewCard review={item.data.review as Review} unavailable={item.data.unavailable === true} intercepted={item.data.intercepted === true} outcome={item.data.outcome as string | undefined} actionable={item.data.actionable === true}
+            reviewedAt={item.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} /></div>
+        </div>
+      : timelineContent(item, activeThinkingResponseID, onResolveGuardrail),
+    [activeThinkingResponseID, onResolveGuardrail],
   )
   const renderViewerMark = useCallback(
     (item: ViewerTimelineItem) => <TimelineMark item={item} />,
@@ -564,84 +713,42 @@ export default function ChatPanel({
     [ioaRailItems, onOpenIOA],
   )
 
-  const emptyState = !hasActiveSession ? (
+  const emptyState = !isThinking ? (
     <div className={cn(workspaceClass, 'flex min-h-full flex-col justify-center py-4')}>
       <div className={inputFormClass}>
-        <InstrumentIdle
-          eyebrow={t('consoleReady')}
-          title={t('startConversation')}
-        >
-          {agents.length > 0 && (
-            <div className="flex flex-wrap justify-center gap-2">
-              {agents.map((agent) => (
-                // Chat + Terminal read as one segmented control: a shared bordered
-                // surface with a hairline divider, so the pair no longer looks like
-                // a solid chip next to a stray bare link.
-                <div
-                  key={agent.nodeID}
-                  className="inline-flex items-stretch divide-x divide-border overflow-hidden rounded-md border border-border bg-card shadow-soft"
-                >
-                  {onCreateSession && (
-                    <Button size="sm" variant="ghost" onClick={() => onCreateSession(agent.nodeID)} className="gap-1.5 rounded-none shadow-none">
-                      <MessageSquare className="h-3.5 w-3.5 text-primary" />
-                      {agent.name || t('chat')}
-                    </Button>
-                  )}
-                  {onOpenTerminal && (
-                    <Button size="sm" variant="ghost" onClick={() => onOpenTerminal(agent.nodeID)} className="gap-1.5 rounded-none text-muted-foreground shadow-none hover:text-foreground">
-                      <Terminal className="h-3.5 w-3.5" />
-                      {t('terminal')}
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </InstrumentIdle>
-      </div>
-    </div>
-  ) : !isThinking ? (
-    // Desktop centers the "Ready" instrument in the empty thread; mobile keeps the
-    // greeting top-anchored (it's a full-height card grid, not a centered glyph).
-    <div className={cn(workspaceClass, 'flex min-h-full flex-col justify-start py-4 md:justify-center')}>
-      <div className={inputFormClass}>
-        <div className="hidden md:block">
-          <EmptyState
-            eyebrow={t('readyEyebrow')}
-            title={t('ready')}
-            subtitle={
-              <>{t('readyHintBefore')}<code className="rounded bg-muted px-1 py-0.5 text-[10px] font-mono">/scan &lt;target&gt;</code>{t('readyHintAfter')}</>
-            }
-          />
-        </div>
-        <div className="md:hidden">
-          <MobileChatGreeting onSeed={seedComposer} />
-        </div>
+        <ChatGreeting />
+        {!hasActiveSession && agents.length === 0 && (
+          <p className="px-1 py-3 text-sm text-muted-foreground">{t('connectNodeHint')}</p>
+        )}
       </div>
     </div>
   ) : null
 
   return (
+    <ToolResultsProvider sessionID={activeSessionID}>
     <ViewerChatPanel
       timeline={viewerTimeline as unknown as CyberTimelineItem[]}
       className="min-w-0 bg-transparent"
     >
-      {error && (
+      {(error || attachmentError) && (
         <ViewerChatPanel.ErrorBar>
           <div
             role="alert"
             className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive animate-in fade-in slide-in-from-top-1 duration-200"
           >
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-            <span className="min-w-0 flex-1 break-words">{error}</span>
-            <button type="button" aria-label={t('dismiss')} onClick={onClearError} className="rounded p-0.5 hover:bg-destructive/10">
+            <span className="min-w-0 flex-1 break-words">{error || attachmentError}</span>
+            <button type="button" aria-label={t('dismiss')} onClick={() => { setAttachmentError(''); onClearError() }} className="rounded p-0.5 hover:bg-destructive/10">
               <X className="h-4 w-4" />
             </button>
           </div>
         </ViewerChatPanel.ErrorBar>
       )}
-      <div className="sr-only" role="status" aria-live="polite">{liveStatus}</div>
+      <div className="sr-only" role="status" aria-live="polite">
+        {livePhase ? t(livePhase === 'thinking' ? 'a11yThinking' : 'a11yTurnDone') : ''}
+      </div>
       <ViewerChatPanel.Timeline
+        data-testid="conversation-timeline"
         className="overscroll-contain !px-0 !py-0"
         contentClassName={cn(workspaceClass, 'py-4')}
         railLayoutClassName={hasIOARail
@@ -653,10 +760,11 @@ export default function ChatPanel({
         renderSideNote={renderViewerSideNote}
         stickyScroll
         memoItems
+        scrollBehavior="instant"
         scrollResetKey={activeSessionID}
       />
 
-      {hasActiveSession && (
+      {(
         <div className="bg-background/95 pb-safe backdrop-blur-sm">
             {agentOffline && (
               <div className={cn(workspaceClass, 'pt-2')}>
@@ -672,41 +780,10 @@ export default function ChatPanel({
               </div>
             )}
             <div className={workspaceClass}>
-              <div className={inputFormClass}>
+              <div className={inputFormClass} ref={composerRootRef} data-session-id={activeSessionID || ''}>
                 <ViewerChatPanel.Input
+                  key={activeSessionID || 'new-session'}
                   className="!border-t-0 !bg-transparent !backdrop-blur-none"
-                  topSlot={persist ? (
-                    <div className="bg-primary/[0.04] px-3.5 py-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-primary">
-                          <Target className="h-3.5 w-3.5" />
-                          {t('persistMode')}
-                        </span>
-                        <label className="inline-flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-                          {t('evalRoundsLabel')}
-                          <input
-                            type="number"
-                            min={1}
-                            max={10}
-                            value={evalMaxRounds}
-                            onChange={(e) => setEvalMaxRounds(Math.min(10, Math.max(1, parseInt(e.target.value, 10) || 1)))}
-                            className="w-12 rounded-md border border-border/70 bg-card/60 px-2 py-0.5 text-xs text-foreground focus:border-ai/50 focus:outline-none focus:ring-1 focus:ring-ai/20"
-                          />
-                        </label>
-                      </div>
-                      <textarea
-                        ref={evalRef}
-                        rows={2}
-                        value={evalCriteria}
-                        onChange={(e) => setEvalCriteria(e.target.value)}
-                        placeholder={t('evalCriteriaPlaceholder')}
-                        className="block max-h-36 min-h-[3.25rem] w-full resize-none overflow-y-auto rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-xs leading-relaxed text-foreground placeholder:text-muted-foreground/60 focus:border-ai/50 focus:outline-none focus:ring-1 focus:ring-ai/20"
-                      />
-                      <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground/70">
-                        {t('evalModeHint', { rounds: evalMaxRounds })}
-                      </p>
-                    </div>
-                  ) : undefined}
                   leading={
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -715,11 +792,15 @@ export default function ChatPanel({
                         <Button
                           variant="ghost"
                           active={persist}
-                          onClick={() => setPersist((v) => !v)}
-                          className={cn('h-9 shrink-0 gap-1.5 rounded-full px-3 text-xs md:h-10 md:px-3.5', !persist && 'text-muted-foreground')}
+                          aria-label={t('persistMode')}
+                          aria-pressed={persist}
+                          onClick={() => {
+                            setPersist((v) => !v)
+                            composerRootRef.current?.querySelector('textarea')?.focus()
+                          }}
+                          className={cn('h-9 w-9 shrink-0 rounded-full p-0 md:h-10 md:w-10', !persist && 'text-muted-foreground')}
                         >
                           <Target className="h-3.5 w-3.5" />
-                          {t('persistMode')}
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>{t('persistHint')}</TooltipContent>
@@ -734,22 +815,31 @@ export default function ChatPanel({
                   composerHelp={composerHelp}
                   mentionables={mentionables}
                   renderMentionPopup={renderMentionPopup}
-                  injectText={composerSeed}
+                  injectText={injectText}
                   placeholder={t('typeMessageWithCommands')}
-                  enableAttachments={!!activeSessionID}
+                  labels={{
+                    dropFiles: t('dropFiles'),
+                    attachFiles: t('attachFiles'),
+                    sendMessage: t('sendMessage'),
+                    pauseResponse: t('pauseResponse'),
+                    injectAsContext: t('injectAsContext'),
+                    uploadToRemote: t('uploadToRemote'),
+                  }}
+                  enableAttachments
                 />
               </div>
             </div>
         </div>
       )}
     </ViewerChatPanel>
+    </ToolResultsProvider>
   )
 }
 
 function timelineContent(
   item: ViewerTimelineItem,
-  scanResults: Map<string, SCONode[]>,
   activeThinkingResponseID: string | null,
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>,
 ): ReactNode {
   switch (item.kind) {
     case 'message': {
@@ -770,6 +860,8 @@ function timelineContent(
         >
           {item.role === 'system' && systemCode(item.metadata) ? (
             <SystemMessageContent metadata={item.metadata!} fallback={item.content} />
+          ) : item.content && isPreformattedCommand(item) ? (
+            <CodeBlock code={item.content} copyable />
           ) : item.content ? (
             <MessageBody content={item.content} compact={item.role !== 'system'} />
           ) : null}
@@ -778,17 +870,20 @@ function timelineContent(
     }
 
     case 'assistant_response':
-      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} />
+      return <AssistantResponseEntry response={item} activeThinking={item.id === activeThinkingResponseID} onResolveGuardrail={onResolveGuardrail} />
 
     case 'tool_call':
       return (
-        <ScannerToolCall
+        <ToolCallResult
           id={item.toolCall.id}
           toolName={item.toolCall.toolName}
           toolArgs={item.toolCall.toolArgs}
           result={item.toolCall.result}
           pending={item.toolCall.pending}
           error={item.toolCall.error}
+          toolResult={item.toolCall.toolResult}
+          resultEventId={item.toolCall.resultEventId}
+          observations={item.toolCall.observations}
         />
       )
 
@@ -796,12 +891,24 @@ function timelineContent(
       return (
         <SubagentRunCard run={item}>
           {item.items.map((child) => (
-            <div key={child.id}>{timelineContent(child, scanResults, activeThinkingResponseID)}</div>
+            <div key={child.id}>{timelineContent(child, activeThinkingResponseID, onResolveGuardrail)}</div>
           ))}
         </SubagentRunCard>
       )
 
     case 'extension': {
+      if (item.extensionType === 'workflow') return <Workflow workflow={item.data.workflow as WorkflowTurn}
+        renderItem={node => node.kind === 'assistant_response'
+          ? <div data-testid="assistant-response">
+              {node.thinking?.trim() && <MarkdownContent content={trimDisplayContent(node.thinking)} compact muted />}
+              {node.response?.content.trim() && <div data-testid="assistant-response-content"><MarkdownContent content={trimDisplayContent(node.response.content)} compact /></div>}
+              {typeof node.response?.metadata?.recap === 'string' && <div data-testid="assistant-response-footer" className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground"><span data-testid="task-recap">{node.response.metadata.recap}</span></div>}
+            </div>
+          : node.kind === 'extension' && node.extensionType === 'guardrail'
+          ? <GuardrailReviewCard review={node.data.review as Review} unavailable={node.data.unavailable === true} intercepted={node.data.intercepted === true}
+              outcome={node.data.outcome as string | undefined} actionable={node.data.actionable === true} reviewedAt={node.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} />
+          : timelineContent(node, activeThinkingResponseID, onResolveGuardrail)} />
+      if (item.event && observation(item.event)) return <ObservedEvent event={item.event} />
       if (item.extensionType === 'eval') {
         return (
           <EvalNote
@@ -831,7 +938,7 @@ function timelineContent(
       const config = resolveTimelineRenderer(item.extensionType)
       if (!config) return null
       const Renderer = config.renderer
-      return <Renderer item={item} context={{ scanResults }} />
+      return <Renderer item={item} context={{}} />
     }
 
     case 'divider':
@@ -854,6 +961,14 @@ function systemCode(metadata?: Record<string, unknown>): string {
   return typeof metadata?.code === 'string' ? metadata.code : ''
 }
 
+// Command output is a terminal dump, so markdown would collapse its line
+// structure into one paragraph. CommandDetail.presentation marks the dumps.
+function isPreformattedCommand(item: ViewerTimelineItem): boolean {
+  if (item.kind !== 'message') return false
+  const presentation = item.metadata?.presentation
+  return typeof presentation === 'string' && presentation === 'preformatted'
+}
+
 function systemParams(metadata: Record<string, unknown>): Record<string, unknown> {
   const p = metadata.params
   if (p && typeof p === 'object') return p as Record<string, unknown>
@@ -866,13 +981,47 @@ function systemParams(metadata: Record<string, unknown>): Record<string, unknown
   return params && typeof params === 'object' ? params as Record<string, unknown> : {}
 }
 
+// A command's description arrives in the server's own language, so the catalog
+// is the only place it can be translated. Keyed by the command name, the way
+// the composer menu already resolves its own entries; dynamic agent-reported
+// commands (skills) have no key and keep the server's text.
+function commandDescription(t: TFunction<'chat'>, name: string, description: string): string {
+  const base = name.startsWith('/') ? name.slice(1) : ''
+  const key = base ? `cmd${base.charAt(0).toUpperCase()}${base.slice(1)}` : ''
+  const localized = key ? t(key, { defaultValue: '' }) : ''
+  return localized || description
+}
+
 function SystemMessageContent({ metadata, fallback }: { metadata: Record<string, unknown>; fallback: string }) {
   const { t } = useTranslation('chat')
   const code = systemCode(metadata)
   const params = systemParams(metadata)
   if (code === 'agents_list') return <AgentsListContent agentList={metadata.agentList as AgentListMetadata | undefined} fallback={fallback} />
+  if (code === 'help') return <HelpContent commands={metadata.commands} fallback={fallback} />
   const text = t(`sys.${code}`, { ...params, defaultValue: fallback })
   return <MarkdownContent content={trimDisplayContent(text)} />
+}
+
+// The server sends the session menu alongside a `help` code and leaves the body
+// untranslated, so the catalog here is what makes /help read in the user's
+// language. Fall back to the server's body when the catalog is absent (an older
+// server) or empty.
+function HelpContent({ commands, fallback }: { commands: unknown; fallback: string }) {
+  const { t } = useTranslation('chat')
+  if (!Array.isArray(commands) || commands.length === 0) {
+    return <MarkdownContent content={trimDisplayContent(fallback)} />
+  }
+  const lines = [`**${t('sys.help_commands')}**`]
+  for (const entry of commands) {
+    if (!entry || typeof entry !== 'object') continue
+    const spec = entry as CommandSpec
+    if (!spec.name) continue
+    const usage = spec.usage || spec.name
+    const description = commandDescription(t, spec.name, spec.description ?? '')
+    lines.push(description ? `- \`${usage}\` — ${description}` : `- \`${usage}\``)
+  }
+  lines.push('', t('sys.help_hint'))
+  return <MarkdownContent content={trimDisplayContent(lines.join('\n'))} />
 }
 
 function AgentsListContent({ agentList, fallback }: { agentList?: AgentListMetadata; fallback: string }) {
@@ -906,6 +1055,11 @@ function EvalNote({ pass, round, reason }: { pass: boolean; round?: number; reas
 }
 
 function numOrUndefined(value: unknown): number | undefined {
+  // Protobuf uint64 counters decode as bigint (compaction and token budgets).
+  if (typeof value === 'bigint') {
+    const number = Number(value)
+    return Number.isSafeInteger(number) ? number : undefined
+  }
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
@@ -936,12 +1090,19 @@ function TokenBudgetNote({ context, budget }: { context?: number; budget?: numbe
 function AssistantResponseEntry({
   response,
   activeThinking,
+  embedded = false,
+  onResolveGuardrail,
 }: {
   response: Extract<ViewerTimelineItem, { kind: 'assistant_response' }>
   activeThinking: boolean
+  embedded?: boolean
+  onResolveGuardrail: (review: Review, approve: boolean) => Promise<void>
 }) {
   const { t } = useTranslation('chat')
   const message = response.response
+  const { t: ta } = useTranslation('app')
+  const reviews = response.steps?.filter(step => step.kind === 'extension' && step.extensionType === 'guardrail') ?? []
+  const pendingReviews = reviews.filter(step => step.kind === 'extension' && (step.data.awaiting === true || step.data.actionable === true)).length
   const hasThinking = !!response.thinking?.trim()
   const hasResponse = !!message?.content.trim()
   const [thinkingExpanded, setThinkingExpanded] = useState(activeThinking && hasThinking)
@@ -965,16 +1126,19 @@ function AssistantResponseEntry({
 
   return (
     <AssistantResponse
+      embedded={embedded}
       actorName={response.actorName}
       timestamp={new Date(response.timestamp).toISOString()}
       streaming={response.streaming}
-      thinking={hasThinking ? <MarkdownContent content={trimDisplayContent(response.thinking || '')} compact muted /> : undefined}
+      thinking={hasThinking ? (
+        <MarkdownContent content={trimDisplayContent(response.thinking || '')} compact muted />
+      ) : undefined}
       thinkingExpanded={thinkingExpanded}
       onThinkingToggle={setThinkingExpanded}
       tools={toolCount > 0 ? (
         <div className="space-y-2">
           {response.tools.map((tool) => (
-            <ScannerToolCall
+            <ToolCallResult
               key={tool.id}
               id={tool.id}
               toolName={tool.toolName}
@@ -982,16 +1146,53 @@ function AssistantResponseEntry({
               result={tool.result}
               pending={tool.pending}
               error={tool.error}
+              toolResult={tool.toolResult}
+              resultEventId={tool.resultEventId}
+              observations={tool.observations}
             />
           ))}
         </div>
       ) : undefined}
       response={hasResponse ? <MarkdownContent content={trimDisplayContent(message?.content || '')} compact /> : undefined}
+      footer={!embedded && typeof message?.metadata?.recap === 'string'
+        ? <span data-testid="task-recap">{message.metadata.recap}</span> : undefined}
       labels={{ tools: toolsLabel, thinking: t('thinkingLabel'), response: t('responseLabel') }}
       headerClassName="xl:hidden"
       timeLabel={formatRailTime(response)}
       showResponseLabel={false}
-    />
+    >
+      {response.steps && <div data-guardrail-turn={response.id}>
+        <div className="flex justify-end border-b border-border px-3 py-2">
+          <button type="button" data-guardrail-turn-summary
+            aria-label={ta(pendingReviews ? 'guardrailGoToPending' : 'guardrailGoToRecord')}
+            onClick={event => {
+              const turn = event.currentTarget.closest('[data-guardrail-turn]')
+              const target = turn?.querySelector<HTMLElement>(pendingReviews ? '[data-guardrail-state="pending"]' : '[data-guardrail-review]')
+              target?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              target?.focus({ preventScroll: true })
+            }} data-guardrail-count={reviews.length} data-guardrail-pending-count={pendingReviews}
+            aria-live="polite" aria-atomic="true"
+            className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px]', pendingReviews ? 'bg-warning/10 text-warning' : 'bg-muted/60 text-muted-foreground')}>
+            <Shield className="h-3 w-3 shrink-0" aria-hidden="true" />
+            {ta('guardrailTurnCount', { count: reviews.length })}
+            {pendingReviews > 0 && <span>· {ta('guardrailTurnPending', { count: pendingReviews })}</span>}
+          </button>
+        </div>
+        <div data-guardrail-turn-steps className="divide-y divide-border">
+        {response.steps.map(step => step.kind === 'assistant_response'
+          ? <AssistantResponseEntry key={step.id} response={step} embedded
+              activeThinking={activeThinking && step.id === latestStreamingResponseID(response.steps!)} onResolveGuardrail={onResolveGuardrail} />
+          : step.kind === 'extension' && step.extensionType === 'guardrail'
+            ? <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                <GuardrailReviewCard review={step.data.review as Review} unavailable={step.data.unavailable === true} intercepted={step.data.intercepted === true} outcome={step.data.outcome as string | undefined} actionable={step.data.actionable === true}
+                  reviewedAt={step.data.reviewedAt as number | undefined} onResolve={onResolveGuardrail} embedded />
+              </div>
+            : <div key={step.id} className="px-3 py-2" data-guardrail-turn-step>
+                {timelineContent(step, null, onResolveGuardrail)}
+              </div>)}
+        </div>
+      </div>}
+    </AssistantResponse>
   )
 }
 
@@ -1018,7 +1219,7 @@ function TimelineMark({ item }: { item: ViewerTimelineItem }) {
   if (!descriptor) return <div className="hidden w-full xl:block" />
 
   return (
-    <div className="hidden w-full pr-2 pt-1 xl:block">
+    <div className="hidden w-full pr-2 pt-1 xl:block" data-guardrail-timeline-mark={item.kind === 'extension' && item.extensionType === 'guardrail' ? item.id : undefined}>
       <div className="relative min-h-8 border-r border-border/70 pr-3 text-right">
         <span
           className={cn(
@@ -1197,43 +1398,85 @@ function mergeIOAPayload(primary: IOAMessagePayload, fallback: IOAMessagePayload
   }
 }
 
-function EmptyState({ eyebrow, title, subtitle }: { eyebrow: string; title: string; subtitle: ReactNode }) {
-  return <InstrumentIdle eyebrow={eyebrow} title={title} subtitle={subtitle} />
-}
+const mockVulnerabilityKeys = [
+  'idleFindingCVELog4j',
+  'idleFindingCVEPanOS',
+  'idleFindingOWASPAccess',
+  'idleFindingOWASPInjection',
+  'idleFindingIDOR',
+  'idleFindingSQLi',
+  'idleFindingXSS',
+  'idleFindingSSRF',
+] as const
 
-// Phone-only greeting for a fresh, empty session: an AIScan hello + a 2×2 grid of
-// capability cards, each seeding the composer with a starter prompt (Doubao's
-// home pattern). Kept in AIScan's own skin — blue accent, warm reserved for
-// severity, no mascot. The scan card seeds the real "/scan " command; the others
-// seed editable natural-language templates the operator completes.
-function MobileChatGreeting({ onSeed }: { onSeed: (text: string) => void }) {
+function ChatGreeting() {
   const { t } = useTranslation('chat')
-  const cards: { key: string; Icon: typeof Radar; seed?: string; seedKey?: string; titleKey: string; subKey: string }[] = [
-    { key: 'scan', Icon: Radar, seed: '/scan ', titleKey: 'cardScanTitle', subKey: 'cardScanSub' },
-    { key: 'verify', Icon: RefreshCw, seedKey: 'cardVerifySeed', titleKey: 'cardVerifyTitle', subKey: 'cardVerifySub' },
-    { key: 'assets', Icon: Layers, seedKey: 'cardAssetsSeed', titleKey: 'cardAssetsTitle', subKey: 'cardAssetsSub' },
-    { key: 'swarm', Icon: Network, seedKey: 'cardSwarmSeed', titleKey: 'cardSwarmTitle', subKey: 'cardSwarmSub' },
-  ]
+  const [findingIndex, setFindingIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    let revealTimer: ReturnType<typeof setTimeout>
+    let hideTimer: ReturnType<typeof setTimeout>
+    let lastIndex = -1
+
+    const reveal = () => {
+      revealTimer = setTimeout(() => {
+        lastIndex = lastIndex < 0
+          ? Math.floor(Math.random() * mockVulnerabilityKeys.length)
+          : (lastIndex + 1 + Math.floor(Math.random() * (mockVulnerabilityKeys.length - 1))) % mockVulnerabilityKeys.length
+        setFindingIndex(lastIndex)
+        hideTimer = setTimeout(() => {
+          setFindingIndex(null)
+          reveal()
+        }, 1800)
+      }, 500 + Math.random() * 1300)
+    }
+
+    const updateMotion = () => {
+      clearTimeout(revealTimer)
+      clearTimeout(hideTimer)
+      setFindingIndex(reducedMotion.matches ? 0 : null)
+      if (!reducedMotion.matches) reveal()
+    }
+
+    updateMotion()
+    reducedMotion.addEventListener('change', updateMotion)
+    return () => {
+      reducedMotion.removeEventListener('change', updateMotion)
+      clearTimeout(revealTimer)
+      clearTimeout(hideTimer)
+    }
+  }, [])
+
   return (
-    <div className="px-1 pb-2 pt-8">
-      <h2 className="text-balance text-[1.35rem] font-bold leading-tight tracking-tight text-foreground">{t('mobileGreetingTitle')}</h2>
-      <p className="mb-5 mt-1 text-sm text-muted-foreground">{t('mobileGreetingSubtitle')}</p>
-      <div className="grid grid-cols-2 gap-2.5">
-        {cards.map(({ key, Icon, seed, seedKey, titleKey, subKey }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => onSeed(seed ?? t(seedKey!))}
-            className="flex flex-col gap-2 rounded-[0.7rem] border border-border/75 bg-card p-3.5 text-left shadow-soft transition-transform active:scale-[0.98]"
-          >
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-primary">
-              <Icon className="h-[18px] w-[18px]" />
-            </span>
-            <span className="text-sm font-semibold text-foreground">{t(titleKey)}</span>
-            <span className="text-[11.5px] leading-snug text-muted-foreground">{t(subKey)}</span>
-          </button>
-        ))}
+    <div className="cyber-intro flex flex-col items-center px-1 py-5 text-center">
+      <div className="cyber-intro-visual" aria-hidden="true">
+        <span className="cyber-intro-axis cyber-intro-axis-horizontal" />
+        <span className="cyber-intro-axis cyber-intro-axis-vertical" />
+        <span className="cyber-intro-ring cyber-intro-ring-outer" />
+        <span className="cyber-intro-ring cyber-intro-ring-middle" />
+        <span className="cyber-intro-ring cyber-intro-ring-inner" />
+        <span className="cyber-intro-sweep" />
+        <span className="cyber-intro-detection cyber-intro-detection-asset">
+          <Box size={12} />{t('idleAsset')}
+        </span>
+        <span className="cyber-intro-detection cyber-intro-detection-port">
+          <Network size={12} />{t('idlePort')}
+        </span>
+        <span className="cyber-intro-detection cyber-intro-detection-fingerprint">
+          <Fingerprint size={12} />{t('idleFingerprint')}
+        </span>
+        {findingIndex !== null && (
+          <span className="cyber-intro-detection cyber-intro-detection-finding">
+            <Bug size={12} />{t(mockVulnerabilityKeys[findingIndex])}
+          </span>
+        )}
+        <span className="cyber-intro-core">
+          <BrandLogo size={60} animated={false} />
+        </span>
       </div>
+      <h2 className="mt-5 font-display text-2xl font-semibold text-foreground">Cyber</h2>
+      <p className="mt-1.5 text-sm text-muted-foreground">{t('idlePrompt')}</p>
     </div>
   )
 }
@@ -1313,6 +1556,18 @@ function describeTimelineItem(item: ViewerTimelineItem, t: (key: string) => stri
       }
 
     case 'extension': {
+      if (item.extensionType === 'guardrail') {
+        const state = (item.data.review as Review).state
+        return {
+          label: i18n.t('app:guardrailTimelineLabel'),
+          time,
+          icon: <Shield className="h-3 w-3 text-muted-foreground" />,
+          dotClass: item.data.actionable === true ? 'border-warning bg-warning'
+            : state === ReviewState.APPROVED ? 'border-success bg-success'
+              : state === ReviewState.REJECTED ? 'border-destructive bg-destructive'
+                : 'border-border bg-muted-foreground/60',
+        }
+      }
       if (item.extensionType === 'eval') {
         return {
           label: t('evalLabel'),

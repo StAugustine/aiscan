@@ -1,12 +1,14 @@
 package scan
 
 import (
+	"encoding/json"
 	"fmt"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"strconv"
 	"strings"
 	"sync/atomic"
 
-	"github.com/chainreactors/aiscan/core/output"
 	sdktypes "github.com/chainreactors/sdk/pkg/types"
 	"github.com/chainreactors/utils/parsers"
 )
@@ -25,26 +27,64 @@ var statsEventSeq uint64
 type event struct {
 	Kind     eventKind
 	Source   string
-	Raw      string
 	Target   target
-	Loot     *output.Loot
-	Artifact *output.ArtifactResult
-	Error    errorEvent
+	Loot     *parsers.Loot
+	Artifact *artifactResult
+	Error    string
 	Stats    sdktypes.Stats
+	statsSeq uint64
 }
 
-func targetEvent(source, raw string, target target) event {
-	if raw == "" && target != nil {
-		raw = target.RawInput()
+// artifactResult carries scanner-native data to the accepted-event boundary.
+// It stays internal because the canonical output is built by toolargs.Base.
+type artifactResult struct {
+	ResultID string
+	Tool     string
+	Kind     string
+	Target   string
+	Data     json.RawMessage
+}
+
+func targetEvent(source string, target target) event {
+	e := event{Kind: eventTarget, Source: source, Target: target}
+	var tool, kind, address string
+	var data any
+	switch target := target.(type) {
+	case serviceTarget:
+		if target.Result != nil {
+			tool, kind, address, data = "gogo", toolpb.ArtifactKindService, target.Result.GetTarget(), target.Result
+		}
+	case webProbeTarget:
+		if reportableSprayResultForCapability(target.Result, source) {
+			tool, kind, address, data = "spray", toolpb.ArtifactKindWeb, target.Result.UrlString, target.Result
+		}
 	}
-	return event{Kind: eventTarget, Source: source, Raw: raw, Target: target}
+	if data != nil {
+		var err error
+		e.Artifact, err = newArtifactResult(tool, kind, address, data)
+		if err != nil {
+			return errorEventOf(source, fmt.Sprintf("encode %s artifact: %v", tool, err))
+		}
+	}
+	return e
 }
 
-func lootEvent(source string, loot output.Loot) event {
+func newArtifactResult(tool, kind, target string, data any) (*artifactResult, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	return &artifactResult{
+		ResultID: toolargs.ArtifactResultIDFromJSON(tool, kind, target, raw),
+		Tool:     tool, Kind: kind, Target: target, Data: raw,
+	}, nil
+}
+
+func lootEvent(source string, loot parsers.Loot) event {
 	return event{Kind: eventLoot, Source: source, Loot: &loot}
 }
 
-func bindLoot(loot output.Loot, resultID, tool string) output.Loot {
+func bindLoot(loot parsers.Loot, resultID, tool string) parsers.Loot {
 	if loot.Data == nil {
 		loot.Data = make(map[string]any)
 	}
@@ -53,17 +93,16 @@ func bindLoot(loot output.Loot, resultID, tool string) output.Loot {
 	return loot
 }
 
-func artifactLootEvent(source string, loot output.Loot, artifact output.ArtifactResult) event {
+func artifactLootEvent(source string, loot parsers.Loot, artifact artifactResult) event {
 	return event{Kind: eventLoot, Source: source, Loot: &loot, Artifact: &artifact}
 }
 
 func errorEventOf(source, message string) event {
-	return event{Kind: eventError, Source: source, Error: errorEvent{Message: message}}
+	return event{Kind: eventError, Source: source, Error: message}
 }
 
 func statsEvent(source string, stats sdktypes.Stats) event {
-	seq := atomic.AddUint64(&statsEventSeq, 1)
-	return event{Kind: eventStats, Source: source, Raw: strconv.FormatUint(seq, 10), Stats: stats}
+	return event{Kind: eventStats, Source: source, Stats: stats, statsSeq: atomic.AddUint64(&statsEventSeq, 1)}
 }
 
 func (e event) Key() string {
@@ -72,6 +111,9 @@ func (e event) Key() string {
 		if e.Target == nil {
 			return ""
 		}
+		if e.Target.Kind() == targetWebProbe {
+			return fmt.Sprintf("%s|%s|%s", e.Target.Kind(), e.Source, e.Target.Key())
+		}
 		return fmt.Sprintf("%s|%s", e.Target.Kind(), e.Target.Key())
 	case eventLoot:
 		if e.Loot == nil {
@@ -79,12 +121,12 @@ func (e event) Key() string {
 		}
 		return e.Loot.Key()
 	case eventError:
-		return string(eventError) + "|" + e.Error.Message
+		return string(eventError) + "|" + e.Error
 	case eventStats:
-		if e.Raw == "" {
+		if e.statsSeq == 0 {
 			return ""
 		}
-		return string(eventStats) + "|" + e.Raw
+		return string(eventStats) + "|" + strconv.FormatUint(e.statsSeq, 10)
 	default:
 		return ""
 	}
@@ -108,56 +150,16 @@ func (e event) label() string {
 	return string(e.Kind)
 }
 
-type errorEvent struct {
-	Message string
-}
-
 func emitError(emit func(event), source, format string, args ...any) {
 	emit(errorEventOf(source, fmt.Sprintf(format, args...)))
 }
 
-type priority string
-
 const (
-	priorityLow      priority = "low"
-	priorityMedium   priority = "medium"
-	priorityHigh     priority = "high"
-	priorityCritical priority = "critical"
+	priorityLow      = "low"
+	priorityMedium   = "medium"
+	priorityHigh     = "high"
+	priorityCritical = "critical"
 )
-
-func parsePriority(value string) (priority, error) {
-	switch priority(strings.ToLower(strings.TrimSpace(value))) {
-	case "", priorityHigh:
-		return priorityHigh, nil
-	case priorityLow:
-		return priorityLow, nil
-	case priorityMedium:
-		return priorityMedium, nil
-	case priorityCritical:
-		return priorityCritical, nil
-	default:
-		return "", fmt.Errorf("unknown priority %q, expected low, medium, high, or critical", value)
-	}
-}
-
-func (p priority) atLeast(min priority) bool {
-	return p.rank() >= min.rank()
-}
-
-func (p priority) rank() int {
-	switch p {
-	case priorityLow:
-		return 1
-	case priorityMedium:
-		return 2
-	case priorityHigh:
-		return 3
-	case priorityCritical:
-		return 4
-	default:
-		return 0
-	}
-}
 
 func reportableSprayResult(result *parsers.SprayResult) bool {
 	if result == nil || !result.IsValid || result.IsFuzzy || strings.TrimSpace(result.ErrString) != "" {
@@ -180,13 +182,13 @@ func reportableSprayResultForCapability(result *parsers.SprayResult, capability 
 
 // --- Loot constructors ---
 
-func fingerprintLoot(target string, fingers []string, focus bool) output.Loot {
-	pri := string(priorityLow)
+func fingerprintLoot(target string, fingers []string, focus bool) parsers.Loot {
+	pri := priorityLow
 	if focus {
-		pri = string(priorityHigh)
+		pri = priorityHigh
 	}
-	return output.Loot{
-		Kind:        output.LootFingerprint,
+	return parsers.Loot{
+		Kind:        parsers.LootFingerprint,
 		Target:      target,
 		Priority:    pri,
 		Description: strings.Join(fingers, ", "),
@@ -199,15 +201,15 @@ func fingerprintLoot(target string, fingers []string, focus bool) output.Loot {
 	}
 }
 
-func weakpassLoot(result *parsers.ZombieResult) output.Loot {
+func weakpassLoot(result *parsers.ZombieResult) parsers.Loot {
 	desc := result.Service
 	if result.Username != "" || result.Password != "" {
 		desc += " " + result.Username + "/" + result.Password
 	}
-	return output.Loot{
-		Kind:        output.LootWeakpass,
+	return parsers.Loot{
+		Kind:        parsers.LootWeakpass,
 		Target:      result.Address(),
-		Priority:    string(priorityHigh),
+		Priority:    priorityHigh,
 		Description: desc,
 		Tags:        []string{result.Service},
 		Data: map[string]any{
@@ -219,24 +221,22 @@ func weakpassLoot(result *parsers.ZombieResult) output.Loot {
 	}
 }
 
-func vulnLoot(result *sdktypes.TemplateResult) output.Loot {
-	pri := string(priorityHigh)
+func vulnLoot(result *sdktypes.TemplateResult) parsers.Loot {
+	pri := priorityHigh
 	switch result.Severity {
 	case "critical":
-		pri = string(priorityCritical)
-	case "high":
-		pri = string(priorityHigh)
+		pri = priorityCritical
 	case "medium":
-		pri = string(priorityMedium)
+		pri = priorityMedium
 	case "info":
-		pri = string(priorityLow)
+		pri = priorityLow
 	}
 	desc := result.TemplateID
 	if result.TemplateName != "" {
 		desc += " — " + result.TemplateName
 	}
-	return output.Loot{
-		Kind:        output.LootVuln,
+	return parsers.Loot{
+		Kind:        parsers.LootVuln,
 		Target:      result.Target,
 		Priority:    pri,
 		Description: desc,

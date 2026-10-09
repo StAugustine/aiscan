@@ -55,7 +55,8 @@ func (f *Files) List(ctx context.Context, directory string) ([]fs.DirEntry, erro
 	if directory == "" {
 		directory = "."
 	}
-	if !filepath.IsLocal(directory) {
+	directory, err = slashPath(directory)
+	if err != nil {
 		return nil, fmt.Errorf("ls requires a local path")
 	}
 	return readDirectory(ctx, root, directory, maxListEntries)
@@ -76,8 +77,14 @@ func (f *Files) Glob(ctx context.Context, pattern string, limit int) ([]string, 
 	if f.lifetime.Err() != nil {
 		cancel()
 	}
+	if pattern != "" {
+		pattern, err = slashPath(pattern)
+		if err != nil {
+			return nil, fmt.Errorf("glob requires a local path")
+		}
+	}
 	if strings.Contains(pattern, "**") {
-		return nil, fmt.Errorf("glob does not support **")
+		return nil, fmt.Errorf("glob does not support **; use a single-directory pattern (e.g. src/*.go) or bash with rg --files -g '*.go' for recursive discovery")
 	}
 	if _, err := path.Match(pattern, ""); err != nil {
 		return nil, err
@@ -86,6 +93,7 @@ func (f *Files) Glob(ctx context.Context, pattern string, limit int) ([]string, 
 		limit = 1000
 	}
 	var result []string
+	prefixes := globDirectoryPrefixes(pattern)
 	remaining := maxListEntries
 	var walk func(string, bool) error
 	walk = func(name string, directory bool) error {
@@ -100,6 +108,15 @@ func (f *Files) Glob(ctx context.Context, pattern string, limit int) ([]string, 
 		}
 		if !directory {
 			return nil
+		}
+		if name != "." && prefixes != nil {
+			depth := strings.Count(name, "/")
+			if depth >= len(prefixes) {
+				return nil
+			}
+			if matches, _ := path.Match(prefixes[depth], name); !matches {
+				return nil
+			}
 		}
 		entries, err := readDirectory(ctx, root, filepath.FromSlash(name), remaining)
 		if err != nil {
@@ -118,4 +135,33 @@ func (f *Files) Glob(ctx context.Context, pattern string, limit int) ([]string, 
 		err = nil
 	}
 	return result, err
+}
+
+// Only visit directories that can lead to a match. Keep path.Match's unusual
+// cross-separator character classes and escapes on the conservative walk path.
+func globDirectoryPrefixes(pattern string) []string {
+	if strings.Contains(pattern, `\`) {
+		return nil
+	}
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] != '[' {
+			continue
+		}
+		end := i + 1 + strings.IndexByte(pattern[i+1:], ']')
+		if end <= i {
+			return nil
+		}
+		class := pattern[i : end+1]
+		if cross, _ := path.Match(class, "/"); cross || strings.Contains(class, "/") {
+			return nil
+		}
+		i = end
+	}
+	prefixes := make([]string, 0, strings.Count(pattern, "/"))
+	for i := range len(pattern) {
+		if pattern[i] == '/' {
+			prefixes = append(prefixes, pattern[:i])
+		}
+	}
+	return prefixes
 }

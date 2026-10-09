@@ -6,14 +6,14 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
 	"github.com/chainreactors/proxyclient"
 	"github.com/chainreactors/proxyclient/extra/clash"
 	goflags "github.com/jessevdk/go-flags"
 )
 
-type CommandExecutor func(ctx context.Context, tokens []string, execution *commands.Execution) (any, error)
+type CommandExecutor func(ctx context.Context, tokens []string, execution *coretool.Execution) (any, error)
 
 type Command struct {
 	state       *State
@@ -55,7 +55,7 @@ Auto mode options:
   --strategy,-s adaptive      Load balance strategy (adaptive, url-test, round-robin, random)`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("proxy", &err)
 	args := execution.Args
 	if len(args) == 0 {
@@ -122,23 +122,45 @@ func parseFlags(f interface{}, args []string) ([]string, error) {
 // passthrough
 // ---------------------------------------------------------------------------
 
-func (c *Command) execPassthrough(ctx context.Context, proxyURL string, cmdArgs []string, execution *commands.Execution) (any, error) {
+func (c *Command) execPassthrough(ctx context.Context, proxyURL string, cmdArgs []string, execution *coretool.Execution) (any, error) {
 	if len(cmdArgs) == 0 {
 		return nil, fmt.Errorf("usage: proxy <proxy-url> <command> [args...]\nexample: proxy socks5://127.0.0.1:1080 gogo -i 10.0.0.1 -p top2")
 	}
 	if c.execCommand == nil {
 		return nil, fmt.Errorf("proxy passthrough not available (no command executor)")
 	}
-	// Route this one command through proxyURL by temporarily swapping the hub's
-	// upstream. Children keep pointing at the stable hub address; only the
-	// egress chain changes for the duration of the wrapped command.
-	restore, err := c.state.WithOverrideDial(proxyURL)
+	if c.hub == nil {
+		return nil, fmt.Errorf("proxy passthrough requires a running proxy hub")
+	}
+	parsed, err := url.Parse(proxyURL)
 	if err != nil {
 		return nil, err
 	}
-	defer restore()
-
-	return c.execCommand(ctx, cmdArgs, execution)
+	dial, err := proxyclient.NewClient(parsed)
+	if err != nil {
+		return nil, err
+	}
+	route, ca, release := c.hub.egress(ctx, dial)
+	background := false
+	defer func() {
+		if !background {
+			release()
+		}
+	}()
+	child := &coretool.Execution{
+		ID: execution.ID, Dir: execution.Dir,
+		Env:   append(append([]string(nil), execution.Env...), coretool.EgressEnvironment(route, ca)...),
+		Stdin: execution.Stdin, Stdout: execution.Stdout, Stderr: execution.Stderr,
+		Route: coretool.Egress{ProxyURL: route, CAPath: ca},
+		OnBackground: func(session *coretool.Execution) {
+			background = true
+			go func() {
+				_ = session.WaitProcessCompletion(context.Background())
+				release()
+			}()
+		},
+	}
+	return c.execCommand(ctx, cmdArgs, child)
 }
 
 // ---------------------------------------------------------------------------

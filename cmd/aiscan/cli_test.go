@@ -3,20 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
-	clientext "github.com/chainreactors/aiscan/pkg/exts/ioa/client"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/agent/provider"
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	apppkg "github.com/chainreactors/aiscan/pkg/app"
-	"github.com/chainreactors/aiscan/pkg/edition"
-	"github.com/chainreactors/aiscan/pkg/runner"
-	"github.com/chainreactors/aiscan/skills"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/core/telemetry"
+	ioaclient "github.com/chainreactors/cyber/exts/ioa/client"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	searchext "github.com/chainreactors/cyber/exts/search"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/profile"
 	goflags "github.com/jessevdk/go-flags"
 )
 
@@ -27,21 +26,6 @@ func containsAny(value string, candidates ...string) bool {
 		}
 	}
 	return false
-}
-
-type fakeConsoleProvider struct {
-	requests int
-}
-
-func (p *fakeConsoleProvider) Name() string { return "fake" }
-
-func (p *fakeConsoleProvider) ChatCompletion(_ context.Context, req *provider.ChatCompletionRequest) (*provider.ChatCompletionResponse, error) {
-	p.requests++
-	return &provider.ChatCompletionResponse{
-		Choices: []provider.Choice{{
-			Message: provider.TextMessage("assistant", "ok"),
-		}},
-	}, nil
 }
 
 func TestParseCLIScanExtractsLLMAndPassesScannerArgs(t *testing.T) {
@@ -74,8 +58,12 @@ func TestParseCLIScanExtractsLLMAndPassesScannerArgs(t *testing.T) {
 	if opt.MaxTokens != 16384 || opt.ContextWindow != 1000000 {
 		t.Fatalf("llm limits = max:%d context:%d", opt.MaxTokens, opt.ContextWindow)
 	}
-	if opt.CyberhubURL != "http://hub:8080" || opt.CyberhubKey != "HUBKEY" {
-		t.Fatalf("scanner options = %#v", opt.ScannerOptions)
+	hub, err := scannerext.ReadCyberhub(&opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hub.URL != "http://hub:8080" || hub.Key != "HUBKEY" {
+		t.Fatalf("scanner options = %#v", hub)
 	}
 }
 
@@ -167,14 +155,13 @@ func TestParseCLIAgentMachineOutput(t *testing.T) {
 	}
 }
 
-func TestParseCLIExtractsOutputForAgentAndScanners(t *testing.T) {
+func TestParseCLIExtractsOutputForAgentAndScan(t *testing.T) {
 	tests := []struct {
 		args     []string
 		wantArgs []string
 	}{
 		{args: []string{"agent", "-p", "hello", "-o", "agent.jsonl"}},
 		{args: []string{"scan", "-i", "127.0.0.1", "-o", "scan.jsonl"}, wantArgs: []string{"scan", "-i", "127.0.0.1"}},
-		{args: []string{"gogo", "-i", "127.0.0.1", "-p", "80", "-o", "gogo.jsonl"}, wantArgs: []string{"gogo", "-i", "127.0.0.1", "-p", "80"}},
 	}
 	for _, test := range tests {
 		t.Run(test.args[0], func(t *testing.T) {
@@ -190,6 +177,44 @@ func TestParseCLIExtractsOutputForAgentAndScanners(t *testing.T) {
 				t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, test.wantArgs)
 			}
 		})
+	}
+}
+
+func TestParseCLIDirectScannerOwnsPostCommandOutputFlag(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "curl", args: []string{"curl", "-o", "body.txt", "http://127.0.0.1"}},
+		{name: "gogo", args: []string{"gogo", "-i", "127.0.0.1", "-o", "jl"}},
+		{name: "neutron", args: []string{"neutron", "-i", "http://127.0.0.1", "-o", "result.jsonl"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := parseCLI(test.args)
+			if err != nil {
+				t.Fatalf("parseCLI: %v", err)
+			}
+			if parsed.Option.OutputFile != "" {
+				t.Fatalf("global output file captured scanner flag: %q", parsed.Option.OutputFile)
+			}
+			if !reflect.DeepEqual(parsed.ScannerArgs, test.args) {
+				t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, test.args)
+			}
+		})
+	}
+}
+
+func TestParseCLIDirectScannerAcceptsGlobalOutputBeforeCommand(t *testing.T) {
+	parsed, err := parseCLI([]string{"-o", "events.jsonl", "gogo", "-i", "127.0.0.1", "-o", "jl"})
+	if err != nil {
+		t.Fatalf("parseCLI: %v", err)
+	}
+	if parsed.Option.OutputFile != "events.jsonl" {
+		t.Fatalf("global output file = %q", parsed.Option.OutputFile)
+	}
+	wantArgs := []string{"gogo", "-i", "127.0.0.1", "-o", "jl"}
+	if !reflect.DeepEqual(parsed.ScannerArgs, wantArgs) {
+		t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, wantArgs)
 	}
 }
 
@@ -236,12 +261,36 @@ func TestParseCLIRootTimeoutAppliesToAgent(t *testing.T) {
 	}
 }
 
+// Extension commands take their options from the registry rather than from
+// AgentOptions, so the root --timeout is the only source of the overall
+// deadline. A zero value expires the context before the command can run.
+func TestParseCLIDefaultsOverallTimeoutForExtensionCommands(t *testing.T) {
+	parsed, err := parseCLI([]string{"ioa", "spaces"})
+	if err != nil {
+		t.Fatalf("parseCLI() error = %v", err)
+	}
+	if parsed.Action == nil {
+		t.Fatal("ioa spaces did not select an action")
+	}
+	if parsed.Option.Timeout != 3600 {
+		t.Fatalf("timeout = %d, want default 3600", parsed.Option.Timeout)
+	}
+
+	parsed, err = parseCLI([]string{"--timeout", "45", "ioa", "spaces"})
+	if err != nil {
+		t.Fatalf("parseCLI() error = %v", err)
+	}
+	if parsed.Option.Timeout != 45 {
+		t.Fatalf("timeout = %d, want 45", parsed.Option.Timeout)
+	}
+}
+
 func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Output: &logBuf})
-	err := runner.RunDirectScannerMode(context.Background(), aiscanProfileFactory, &cfg.Option{
+	err := runDirectScannerMode(context.Background(), newAIScanProfile, &cfg.Option{
 		MiscOptions: cfg.MiscOptions{NoColor: true},
-	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger, taskcli.NewOutput(&cfg.Option{}, nil, nil))
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
@@ -256,9 +305,9 @@ func TestDirectScannerModeSuppressesInitInfoByDefault(t *testing.T) {
 func TestDirectScannerModeDebugShowsInitInfo(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := telemetry.NewLogger(telemetry.LogConfig{Debug: true, Output: &logBuf})
-	err := runner.RunDirectScannerMode(context.Background(), aiscanProfileFactory, &cfg.Option{
+	err := runDirectScannerMode(context.Background(), newAIScanProfile, &cfg.Option{
 		MiscOptions: cfg.MiscOptions{Debug: true, NoColor: true},
-	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger)
+	}, []string{"scan", "-i", "http://127.0.0.1:1", "--timeout", "1", "--no-color"}, logger, taskcli.NewOutput(&cfg.Option{}, nil, nil))
 	if err != nil {
 		t.Fatalf("RunDirectScannerMode() error = %v", err)
 	}
@@ -285,7 +334,7 @@ func TestParseCLIAgentAcceptsLLMFlags(t *testing.T) {
 	if opt.BaseURL != "https://api.deepseek.com" || opt.APIKey != "KEY" || opt.Model != "deepseek-v4-pro" {
 		t.Fatalf("llm options = %#v", opt.LLMOptions)
 	}
-	pcfg := apppkg.ProviderConfig(&opt)
+	pcfg := cfg.ProviderConfig(&opt)
 	if pcfg.Provider != "openai" {
 		t.Fatalf("provider = %q, want openai protocol", pcfg.Provider)
 	}
@@ -334,7 +383,7 @@ func TestAgentHelpRendersAgentOptionsWithoutRootCatalog(t *testing.T) {
 func TestScannerHelpRegistryUsesGeneratedFlagHelp(t *testing.T) {
 	for _, name := range []string{"scan", "gogo", "spray", "zombie", "neutron"} {
 		t.Run(name, func(t *testing.T) {
-			help, ok := edition.Catalog().Usage(name)
+			help, ok := scannerext.Usage(name)
 			if !ok {
 				t.Fatalf("StaticScannerUsage(%q) was not registered", name)
 			}
@@ -352,7 +401,7 @@ func TestScannerHelpRegistryUsesGeneratedFlagHelp(t *testing.T) {
 }
 
 func TestParseCLIProtonUsesDirectScannerMode(t *testing.T) {
-	help, ok := edition.Catalog().Usage("proton")
+	help, ok := scannerext.Usage("proton")
 	if !ok {
 		t.Fatal("proton scanner help was not registered")
 	}
@@ -396,7 +445,7 @@ func TestParseCLIScanExtractsLLMFlags(t *testing.T) {
 	if opt.AI || opt.APIKey != "KEY" || opt.Model != "deepseek-v4-pro" || opt.BaseURL != "https://api.deepseek.com" {
 		t.Fatalf("llm options = %#v", opt.LLMOptions)
 	}
-	pcfg := apppkg.ProviderConfig(&opt)
+	pcfg := cfg.ProviderConfig(&opt)
 	if pcfg.Provider != "openai" {
 		t.Fatalf("provider = %q, want openai protocol", pcfg.Provider)
 	}
@@ -476,8 +525,12 @@ func TestParseCLICyberhubModeRootAndPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseCLI() error = %v", err)
 	}
-	if parsed.Option.CyberhubMode != "override" {
-		t.Fatalf("cyberhub mode = %q, want override", parsed.Option.CyberhubMode)
+	hub, err := scannerext.ReadCyberhub(&parsed.Option)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hub.Mode != "override" {
+		t.Fatalf("cyberhub mode = %q, want override", hub.Mode)
 	}
 	if !reflect.DeepEqual(parsed.ScannerArgs, []string{"spray", "-u", "http://127.0.0.1:5000"}) {
 		t.Fatalf("scanner args = %#v", parsed.ScannerArgs)
@@ -498,8 +551,8 @@ func TestParseCLINonScanScannerKeepsPostRootArgsIsolated(t *testing.T) {
 	if !reflect.DeepEqual(parsed.ScannerArgs, wantArgs) {
 		t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, wantArgs)
 	}
-	if parsed.Option.CyberhubURL != "" || parsed.Option.CyberhubKey != "" {
-		t.Fatalf("scanner options = %#v", parsed.Option.ScannerOptions)
+	if _, ok := parsed.Option.Extensions[scannerext.CyberhubConfigKey]; ok {
+		t.Fatalf("scanner options leaked from post-command args: %#v", parsed.Option.Extensions)
 	}
 }
 
@@ -517,8 +570,12 @@ func TestParseCLIScannerRootArgsBeforeCommandStillApply(t *testing.T) {
 	if !reflect.DeepEqual(parsed.ScannerArgs, wantArgs) {
 		t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, wantArgs)
 	}
-	if parsed.Option.CyberhubURL != "http://hub:8080" || parsed.Option.CyberhubKey != "HUBKEY" {
-		t.Fatalf("scanner options = %#v", parsed.Option.ScannerOptions)
+	hub, err := scannerext.ReadCyberhub(&parsed.Option)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hub.URL != "http://hub:8080" || hub.Key != "HUBKEY" {
+		t.Fatalf("scanner options = %#v", hub)
 	}
 }
 
@@ -585,7 +642,7 @@ func TestParseCLIPassthroughScannerExtractsAIIntentArgs(t *testing.T) {
 		"--skill", "scan",
 		"--ai",
 		"--model", "deepseek-v4-pro",
-		"--skill=aiscan",
+		"--skill=cyber",
 		"gogo",
 		"-i", "127.0.0.1",
 	})
@@ -603,22 +660,8 @@ func TestParseCLIPassthroughScannerExtractsAIIntentArgs(t *testing.T) {
 	if !opt.AI || opt.APIKey != "KEY" || opt.Model != "deepseek-v4-pro" || opt.Prompt != "review focus fingerprints" {
 		t.Fatalf("option = %#v", opt)
 	}
-	if !reflect.DeepEqual(opt.Skills, []string{"scan", "aiscan"}) {
+	if !reflect.DeepEqual(opt.Skills, []string{"scan", "cyber"}) {
 		t.Fatalf("skills = %#v", opt.Skills)
-	}
-}
-
-func TestScannerAIIntentInjectsCommandSkill(t *testing.T) {
-	store, diagnostics := skills.LoadEmbeddedStore()
-	if len(diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
-	}
-	intent, err := cfg.ApplySelectedSkills("focus on risky exposed services", nil, store)
-	if err != nil {
-		t.Fatalf("ApplySelectedSkills() error = %v", err)
-	}
-	if !strings.Contains(intent, "focus on risky exposed services") {
-		t.Fatalf("intent missing user text:\n%s", intent)
 	}
 }
 
@@ -628,7 +671,7 @@ func TestParseCLIAgentIOAFlag(t *testing.T) {
 		"agent",
 		"--cyberhub-mode", "override",
 		"-p", "scan localhost",
-		"-s", "aiscan",
+		"-s", "cyber",
 		"--space", "case-1",
 		"--heartbeat", "5",
 		"--model", "gpt-4o",
@@ -640,10 +683,14 @@ func TestParseCLIAgentIOAFlag(t *testing.T) {
 		t.Fatalf("mode = %s, want %s", parsed.Mode, cfg.RunModeAgent)
 	}
 	opt := parsed.Option
-	if !opt.Debug || opt.Prompt != "scan localhost" || readClientOptions(t, &opt).Space != "case-1" || opt.Heartbeat != 5 || opt.Model != "gpt-4o" || opt.CyberhubMode != "override" {
+	hub, err := scannerext.ReadCyberhub(&opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opt.Debug || opt.Prompt != "scan localhost" || readClientOptions(t, &opt).Space != "case-1" || opt.Heartbeat != 5 || opt.Model != "gpt-4o" || hub.Mode != "override" {
 		t.Fatalf("option = %#v", opt)
 	}
-	if !reflect.DeepEqual(opt.Skills, []string{"aiscan"}) {
+	if !reflect.DeepEqual(opt.Skills, []string{"cyber"}) {
 		t.Fatalf("skills = %#v", opt.Skills)
 	}
 }
@@ -697,64 +744,59 @@ func TestParseCLIIOAServeCommandUsesURL(t *testing.T) {
 	}
 }
 
-func TestDirectScannerRuntimeFeaturesForVerifyModes(t *testing.T) {
+func TestResolveScannerModeForVerifyModes(t *testing.T) {
 	withDefaults(t, func() {
-		cfg.DefaultVerify = "off"
-		features, args, err := runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1"})
+		mode, args, err := resolveScannerMode([]string{"scan", "-i", "127.0.0.1"}, "")
 		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
+			t.Fatalf("ResolveScannerMode() error = %v", err)
 		}
-		if features.ProviderEnabled || features.AIEnabled {
-			t.Fatalf("features = %#v", features)
+		if mode.Provider != profile.ProviderOptional {
+			t.Fatalf("mode = %#v", mode)
 		}
 		if !reflect.DeepEqual(args, []string{"scan", "-i", "127.0.0.1"}) {
 			t.Fatalf("args = %#v", args)
 		}
 
-		features, args, err = runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1", "--verify=off"})
+		mode, args, err = resolveScannerMode([]string{"scan", "-i", "127.0.0.1", "--verify=off"}, "")
 		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
+			t.Fatalf("ResolveScannerMode() error = %v", err)
 		}
-		if features.ProviderEnabled || features.AIEnabled {
-			t.Fatalf("features = %#v", features)
+		if mode.Provider != profile.ProviderOptional {
+			t.Fatalf("mode = %#v", mode)
 		}
 		if !reflect.DeepEqual(args, []string{"scan", "-i", "127.0.0.1", "--verify=off"}) {
 			t.Fatalf("args = %#v", args)
 		}
 
-		features, args, err = runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1", "--deep"})
+		if _, _, err = resolveScannerMode([]string{"scan", "-i", "127.0.0.1", "--deep"}, ""); err == nil {
+			t.Fatal("removed --deep flag was accepted")
+		}
+
+		mode, args, err = resolveScannerMode([]string{"scan", "-i", "127.0.0.1", "--verify=on"}, "")
 		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
+			t.Fatalf("ResolveScannerMode() error = %v", err)
 		}
-		if !features.ProviderEnabled || features.ProviderOptional || !features.AIEnabled || !features.ScannerAI {
-			t.Fatalf("deep features = %#v", features)
+		if mode.Provider != profile.ProviderRequired || !mode.Agent {
+			t.Fatalf("mode = %#v", mode)
 		}
-		if !reflect.DeepEqual(args, []string{"scan", "-i", "127.0.0.1", "--deep"}) {
+		if !reflect.DeepEqual(args, []string{"scan", "-i", "127.0.0.1", "--verify=on"}) {
 			t.Fatalf("args = %#v", args)
 		}
 
-		features, _, err = runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1", "--verify", "critical"})
+		mode, _, err = resolveScannerMode([]string{"scan", "-i", "127.0.0.1", "--sniper"}, "")
 		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
+			t.Fatalf("ResolveScannerMode() error = %v", err)
 		}
-		if !features.ProviderEnabled || features.ProviderOptional || !features.AIEnabled || !features.ScannerAI {
-			t.Fatalf("features = %#v", features)
+		if mode.Provider != profile.ProviderRequired || !mode.Agent {
+			t.Fatalf("sniper mode = %#v", mode)
 		}
 
-		features, _, err = runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1", "--sniper"})
+		mode, args, err = resolveScannerMode([]string{"scan", "-i", "127.0.0.1", "--ai"}, "")
 		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
+			t.Fatalf("ResolveScannerMode() error = %v", err)
 		}
-		if !features.ProviderEnabled || features.ProviderOptional || !features.AIEnabled || !features.ScannerAI {
-			t.Fatalf("sniper features = %#v", features)
-		}
-
-		features, args, err = runner.DirectScannerRuntimeFeatures([]string{"scan", "-i", "127.0.0.1", "--ai"})
-		if err != nil {
-			t.Fatalf("DirectScannerRuntimeFeatures() error = %v", err)
-		}
-		if features.ProviderEnabled || features.AIEnabled || features.ScannerAI {
-			t.Fatalf("scan-local --ai should not enable AI features: %#v", features)
+		if mode.Provider != profile.ProviderOptional || mode.Agent {
+			t.Fatalf("scan-local --ai should not enable AI features: %#v", mode)
 		}
 		if !reflect.DeepEqual(args, []string{"scan", "-i", "127.0.0.1", "--ai"}) {
 			t.Fatalf("args = %#v", args)
@@ -764,34 +806,36 @@ func TestDirectScannerRuntimeFeaturesForVerifyModes(t *testing.T) {
 
 func TestAppConfigUsesCompiledDefaults(t *testing.T) {
 	withDefaults(t, func() {
-		cfg.DefaultCyberhubURL = "http://hub:8080"
-		cfg.DefaultCyberhubKey = "HUBKEY"
-		cfg.DefaultCyberhubMode = "override"
-		cfg.DefaultTavilyKeys = "BUILTIN_TAVILY"
+		scannerext.DefaultCyberhubURL = "http://hub:8080"
+		scannerext.DefaultCyberhubKey = "HUBKEY"
+		scannerext.DefaultCyberhubMode = "override"
+		searchext.DefaultTavilyKeys = "BUILTIN_TAVILY"
 		cfg.DefaultNodeID = "node-1"
 		cfg.DefaultNodeName = "worker-1"
 
 		opt := &cfg.Option{}
 		cfg.ApplyDefaults(opt)
-		appCfg := apppkg.AppConfig(opt, apppkg.RuntimeFeatures{
-			ProviderEnabled:  true,
-			ProviderOptional: true,
-			AIEnabled:        true,
-		}, telemetry.NopLogger())
-		if appCfg.Scanner.CyberhubURL != cfg.DefaultCyberhubURL || appCfg.Scanner.CyberhubKey != cfg.DefaultCyberhubKey || appCfg.Scanner.CyberhubMode != cfg.DefaultCyberhubMode {
-			t.Fatalf("scanner cyberhub config = %#v", appCfg.Scanner)
-		}
-		if !appCfg.Scanner.AIEnabled {
-			t.Fatalf("scanner AI config = %#v", appCfg.Scanner)
-		}
-		if appCfg.Tools.TavilyKeys != cfg.DefaultTavilyKeys {
-			t.Fatalf("tool search config = %#v", appCfg.Tools)
-		}
-		if !appCfg.Provider.Enabled || !appCfg.Provider.Optional {
-			t.Fatalf("provider config = %#v", appCfg.Provider)
-		}
 		if opt.NodeID != cfg.DefaultNodeID || opt.NodeName != cfg.DefaultNodeName {
 			t.Fatal("compiled node defaults were not resolved")
+		}
+
+		resolved, err := defaultSections().ResolveValues(nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hub, err := cfg.Get[*scannerext.CyberhubOptions](resolved, scannerext.CyberhubConfigKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hub.URL != "http://hub:8080" || hub.Key != "HUBKEY" || hub.Mode != "override" {
+			t.Fatalf("compiled cyberhub defaults were not resolved: %#v", hub)
+		}
+		search, err := cfg.Get[*searchext.Options](resolved, searchext.ConfigKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if search.TavilyKeys != "BUILTIN_TAVILY" {
+			t.Fatalf("compiled tavily default was not resolved: %#v", search)
 		}
 	})
 }
@@ -806,12 +850,11 @@ func withDefaults(t *testing.T, fn func()) {
 		{&cfg.DefaultBaseURL, cfg.DefaultBaseURL},
 		{&cfg.DefaultAPIKey, cfg.DefaultAPIKey},
 		{&cfg.DefaultModel, cfg.DefaultModel},
-		{&cfg.DefaultScannerProxy, cfg.DefaultScannerProxy},
-		{&cfg.DefaultCyberhubURL, cfg.DefaultCyberhubURL},
-		{&cfg.DefaultCyberhubKey, cfg.DefaultCyberhubKey},
-		{&cfg.DefaultCyberhubMode, cfg.DefaultCyberhubMode},
-		{&cfg.DefaultVerify, cfg.DefaultVerify},
-		{&cfg.DefaultTavilyKeys, cfg.DefaultTavilyKeys},
+		{&scannerext.DefaultScannerProxy, scannerext.DefaultScannerProxy},
+		{&scannerext.DefaultCyberhubURL, scannerext.DefaultCyberhubURL},
+		{&scannerext.DefaultCyberhubKey, scannerext.DefaultCyberhubKey},
+		{&scannerext.DefaultCyberhubMode, scannerext.DefaultCyberhubMode},
+		{&searchext.DefaultTavilyKeys, searchext.DefaultTavilyKeys},
 		{&cfg.DefaultNodeID, cfg.DefaultNodeID},
 		{&cfg.DefaultNodeName, cfg.DefaultNodeName},
 	}
@@ -823,9 +866,9 @@ func withDefaults(t *testing.T, fn func()) {
 	fn()
 }
 
-func readClientOptions(t *testing.T, option *cfg.Option) clientext.Options {
+func readClientOptions(t *testing.T, option *cfg.Option) ioaclient.Options {
 	t.Helper()
-	value, err := clientext.ReadOptions(option)
+	value, err := ioaclient.ReadOptions(option)
 	if err != nil {
 		t.Fatal(err)
 	}

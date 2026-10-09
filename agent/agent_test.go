@@ -14,14 +14,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chainreactors/aiscan/agent/inbox"
-	"github.com/chainreactors/aiscan/agent/provider"
-	aop "github.com/chainreactors/aiscan/aop"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/skills"
+	"github.com/chainreactors/cyber/agent/inbox"
+	"github.com/chainreactors/cyber/agent/provider"
+	"github.com/chainreactors/cyber/agent/skills"
+	aop "github.com/chainreactors/cyber/aop"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
+
+	terminaltool "github.com/chainreactors/cyber/tools/terminal"
 )
 
 func TestRunWithoutToolsReturnsFinalText(t *testing.T) {
@@ -223,10 +225,7 @@ func TestProviderErrorEmitsAgentEndAndUpdatesState(t *testing.T) {
 		t.Fatalf("last event = %#v, want error", last)
 	}
 	endData := last.GetError()
-	if endData == nil {
-		t.Fatal("error event missing payload")
-	}
-	if endData.Message == "" {
+	if endData == nil || endData.Message == "" {
 		t.Fatalf("error event missing message: %+v", endData)
 	}
 	if a.running {
@@ -347,10 +346,10 @@ func TestAgentAutomaticWorkflowUsesScan(t *testing.T) {
 	dir := t.TempDir()
 
 	stub := &stubPseudoCommand{name: "scan", output: scanOutput}
-	bash := commands.NewBashTool(dir, 5, nil)
-	tmuxCmd := commands.NewTmuxCommand(bash)
-	commandRegistry := testCommands(t, "core",
-		commands.Command{Name: stub.Name(), Usage: stub.Usage(), Run: stub.Run},
+	bash := terminaltool.NewBashTool(dir, 5, nil)
+	tmuxCmd := terminaltool.NewTmuxCommand(bash)
+	commandRegistry := hosttest.Commands(t,
+		coretool.Command{Name: stub.Name(), Usage: stub.Usage(), Run: stub.Run},
 		tmuxCmd,
 	)
 	bash.SetCommandRegistry(commandRegistry)
@@ -375,12 +374,10 @@ func TestAgentAutomaticWorkflowUsesScan(t *testing.T) {
 		},
 	}
 
-	systemPrompt := buildTestSystemPrompt(tools, commandRegistry, nil)
-
 	result, err := (NewAgent(Config{Loop: StandardLoop{},
 		Provider:     llm,
 		Tools:        tools,
-		SystemPrompt: systemPrompt,
+		SystemPrompt: "You are a test agent.",
 		Model:        "test-model",
 	})).Run(context.Background(), TextInput("scan 127.0.0.1"))
 	if err != nil {
@@ -399,10 +396,22 @@ func TestAgentAutomaticWorkflowUsesScan(t *testing.T) {
 	}
 }
 
-func TestAgentPromptIncludesEmbeddedSkillIndexAndExpansion(t *testing.T) {
-	store, diagnostics := skills.LoadEmbeddedStore()
-	if len(diagnostics) != 0 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+func TestAgentUsesConfiguredPromptAndExpandsSkillCommand(t *testing.T) {
+	store := skills.NewStore(nil)
+	const skillLocation = "cyber://skills/cyber/SKILL.md"
+	if _, err := store.Add(skills.Bundle{
+		Skills: []skills.Skill{{
+			Name: "cyber", Description: "Security workflows", Source: skills.SourceBundle,
+			Location: skillLocation, BaseDir: "cyber://skills/cyber",
+		}},
+		ReadVirtual: func(uri string) (string, bool, error) {
+			if uri != skillLocation {
+				return "", false, nil
+			}
+			return "---\nname: cyber\ndescription: Security workflows\n---\n# Cyber ASM\nfixture body", true, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
 	}
 	registry := newTestTools(t, &recordingTool{name: "read", output: "skill content"})
 
@@ -411,8 +420,8 @@ func TestAgentPromptIncludesEmbeddedSkillIndexAndExpansion(t *testing.T) {
 			chatResponse(NewTextMessage("assistant", "done")),
 		},
 	}
-	systemPrompt := buildTestSystemPrompt(registry, nil, store.Skills)
-	task := skills.ExpandCommand("/skill:aiscan scan 127.0.0.1", store)
+	const systemPrompt = "test system prompt with <available_skills>"
+	task := skills.ExpandCommand("/skill:cyber scan 127.0.0.1", store)
 
 	result, err := (NewAgent(Config{Loop: StandardLoop{},
 		Provider:     llm,
@@ -435,7 +444,7 @@ func TestAgentPromptIncludesEmbeddedSkillIndexAndExpansion(t *testing.T) {
 		t.Fatalf("system prompt missing skills")
 	}
 	user := requests[0].Messages[1]
-	if user.Role != "user" || !strings.Contains(provider.MessageText(user), `<skill name="aiscan"`) {
+	if user.Role != "user" || !strings.Contains(provider.MessageText(user), `<skill name="cyber"`) {
 		t.Fatalf("user prompt missing expanded skill")
 	}
 }
@@ -448,19 +457,16 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bash := commands.NewBashTool(dir, 30, nil)
-	tmuxCmd := commands.NewTmuxCommand(bash)
-	commandRegistry := testCommands(t, "core", tmuxCmd)
+	bash := terminaltool.NewBashTool(dir, 30, nil)
+	tmuxCmd := terminaltool.NewTmuxCommand(bash)
+	commandRegistry := hosttest.Commands(t, tmuxCmd)
 	bash.SetCommandRegistry(commandRegistry)
-	tools := newTestTools(t, bash)
+	tools := newTestTools(t, bash, NewFinishTool())
 	t.Cleanup(bash.Close)
-
-	var capturedRequests []*ChatCompletionRequest
 
 	turnIndex := 0
 	llm := &callbackProvider{
 		fn: func(_ context.Context, req *ChatCompletionRequest) (*ChatCompletionResponse, error) {
-			capturedRequests = append(capturedRequests, cloneRequest(req))
 			turnIndex++
 
 			switch turnIndex {
@@ -524,12 +530,13 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 						ID: "call-5", Type: "function",
 						Function: FunctionCall{
 							Name:      "bash",
-							Arguments: bashArgs(`tmux send -t worker "echo VAR_IS_$MY_VAR" Enter`),
+							Arguments: bashArgs(`tmux send -t worker 'echo VAR_IS_$MY_VAR' Enter`),
 						},
 					}},
 				}), nil
 
 			case 6:
+				assertToolResult(t, req, "call-5", "sent")
 				time.Sleep(500 * time.Millisecond)
 				return chatResponse(ChatMessage{
 					Role: "assistant",
@@ -568,8 +575,9 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 				}), nil
 
 			case 9:
-				return chatResponse(NewTextMessage("assistant",
-					"Interactive session completed. Verified: echo output, shell variable persistence, and clean exit.")), nil
+				message := NewTextMessage("assistant", "Interactive session completed. Verified: echo output, shell variable persistence, and clean exit.")
+				message.ToolCalls = []ToolCall{{ID: "call-9", Type: "function", Function: FunctionCall{Name: "finish", Arguments: "{}"}}}
+				return chatResponse(message), nil
 
 			default:
 				t.Fatalf("unexpected turn %d", turnIndex)
@@ -590,8 +598,8 @@ func TestAgentTmuxMultiRoundInteraction(t *testing.T) {
 	if !strings.Contains(result.Output, "Interactive session completed") {
 		t.Fatalf("unexpected final output: %q", result.Output)
 	}
-	if turnIndex != 9 {
-		t.Fatalf("expected 9 turns, got %d", turnIndex)
+	if result.Stop != StopReasonTerminated || turnIndex != 9 {
+		t.Fatalf("scripted task stop = %q after %d provider calls", result.Stop, turnIndex)
 	}
 	t.Logf("Agent completed %d turns of tmux interaction successfully", turnIndex)
 }
@@ -602,11 +610,11 @@ func TestAgentTmuxCtrlCInterrupt(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bash := commands.NewBashTool(dir, 30, nil)
-	tmuxCmd := commands.NewTmuxCommand(bash)
-	commandRegistry := testCommands(t, "core", tmuxCmd)
+	bash := terminaltool.NewBashTool(dir, 30, nil)
+	tmuxCmd := terminaltool.NewTmuxCommand(bash)
+	commandRegistry := hosttest.Commands(t, tmuxCmd)
 	bash.SetCommandRegistry(commandRegistry)
-	tools := newTestTools(t, bash)
+	tools := newTestTools(t, bash, NewFinishTool())
 	t.Cleanup(bash.Close)
 
 	turnIndex := 0
@@ -675,7 +683,9 @@ func TestAgentTmuxCtrlCInterrupt(t *testing.T) {
 				}), nil
 			case 6:
 				assertToolResult(t, req, "c5", "RECOVERED")
-				return chatResponse(NewTextMessage("assistant", "Ctrl-C interrupt and recovery verified.")), nil
+				message := NewTextMessage("assistant", "Ctrl-C interrupt and recovery verified.")
+				message.ToolCalls = []ToolCall{{ID: "c6", Type: "function", Function: FunctionCall{Name: "finish", Arguments: "{}"}}}
+				return chatResponse(message), nil
 			default:
 				t.Fatalf("unexpected turn %d", turnIndex)
 				return nil, nil
@@ -694,6 +704,9 @@ func TestAgentTmuxCtrlCInterrupt(t *testing.T) {
 	if !strings.Contains(result.Output, "Ctrl-C interrupt") {
 		t.Fatalf("unexpected output: %q", result.Output)
 	}
+	if result.Stop != StopReasonTerminated || turnIndex != 6 {
+		t.Fatalf("scripted task stop = %q after %d turns", result.Stop, turnIndex)
+	}
 	t.Logf("Ctrl-C interrupt test passed in %d turns", turnIndex)
 }
 
@@ -706,11 +719,11 @@ func TestAgentTmuxInteractiveProgram(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bash := commands.NewBashTool(dir, 30, nil)
-	tmuxCmd := commands.NewTmuxCommand(bash)
-	commandRegistry := testCommands(t, "core", tmuxCmd)
+	bash := terminaltool.NewBashTool(dir, 30, nil)
+	tmuxCmd := terminaltool.NewTmuxCommand(bash)
+	commandRegistry := hosttest.Commands(t, tmuxCmd)
 	bash.SetCommandRegistry(commandRegistry)
-	tools := newTestTools(t, bash)
+	tools := newTestTools(t, bash, NewFinishTool())
 	t.Cleanup(bash.Close)
 
 	turnIndex := 0
@@ -790,8 +803,9 @@ func TestAgentTmuxInteractiveProgram(t *testing.T) {
 					}},
 				}), nil
 			case 7:
-				return chatResponse(NewTextMessage("assistant",
-					"Python REPL interaction verified: 2^10=1024, string concat, clean exit.")), nil
+				message := NewTextMessage("assistant", "Python REPL interaction verified: 2^10=1024, string concat, clean exit.")
+				message.ToolCalls = []ToolCall{{ID: "p7", Type: "function", Function: FunctionCall{Name: "finish", Arguments: "{}"}}}
+				return chatResponse(message), nil
 			default:
 				t.Fatalf("unexpected turn %d", turnIndex)
 				return nil, nil
@@ -809,6 +823,9 @@ func TestAgentTmuxInteractiveProgram(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "Python REPL") {
 		t.Fatalf("unexpected output: %q", result.Output)
+	}
+	if result.Stop != StopReasonTerminated || turnIndex != 7 {
+		t.Fatalf("scripted task stop = %q after %d turns", result.Stop, turnIndex)
 	}
 	t.Logf("Python REPL interaction test passed in %d turns", turnIndex)
 }
@@ -837,9 +854,9 @@ func TestLiveLLMTmuxInteraction(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	bash := commands.NewBashTool(dir, 60, nil)
-	tmuxCmd := commands.NewTmuxCommand(bash)
-	commandRegistry := testCommands(t, "core", tmuxCmd)
+	bash := terminaltool.NewBashTool(dir, 60, nil)
+	tmuxCmd := terminaltool.NewTmuxCommand(bash)
+	commandRegistry := hosttest.Commands(t, tmuxCmd)
 	bash.SetCommandRegistry(commandRegistry)
 	tools := newTestTools(t, bash)
 	t.Cleanup(bash.Close)
@@ -886,7 +903,7 @@ Step 5: tmux capture-pane -t test_sess --new
         → You should see HELLO_WORLD in the output
 Step 6: tmux send -t test_sess "MY_VAR=MAGIC_42" Enter
 Step 7: sleep 0.2
-Step 8: tmux send -t test_sess "echo RESULT_IS_$MY_VAR" Enter
+Step 8: tmux send -t test_sess 'echo RESULT_IS_$MY_VAR' Enter
 Step 9: sleep 0.3
 Step 10: tmux capture-pane -t test_sess --new
          → You should see RESULT_IS_MAGIC_42 in the output
@@ -942,7 +959,7 @@ func TestCacheConfigInheritance(t *testing.T) {
 		SessionID:      "parent-session-123",
 	}
 
-	child := NewAgent(parentCfg).Derive()
+	child := NewAgent(parentCfg.ForTask("child", "", nil))
 
 	if child.Cfg.CacheRetention != CacheShort {
 		t.Errorf("child CacheRetention = %q, want %q", child.Cfg.CacheRetention, CacheShort)
@@ -1258,7 +1275,7 @@ func TestSetProviderConfigHotSwapsModelLimits(t *testing.T) {
 	ag.SetProviderConfig(provider, ProviderConfig{
 		Model: "glm-5.2[1m]", MaxTokens: 32768, ContextWindow: 1000000,
 	})
-	cfg := ag.configSnapshot()
+	cfg := ag.ConfigSnapshot()
 	if cfg.Provider != provider || cfg.Model != "glm-5.2[1m]" || cfg.MaxTokens != 32768 || cfg.ContextWindow != 1000000 {
 		t.Fatalf("hot-swapped config = %+v", cfg)
 	}
@@ -1340,7 +1357,7 @@ func textMessage(role, text string) *aop.Message {
 }
 
 func toolResultMessage(callID, output string) *aop.Message {
-	return provider.ToolResultMessage(callID, tool.TextResult(output))
+	return provider.ToolResultMessage(callID, coretool.TextResult(output))
 }
 
 func imageMessage(role string, parts ...*aop.Content) *aop.Message {
@@ -1377,7 +1394,7 @@ func toolCallDelta(index uint32, id, name, args string) ChatCompletionStreamEven
 func testBus(handler func(*aop.Event)) *coreevents.Stream {
 	b := coreevents.New()
 	if handler != nil {
-		b.Observe(coreevents.ObserverFunc(handler))
+		b.Observe(handler)
 	}
 	return b
 }
@@ -1395,17 +1412,17 @@ func (t *recordingTool) Name() string { return t.name }
 func (t *recordingTool) Description() string { return "recording tool" }
 
 func (t *recordingTool) Definition() *aop.ToolDefinition {
-	return tool.Def(t.name, t.Description(), struct{}{})
+	return coretool.Def(t.name, t.Description(), struct{}{})
 }
 
-func (t *recordingTool) Execute(_ context.Context, arguments string) (*tool.Result, error) {
+func (t *recordingTool) Execute(_ context.Context, arguments string) (*coretool.Result, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.calls = append(t.calls, arguments)
 	if strings.Contains(arguments, "fail") {
 		return nil, fmt.Errorf("failed")
 	}
-	return tool.TextResult(t.output), nil
+	return coretool.TextResult(t.output), nil
 }
 
 func (t *recordingTool) callsSnapshot() []string {
@@ -1575,7 +1592,7 @@ type stubPseudoCommand struct {
 
 func (c *stubPseudoCommand) Name() string  { return c.name }
 func (c *stubPseudoCommand) Usage() string { return c.name }
-func (c *stubPseudoCommand) Run(_ context.Context, execution *commands.Execution) (any, error) {
+func (c *stubPseudoCommand) Run(_ context.Context, execution *coretool.Execution) (any, error) {
 	fmt.Fprint(execution.Stdout, c.output)
 	return nil, nil
 }
@@ -1602,7 +1619,7 @@ func hasToolMessage(messages []*aop.Message, toolCallID, contains string) bool {
 		if r == nil || r.CallId != toolCallID {
 			continue
 		}
-		if strings.Contains(tool.ResultText(r), contains) {
+		if strings.Contains(coretool.ResultText(r), contains) {
 			return true
 		}
 	}
@@ -1669,7 +1686,7 @@ func assertToolResult(t *testing.T, req *ChatCompletionRequest, toolCallID, cont
 				continue
 			}
 			if r := provider.MessageToolResult(msg); r != nil && r.CallId == toolCallID {
-				actual = tool.ResultText(r)
+				actual = coretool.ResultText(r)
 				break
 			}
 		}
@@ -1677,27 +1694,7 @@ func assertToolResult(t *testing.T, req *ChatCompletionRequest, toolCallID, cont
 	}
 }
 
-func buildTestSystemPrompt(tools tool.Executor, commandRegistry *commands.Registry, ss []skills.Skill) string {
-	var sb strings.Builder
-	sb.WriteString("You are a test agent.\n\n## Available Tools\n\n")
-	if tools != nil {
-		for _, definition := range tools.ToolDefinitions() {
-			sb.WriteString("### " + definition.Name + "\n" + definition.Description + "\n\n")
-		}
-	}
-	if commandRegistry != nil {
-		if docs := commandRegistry.UsageDocs(); docs != "" {
-			sb.WriteString("## Pseudo-Commands\n\n" + docs + "\n\n")
-		}
-	}
-	if skillPrompt := skills.FormatForPrompt(ss); skillPrompt != "" {
-		sb.WriteString(skillPrompt)
-		sb.WriteString("\n\n")
-	}
-	return sb.String()
-}
-
-func buildTmuxTestPrompt(tools tool.Executor, commandRegistry *commands.Registry) string {
+func buildTmuxTestPrompt(tools coretool.Executor, commandRegistry *coretool.CommandRegistry) string {
 	var sb strings.Builder
 	sb.WriteString("You are a test agent. You have one tool: bash.\n\n## Tool: bash\n")
 	for _, definition := range tools.ToolDefinitions() {

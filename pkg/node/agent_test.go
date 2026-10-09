@@ -1,10 +1,25 @@
 package node
 
 import (
+	"github.com/chainreactors/cyber/core/telemetry"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	profilepkg "github.com/chainreactors/cyber/pkg/profile"
 	"testing"
-
-	cfg "github.com/chainreactors/aiscan/core/config"
 )
+
+func TestRunRemoteAgentRejectsNilConstructorAndResult(t *testing.T) {
+	option := &cfg.Option{
+		AgentOptions: cfg.AgentOptions{ServerURL: "http://127.0.0.1:18080"},
+		NodeOptions:  cfg.NodeOptions{NodeID: "worker-1"},
+	}
+	if err := RunWebSocket(t.Context(), nil, option, telemetry.NopLogger()); err == nil {
+		t.Fatal("nil profile constructor was accepted")
+	}
+	newProfile := func(profilepkg.Request) (profilepkg.Profile, error) { return nil, nil }
+	if err := RunWebSocket(t.Context(), newProfile, option, telemetry.NopLogger()); err == nil {
+		t.Fatal("nil profile result was accepted")
+	}
+}
 
 func TestWebNodeID(t *testing.T) {
 	nodeID, err := webNodeID(&cfg.Option{NodeOptions: cfg.NodeOptions{NodeName: "worker-1"}})
@@ -20,17 +35,5 @@ func TestWebNodeID(t *testing.T) {
 	}
 	if _, err := webNodeID(&cfg.Option{}); err == nil {
 		t.Fatal("expected missing node_id error")
-	}
-}
-
-func TestResolveRemoteAgentURLsPreservesEndpoint(t *testing.T) {
-	option := &cfg.Option{
-		AgentOptions: cfg.AgentOptions{ServerURL: "http://token@127.0.0.1:18080"},
-	}
-	if err := resolveRemoteAgentURLs(option); err != nil {
-		t.Fatal(err)
-	}
-	if option.ServerURL != "http://token@127.0.0.1:18080" {
-		t.Fatalf("server URL = %q", option.ServerURL)
 	}
 }

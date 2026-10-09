@@ -2,10 +2,11 @@ package scan
 
 import (
 	"context"
+	"fmt"
 
-	"github.com/chainreactors/aiscan/agent"
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/telemetry"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/telemetry"
+	"github.com/chainreactors/utils/parsers"
 )
 
 type invocationProxyKey struct{}
@@ -29,11 +30,10 @@ func (c *Command) proxyForContext(ctx context.Context) string {
 
 type Option func(*Command)
 
-type DeepBrowserFunc func(ctx context.Context, targetURL string) (string, error)
+// Worker delegates scanner-owned input without exposing agent or session state.
+type Worker func(context.Context, string, parsers.Loot) (string, error)
 
-func WithParent(a *agent.Agent) Option {
-	return func(c *Command) { c.parent = a }
-}
+func WithWorker(worker Worker) Option { return func(c *Command) { c.worker = worker } }
 
 func WithProxy(proxy string) Option {
 	return func(c *Command) { c.Proxy = proxy }
@@ -47,22 +47,18 @@ func WithLogger(logger telemetry.Logger) Option {
 	return func(c *Command) { c.InitLogger(logger) }
 }
 
-func (c *Command) Configure(opts ...Option) {
-	for _, opt := range opts {
-		if opt != nil {
-			opt(c)
-		}
+// WithVerification supplies node defaults and checks the current invocation's model.
+func WithVerification(defaultValue string, hasModel func(context.Context) bool) Option {
+	return func(c *Command) { c.verifyDefault, c.hasModel = defaultValue, hasModel }
+}
+
+// ValidateVerify preserves the empty value for resolution at the execution node.
+func ValidateVerify(value string) error {
+	if value != "" && value != "on" && value != "off" {
+		return fmt.Errorf("invalid verify value %q: expected on or off", value)
 	}
+	return nil
 }
 
-func WithDeepBrowserFunc(fn DeepBrowserFunc) Option {
-	return func(c *Command) { c.deepBrowser = fn }
-}
-
-// SkillReader reads a scan sub-skill by name (e.g. "verify", "sniper", "deep").
-// Returns the skill content or "" if not found.
-type SkillReader func(name string) string
-
-func WithSkillReader(r SkillReader) Option {
-	return func(c *Command) { c.readSkill = r }
-}
+// WithExecutionOnly rejects modes requiring inference rather than silently ignoring them.
+func WithExecutionOnly() Option { return func(c *Command) { c.executionOnly = true } }

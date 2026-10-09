@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/operation"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	"github.com/chainreactors/cyber/core/operation"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 )
 
 // Command is a pure-Go, observation-native reimplementation of curl. It exposes a
@@ -24,7 +24,7 @@ type Command struct {
 // compatibilityVersion is intentionally explicit instead of inheriting the
 // host's curl version. Agents can therefore use --version to discover that
 // they are talking to the deterministic in-process implementation.
-const compatibilityVersion = "curl 8.14.1 (aiscan pure-Go)"
+const compatibilityVersion = "curl 8.14.1 (cyber pure-Go)"
 
 func New() *Command {
 	c := &Command{}
@@ -75,7 +75,7 @@ Supported options:
   -s, --silent                 Silent mode
   -S, --show-error             Show errors even with -s
   -f, --fail                   Fail on HTTP 4xx/5xx responses
-  -w, --write-out <format>     After completion, print %{http_code}, %{url_effective}, ...
+  -w, --write-out <format>     Print status/URL/type/size/redirect variables after completion
   -v, --verbose                Log request/response headers
   -N, --no-buffer              Stream response output without buffering
   -k, --insecure               Do not verify TLS
@@ -85,8 +85,14 @@ Supported options:
       --http2                  Prefer HTTP/2
       --http1.1                Force HTTP/1.1
       --resolve host:port:addr Route a host/port to an explicit address
+      --connect-to h1:p1:h2:p2  Connect to h2:p2 while preserving the URL host and TLS name
       --path-as-is             Preserve dot segments in the URL path
       --version, -V            Print the compatibility version and exit
+
+Connection mappings preserve the URL, HTTP Host and TLS verification name.
+Mapped calls through HTTP/HTTPS proxies use CONNECT, including HTTP targets;
+the proxy must permit CONNECT to the selected port. Unlike system curl's
+ordinary HTTP proxy mode, --resolve is applied before opening the tunnel.
 
 Unlisted flags are rejected rather than silently ignored. Requests are routed
 through the runner proxy and published as a typed HTTP observation; a browser User-Agent and
@@ -109,7 +115,7 @@ func (c *Command) QuickReference() string {
 // Run parses the curl-shaped argument vector and performs one exchange. The
 // proxy and CA that route/trust the MITM hub arrive in execution.Env (the
 // builtin runs in-process and does not inherit them from os.Environ).
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("curl", &err)
 
 	req, err := Parse(execution.Args)
@@ -125,5 +131,5 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	if workDir == "" {
 		workDir = operation.WorkDirFromContext(ctx, c.WorkDir)
 	}
-	return nil, c.do(ctx, req, commands.ResolveExecutionEgress(execution, c.Proxy), workDir, execution.Stdout, execution.Stderr)
+	return nil, c.do(ctx, req, coretool.ResolveExecutionEgress(execution, c.Proxy), workDir, execution.Stdout, execution.Stderr)
 }

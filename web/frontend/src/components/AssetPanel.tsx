@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Box, Import, RefreshCw, Upload } from 'lucide-react'
-import { listSCONodes, getSupportedArtifacts, importSCOData } from '../api'
+import { getSupportedCSTXArtifacts, importCSTXArtifact, listSCONodes, listCSTXOperations, cstxFailures, retryCSTXFailures, syncCSTXArtifacts, compareSCONodes, type ObservedOperation } from '../lib/cstx-runtime'
 import type { SCONode } from '@cyber/cstx-easm'
 import { CSTXTable } from '@cyber/cstx'
 import { CstxImportDialog, type ImportFileEntry, type ArtifactOption } from '@cyber/cstx'
@@ -15,12 +15,15 @@ import {
   TabsTrigger,
 } from '@cyber/ui'
 import { cn } from '@cyber/theme'
+import { useTableLabels } from '../i18n/useTableLabels'
 import { ToolDrawer } from './layout/ToolDrawer'
 
 interface AssetPanelProps {
   open: boolean
   onClose: () => void
   onSendToChat?: (text: string) => void
+  /** Fired after the asset pool is mutated so app-level caches can refresh. */
+  onChanged?: () => void
 }
 
 const EXCLUDE_COLUMNS = [
@@ -72,10 +75,6 @@ function formatRowsForChat(rows: Record<string, unknown>[]): string {
   return lines.join('\n')
 }
 
-const BATCH_ACTIONS = [
-  { id: 'sendToChat', label: 'Send to Chat', icon: 'MessageSquare' },
-]
-
 const TYPE_ORDER = ['ip', 'cidr', 'domain', 'port', 'app', 'url', 'framework', 'endpoint', 'vuln']
 
 function compareAssetTypes(left: string, right: string) {
@@ -89,8 +88,9 @@ function compareAssetTypes(left: string, right: string) {
   return left.localeCompare(right)
 }
 
-export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelProps) {
+export default function AssetPanel({ open, onClose, onSendToChat, onChanged }: AssetPanelProps) {
   const { t } = useTranslation('assets')
+  const tableLabels = useTableLabels()
   const importLabels = useMemo(() => ({
     title: t('importDialog.title'),
     description: t('importDialog.description'),
@@ -133,7 +133,13 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
     cancel: t('importDialog.cancel'),
     submit: t('importDialog.submit'),
     submitting: t('importDialog.submitting'),
+    submitFailed: t('importDialog.submitFailed', { message: '{{message}}' }),
   }), [t])
+  const [operations, setOperations] = useState<ObservedOperation[]>([])
+  const [operationID, setOperationID] = useState('')
+  const [compareID, setCompareID] = useState('')
+  const [baseNodes, setBaseNodes] = useState<SCONode[]>([])
+  const [parseErrors, setParseErrors] = useState<string[]>([])
   const [nodes, setNodes] = useState<SCONode[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -143,6 +149,7 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
   const [dragOver, setDragOver] = useState(false)
   const [droppedFiles, setDroppedFiles] = useState<File[]>([])
   const [activeType, setActiveType] = useState('all')
+  const loadVersion = useRef(0)
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -159,22 +166,34 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
   }, [])
 
   const load = useCallback(async () => {
+    const version = ++loadVersion.current
     setLoading(true)
     setError(null)
+    setNodes([])
+    setBaseNodes([])
+    setParseErrors([])
     try {
-      const data = await listSCONodes({ limit: 5000 })
-      setNodes(data)
+      await syncCSTXArtifacts()
+      const [page, history, failures, base] = await Promise.all([
+        listSCONodes({ scanId: operationID || undefined }), listCSTXOperations(), cstxFailures(operationID || undefined),
+        compareID ? listSCONodes({ scanId: compareID }) : Promise.resolve({ items: [] as SCONode[] }),
+      ])
+      if (version !== loadVersion.current) return
+      setNodes(page.items)
+      setBaseNodes(base.items)
+      setOperations(history)
+      setParseErrors(failures.map((failure) => failure.error))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (version === loadVersion.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (version === loadVersion.current) setLoading(false)
     }
-  }, [])
+  }, [operationID, compareID])
 
   const loadArtifacts = useCallback(async () => {
     setArtifactsLoading(true)
     try {
-      const arts = await getSupportedArtifacts()
+      const arts = await getSupportedCSTXArtifacts()
       setArtifactOptions((arts ?? []).map((a) => ({ value: a, label: a })))
     } catch { /* non-critical */ }
     finally { setArtifactsLoading(false) }
@@ -182,13 +201,24 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
 
   useEffect(() => {
     if (open) void load()
+    return () => { loadVersion.current++ }
   }, [open, load])
 
   useEffect(() => {
     if ((importOpen || dragOver) && artifactOptions.length === 0) void loadArtifacts()
   }, [importOpen, dragOver, artifactOptions.length, loadArtifacts])
 
-  const rows = useMemo(() => nodes.map(flattenSCO), [nodes])
+  // The table renders the selection count next to the button, so the button
+  // itself carries only the verb. It has to be rebuilt per locale, not a module
+  // constant, or the zh build shows an English label.
+  const batchActions = useMemo(
+    () => [{ id: 'sendToChat', label: t('sendToChat'), icon: 'MessageSquare' }],
+    [t],
+  )
+
+  const rows = useMemo(() => operationID && compareID
+    ? compareSCONodes(baseNodes, nodes).map(({ node, before, change }) => ({ ...flattenSCO(node), change: t(`change_${change}`), ...(before ? { before: JSON.stringify(before) } : {}) }))
+    : nodes.map(flattenSCO), [nodes, baseNodes, operationID, compareID, t])
   const typeCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const node of nodes) {
@@ -224,11 +254,17 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
   }, [onSendToChat, onClose])
 
   const handleImportSubmit = useCallback(async (entries: ImportFileEntry[]) => {
+    let written = 0
     for (const entry of entries) {
-      await importSCOData(entry.file, entry.artifactType)
+      written += await importCSTXArtifact(entry.file, entry.artifactType)
     }
     void load()
-  }, [load])
+    onChanged?.()
+    // The backend accepts the upload and reports zero nodes when the parser
+    // recognizes nothing. Closing the dialog then would look like a successful
+    // import of nothing, so keep it open with the reason.
+    if (written === 0) throw new Error(t('importDialog.importedNothing'))
+  }, [load, onChanged, t])
 
   return (
     <>
@@ -269,9 +305,29 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
           onDragOver: (e: React.DragEvent) => { e.preventDefault(); setDragOver(true) },
           onDragLeave: (e: React.DragEvent) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false) },
           onDrop: handleDrop,
+          // The import dialog is modal, so its focus trap reads as an outside
+          // interaction to this non-modal Sheet and dismisses the panel out from
+          // under the dialog. While the dialog is up, the drawer stays put.
+          onInteractOutside: (e: Event) => { if (importOpen) e.preventDefault() },
         }}
         bodyClassName="flex flex-col"
       >
+          <div className="flex flex-wrap gap-2 border-b border-border p-3">
+            <select aria-label={t('observation')} className="min-w-0 flex-1 rounded border border-border bg-background p-1.5 text-xs" value={operationID} onChange={(event) => { setOperationID(event.target.value); setCompareID('') }}>
+              <option value="">{t('allObservations')}</option>
+              {operations.map((op) => <option key={op.id} value={op.id}>{op.target || op.tool} · {op.timestamp} · {op.id.slice(0, 8)}</option>)}
+            </select>
+            {operationID && <select aria-label={t('compareWith')} className="min-w-0 flex-1 rounded border border-border bg-background p-1.5 text-xs" value={compareID} onChange={(event) => setCompareID(event.target.value)}>
+              <option value="">{t('compareWith')}</option>
+              {operations.filter((op) => op.id !== operationID).map((op) => <option key={op.id} value={op.id}>{op.target || op.tool} · {op.timestamp} · {op.id.slice(0, 8)}</option>)}
+            </select>}
+            {operationID && compareID && <p className="w-full text-xs text-muted-foreground">{t('comparisonHint')}</p>}
+          </div>
+          {parseErrors.length > 0 && <div role="alert" className="border-b border-warning/30 bg-warning/5 p-3 text-xs">
+            <p>{t('parseFailures', { count: parseErrors.length })}</p>
+            <details><summary>{t('failureDetails')}</summary>{parseErrors.map((error, index) => <p key={index}>{error}</p>)}</details>
+            <Button size="xs" variant="ghost" onClick={() => { setLoading(true); void retryCSTXFailures().then(load).catch((error) => setError(String(error))).finally(() => setLoading(false)) }}>{t('retryParsing')}</Button>
+          </div>}
           {dragOver && (
             <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-primary/5 backdrop-blur-[1px]">
               <div className="flex items-center gap-2 rounded-xl border-2 border-dashed border-primary bg-card/90 px-6 py-4 text-sm font-medium text-primary shadow-lg">
@@ -348,7 +404,8 @@ export default function AssetPanel({ open, onClose, onSendToChat }: AssetPanelPr
                     sparseMinColumns: 8,
                     columnsExclude: EXCLUDE_COLUMNS,
                     paginationMode: 'client',
-                    batchActions: BATCH_ACTIONS,
+                    batchActions,
+                    i18n: tableLabels,
                   }}
                   onAction={handleAction}
                 />

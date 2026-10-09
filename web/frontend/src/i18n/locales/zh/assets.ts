@@ -1,4 +1,15 @@
 export default {
+  observation: '选择执行记录',
+  allObservations: '全部资产',
+  compareWith: '选择对比基准',
+  comparisonHint: '仅比较两次执行实际观察到的数据；未再观察到不表示已修复。执行范围、失败或解析缺口都会影响比较。',
+  change_added: '新增',
+  change_missing: '本次未再观察到',
+  change_changed: '属性变化',
+  parseFailures: '有 {{count}} 条证据解析失败，结果尚不完整',
+  failureDetails: '查看错误',
+  retryParsing: '重试解析',
+
   title: '资产',
   openAssets: '资产池',
   description: '统一检索、筛选、导入和复用已发现的资产',
@@ -64,5 +75,7 @@ export default {
     cancel: '取消',
     submit: '开始导入',
     submitting: '导入中…',
+    submitFailed: '导入失败：{{message}}',
+    importedNothing: '没有从所选文件解析出任何资产，请确认 Artifact 类型与文件内容是否匹配。',
   },
 }

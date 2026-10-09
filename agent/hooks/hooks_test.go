@@ -8,10 +8,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	corehooks "github.com/chainreactors/aiscan/core/hooks"
-	"github.com/chainreactors/aiscan/core/tool"
-	toolhooks "github.com/chainreactors/aiscan/core/tool/hooks"
+	aop "github.com/chainreactors/cyber/aop"
+	corehooks "github.com/chainreactors/cyber/core/hooks"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	toolhooks "github.com/chainreactors/cyber/core/tool/hooks"
 )
 
 func ptr[T any](v T) *T { return &v }
@@ -32,7 +32,7 @@ func TestEmitRunsHandlersInRegistrationOrder(t *testing.T) {
 	if got := strings.Join(order, ""); got != "abc" {
 		t.Fatalf("order = %q, want %q", got, "abc")
 	}
-	if n := r.Len("context"); n != 3 {
+	if n := Context.Len(r); n != 3 {
 		t.Fatalf("Len = %d, want 3", n)
 	}
 }
@@ -50,7 +50,7 @@ func TestUnsubscribeIsIdempotent(t *testing.T) {
 	}
 	off.Cancel()
 	off.Cancel()
-	if r.Has("run_end") {
+	if RunEnd.Has(r) {
 		t.Fatal("Has after unsubscribe = true")
 	}
 	if _, err := RunEnd.Emit(context.Background(), r, RunEndEvent{}); err != nil {
@@ -197,14 +197,14 @@ func TestContinueOnErrorCollectsAndKeepsGoing(t *testing.T) {
 func TestToolResultTransformChaining(t *testing.T) {
 	r := corehooks.New()
 	var observed string
-	result := tool.TextResult("raw")
+	result := coretool.TextResult("raw")
 
 	toolhooks.After.On(r, "redact", func(_ context.Context, ev toolhooks.ResultEvent) (struct{}, error) {
-		ev.Result.Output = []*aop.Content{aop.Text(tool.ResultText(ev.Result) + "+redacted")}
+		ev.Result.Output = []*aop.Content{aop.Text(coretool.ResultText(ev.Result) + "+redacted")}
 		return struct{}{}, nil
 	})
 	toolhooks.After.On(r, "truncate", func(_ context.Context, ev toolhooks.ResultEvent) (struct{}, error) {
-		observed = tool.ResultText(ev.Result)
+		observed = coretool.ResultText(ev.Result)
 		ev.Result.IsError = true
 		ev.Result.Terminate = true
 		return struct{}{}, nil
@@ -217,8 +217,8 @@ func TestToolResultTransformChaining(t *testing.T) {
 	if observed != "raw+redacted" {
 		t.Fatalf("second handler saw %q, want the first handler's patch", observed)
 	}
-	if tool.ResultText(result) != "raw+redacted" {
-		t.Fatalf("result output = %q", tool.ResultText(result))
+	if coretool.ResultText(result) != "raw+redacted" {
+		t.Fatalf("result output = %q", coretool.ResultText(result))
 	}
 	if !result.IsError {
 		t.Fatal("result should be marked as error")
@@ -344,7 +344,7 @@ func TestEmitFastPathDoesNotAllocate(t *testing.T) {
 	RunEnd.On(r, "other", func(_ context.Context, _ RunEndEvent) (struct{}, error) {
 		return struct{}{}, nil
 	})
-	if r.Has("tool.before") {
+	if toolhooks.Before.Has(r) {
 		t.Fatal("Has(tool_call) = true")
 	}
 
@@ -369,7 +369,7 @@ func TestEmitFastPathDoesNotAllocate(t *testing.T) {
 
 func TestNilRegistryTolerated(t *testing.T) {
 	var r *corehooks.Registry
-	if r.Has("tool.before") || r.Len("tool.before") != 0 {
+	if toolhooks.Before.Has(r) || toolhooks.Before.Len(r) != 0 {
 		t.Fatal("nil registry reports handlers")
 	}
 	r.Clear()
@@ -402,23 +402,24 @@ func TestClearDropsHandlers(t *testing.T) {
 	})
 
 	r.Clear()
-	if r.Has("run_end") {
+	if RunEnd.Has(r) {
 		t.Fatal("Clear left handlers behind")
 	}
 }
 
-// Two points sharing a Kind with different types must surface as an attributed
-// error rather than a silently skipped handler.
-func TestSignatureMismatchIsReported(t *testing.T) {
+// Diagnostic names do not couple otherwise unrelated typed hook points.
+func TestSameNamePointsHaveIndependentIdentity(t *testing.T) {
 	r := corehooks.New()
-	imposter := corehooks.Point[SessionEvent, struct{}]{Kind: toolhooks.Before.Kind}
+	imposter := corehooks.NewPoint[SessionEvent, struct{}](toolhooks.Before.Name())
+	called := false
 	imposter.On(r, "imposter", func(_ context.Context, _ SessionEvent) (struct{}, error) {
+		called = true
 		return struct{}{}, nil
 	})
 
 	_, err := toolhooks.Before.Emit(context.Background(), r, toolhooks.CallEvent{})
-	if !errors.Is(err, corehooks.ErrTypeMismatch) {
-		t.Fatalf("err = %v, want type mismatch", err)
+	if err != nil || called {
+		t.Fatalf("unrelated point dispatched by name: called=%v err=%v", called, err)
 	}
 }
 
@@ -439,7 +440,7 @@ func TestConcurrentEmitWhileRegistering(t *testing.T) {
 					return
 				default:
 				}
-				if _, err := toolhooks.After.Emit(ctx, r, toolhooks.ResultEvent{Result: tool.TextResult("x")}); err != nil {
+				if _, err := toolhooks.After.Emit(ctx, r, toolhooks.ResultEvent{Result: coretool.TextResult("x")}); err != nil {
 					t.Errorf("emit: %v", err)
 					return
 				}
@@ -452,16 +453,24 @@ func TestConcurrentEmitWhileRegistering(t *testing.T) {
 		registrars.Add(1)
 		go func() {
 			defer registrars.Done()
+			firstCall := make(chan struct{})
+			var called sync.Once
 			for j := 0; j < 200; j++ {
 				off := toolhooks.After.On(r, "racer", func(_ context.Context, ev toolhooks.ResultEvent) (struct{}, error) {
 					calls.Add(1)
-					ev.Result.Output = []*aop.Content{aop.Text(tool.ResultText(ev.Result) + "!")}
+					ev.Result.Output = []*aop.Content{aop.Text(coretool.ResultText(ev.Result) + "!")}
+					called.Do(func() { close(firstCall) })
 					return struct{}{}, nil
 				})
 				offEnd := RunEnd.On(r, "racer", func(_ context.Context, _ RunEndEvent) (struct{}, error) {
 					calls.Add(1)
 					return struct{}{}, nil
 				})
+				// Keep the first subscription live until an emitter observes it,
+				// even when this registrar runs before the emitting goroutines.
+				if j == 0 {
+					<-firstCall
+				}
 				off.Cancel()
 				offEnd.Cancel()
 			}
@@ -472,8 +481,11 @@ func TestConcurrentEmitWhileRegistering(t *testing.T) {
 	close(stop)
 	emitters.Wait()
 
-	if n := r.Len("tool.after"); n != 0 {
+	if n := toolhooks.After.Len(r); n != 0 {
 		t.Fatalf("leftover handlers: %d", n)
+	}
+	if n := RunEnd.Len(r); n != 0 {
+		t.Fatalf("leftover run-end handlers: %d", n)
 	}
 	if calls.Load() == 0 {
 		t.Fatal("no handler ever ran concurrently with registration")

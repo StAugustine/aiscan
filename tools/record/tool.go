@@ -9,9 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/imageutil"
+	aop "github.com/chainreactors/cyber/aop"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 const (
@@ -23,14 +22,14 @@ type Tool struct {
 	workDir       string
 	outputDir     string
 	maxConcurrent int
-	backend       captureBackend
+	backend       Backend
 
 	mu       sync.RWMutex
 	sessions map[string]*recordingSession
 	closed   bool
 }
 
-func New(workDir, outputDir string, maxConcurrent int, backend captureBackend) *Tool {
+func New(workDir, outputDir string, maxConcurrent int, backend Backend) *Tool {
 	if maxConcurrent <= 0 {
 		maxConcurrent = DefaultMaxConcurrent
 	}
@@ -52,12 +51,12 @@ func (t *Tool) Description() string {
 	return "Capture desktop or application-window screenshots and H.264 MP4 recordings. Supports synchronous duration recording and asynchronous start/stop/status sessions."
 }
 
-func (t *Tool) Definition() *tool.Definition {
-	return tool.Def(t.Name(), t.Description(), Args{})
+func (t *Tool) Definition() *coretool.Definition {
+	return coretool.Def(t.Name(), t.Description(), Args{})
 }
 
-func (t *Tool) Execute(ctx context.Context, arguments string) (*tool.Result, error) {
-	args, err := tool.ParseArgs[Args](arguments)
+func (t *Tool) Execute(ctx context.Context, arguments string) (*coretool.Result, error) {
+	args, err := coretool.ParseArgs[Args](arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +100,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (*tool.Result, err
 	}
 }
 
-func (t *Tool) screenshot(ctx context.Context, args Args) (*tool.Result, error) {
+func (t *Tool) screenshot(ctx context.Context, args Args) (*coretool.Result, error) {
 	if t.backend == nil {
 		return nil, fmt.Errorf("capture backend is unavailable")
 	}
@@ -130,14 +129,14 @@ func (t *Tool) screenshot(ctx context.Context, args Args) (*tool.Result, error) 
 	if err != nil {
 		return nil, err
 	}
-	data := imageutil.EncodePNG(img)
+	data := EncodePNG(img)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create screenshot directory: %w", err)
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return nil, fmt.Errorf("write screenshot: %w", err)
 	}
-	preview, err := imageutil.OptimizeImage(img)
+	preview, err := OptimizeImage(img)
 	if err != nil {
 		return nil, fmt.Errorf("prepare screenshot preview: %w", err)
 	}
@@ -149,7 +148,7 @@ func (t *Tool) screenshot(ctx context.Context, args Args) (*tool.Result, error) 
 		MimeType string     `json:"mime_type"`
 	}{"screenshot", target.Info, path, len(data), "image/png"}
 	text, _ := json.MarshalIndent(meta, "", "  ")
-	return &tool.Result{Output: []*aop.Content{
+	return &coretool.Result{Output: []*aop.Content{
 		aop.Text(string(text)),
 		aop.MediaData("image", preview.MimeType, filepath.Base(path), preview.Data),
 	}}, nil

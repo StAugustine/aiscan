@@ -1,63 +1,33 @@
 package node
 
 import (
-	"context"
-
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/eventbus"
-	coreevents "github.com/chainreactors/aiscan/core/events"
-	"github.com/chainreactors/aiscan/core/hooks"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/tool"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	"github.com/chainreactors/aiscan/pkg/terminal"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	filepb "github.com/chainreactors/cyber/aop/file"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/eventbus"
+	coreevents "github.com/chainreactors/cyber/core/events"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	types "github.com/chainreactors/cyber/core/types"
 )
 
-// agentEndpoint is the sole event ingress/egress point for a node connection.
-// Keeping publication and subscription on one object prevents a terminal event
-// from being sent both through the runtime bus and as a direct protocol reply.
-type agentEndpoint interface {
-	Observe(coreevents.Observer) *eventbus.Subscription[*aop.Event]
-	Publish(*aop.Event)
-}
-
 type connectionConfig struct {
-	ServerURL         string
-	WSPath            string
-	Name              string
-	Token             string
-	Capabilities      []string
-	ExtraCapabilities []string
-
-	// JSONFrames switches the wire codec from binary protobuf to standard
-	// ProtoJSON text frames (used by hubs that speak JSON, e.g. Cairn).
-	JSONFrames bool
-	Executor   tool.Executor
-	// Registry supplies the Bash pseudo-command projection to AIScan agent nodes.
-	Registry commands.Executor
-	Bash     *commands.BashTool
-	// Agent owns connection-side events. Control uses the product runtime;
-	// nil denotes a tool-only node. No optional interface selects routing.
-	Control       *agentext.Runtime
-	Agent         agentEndpoint
-	Progress      *eventbus.Bus[*toolpb.Progress]
-	Logger        telemetry.Logger
-	Chat          *chatAgentHandler
-	NodeID        string
-	Runtime       *aop.AgentRuntimeInfo
-	Status        func() *aop.AgentStatus
-	Menu          func() []*types.CommandSpec
-	RunnerFileRPC bool
-	Hooks         *hooks.Registry
-	PTYRouter     func() (*terminal.Router, error)
-	// RegisterResourceNamespaces binds control protocols backed by resources
+	ServerURL string
+	Name      string
+	Executor  coretool.Executor
+	// Events is the runtime's canonical event stream for this connection.
+	Events       *coreevents.Stream
+	Progress     *eventbus.Bus[*toolpb.Progress]
+	Logger       telemetry.Logger
+	Upload       func(*filepb.UploadRequest) (*filepb.Result, error)
+	ReloadConfig func(*types.DistributeConfig) (*types.ReloadResult, *aop.AgentStatus)
+	CommitReload func()
+	NodeID       string
+	Capabilities []string
+	Runtime      *aop.AgentRuntimeInfo
+	Status       func() *aop.AgentStatus
+	Menu         func() []*types.CommandSpec
+	// RegisterNamespaces binds control protocols backed by resources
 	// owned by the loaded profile. The connection owns only their registrations.
-	RegisterResourceNamespaces func(*aop.NamespaceMux) error
-}
-
-func connect(ctx context.Context, config connectionConfig) error {
-	return connectGenerated(ctx, config)
+	RegisterNamespaces func(*aop.NamespaceMux) error
 }

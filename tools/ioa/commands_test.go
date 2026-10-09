@@ -10,9 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chainreactors/aiscan/agent"
-	"github.com/chainreactors/aiscan/cmd/harness"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/agent"
+	"github.com/chainreactors/cyber/core/operation"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/pkg/testutil/hosttest"
+	terminaltool "github.com/chainreactors/cyber/tools/terminal"
 	"github.com/chainreactors/ioa/protocols"
 )
 
@@ -225,7 +227,7 @@ func TestSendReply(t *testing.T) {
 	}
 }
 
-func TestSendUnknownProtocol(t *testing.T) {
+func TestSendPositionalRecipientWithJSON(t *testing.T) {
 	client := newFakeIOAClient(protocols.SpaceInfo{ID: knownSpaceID, Name: "my-space"})
 	cmds := NewCommands(client, "tester", nil)
 	joinSpace(t, cmds)
@@ -234,8 +236,8 @@ func TestSendUnknownProtocol(t *testing.T) {
 	err := findSubCmd(t, cmds, "send").Execute(context.Background(), []string{
 		"nosuchproto", "--content", `{"content":"x"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown subcommand or argument") {
-		t.Fatalf("expected unknown protocol error, got: %v", err)
+	if err != nil || client.lastSentBody.Meta["target_session_id"] != "nosuchproto" {
+		t.Fatalf("expected positional recipient, got: %v", err)
 	}
 }
 
@@ -262,17 +264,17 @@ func TestSendWithoutContent(t *testing.T) {
 	}
 }
 
-func TestSendUnknownSubcommand(t *testing.T) {
+func TestSendRejectsUnknownOption(t *testing.T) {
 	client := newFakeIOAClient(protocols.SpaceInfo{ID: knownSpaceID, Name: "my-space"})
 	cmds := NewCommands(client, "tester", nil)
 	joinSpace(t, cmds)
 
 	testOutput.Reset(nil)
 	err := findSubCmd(t, cmds, "send").Execute(context.Background(), []string{
-		"bogus", "--content", `{"content":"x"}`,
+		"white", "--bogus", "x", "--content", `{"content":"x"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown subcommand or argument") {
-		t.Fatalf("expected unknown subcommand error, got: %v", err)
+	if err == nil {
+		t.Fatal("unknown option accepted")
 	}
 }
 
@@ -516,11 +518,11 @@ func TestLLMIOAToolUsage(t *testing.T) {
 	client := newFakeIOAClient(protocols.SpaceInfo{ID: knownSpaceID, Name: "test-space"})
 	cmds := NewCommands(client, "llm-tester", nil)
 
-	registry := harness.Commands(t, "ioa", cmds...)
+	registry := hosttest.Commands(t, cmds...)
 	dir := t.TempDir()
-	bash := commands.NewBashTool(dir, 30, nil)
+	bash := terminaltool.NewBashTool(dir, 30, nil)
 	bash.SetCommandRegistry(registry)
-	tools := harness.Tools(t, bash)
+	tools := hosttest.Tools(t, bash)
 	t.Cleanup(bash.Close)
 
 	systemPrompt := `You are a testing agent. You have IOA tools available as pseudo-commands through the bash tool.
@@ -594,12 +596,12 @@ func envOr(key, fallback string) string {
 // helpers
 // ---------------------------------------------------------------------------
 
-func joinSpace(t *testing.T, cmds []commands.Command) {
+func joinSpace(t *testing.T, cmds []coretool.Command) {
 	t.Helper()
 	joinSpaceByName(t, cmds, "my-space")
 }
 
-func joinSpaceByName(t *testing.T, cmds []commands.Command, name string) {
+func joinSpaceByName(t *testing.T, cmds []coretool.Command, name string) {
 	t.Helper()
 	testOutput.Reset(nil)
 	if err := findSubCmd(t, cmds, "space").Execute(context.Background(), []string{name, "test"}); err != nil {
@@ -607,14 +609,14 @@ func joinSpaceByName(t *testing.T, cmds []commands.Command, name string) {
 	}
 }
 
-type testCommand struct{ commands.Command }
+type testCommand struct{ coretool.Command }
 
 func (c testCommand) Execute(ctx context.Context, args []string) error {
-	_, err := c.Run(ctx, &commands.Execution{Args: args, Stdout: testOutput, Stderr: testOutput})
+	_, err := c.Run(ctx, &coretool.Execution{Args: args, Stdout: testOutput, Stderr: testOutput})
 	return err
 }
 
-func findCmd(t *testing.T, cmds []commands.Command, name string) testCommand {
+func findCmd(t *testing.T, cmds []coretool.Command, name string) testCommand {
 	t.Helper()
 	for _, cmd := range cmds {
 		if cmd.Name == name {
@@ -627,11 +629,11 @@ func findCmd(t *testing.T, cmds []commands.Command, name string) testCommand {
 
 // findSubCmd returns the ioa root command wrapped to dispatch the given
 // subcommand (space/send/read), so tests read like the old ioa_* commands.
-func findSubCmd(t *testing.T, cmds []commands.Command, sub string) testCommand {
+func findSubCmd(t *testing.T, cmds []coretool.Command, sub string) testCommand {
 	t.Helper()
 	root := findCmd(t, cmds, "ioa")
 	inner := root.Run
-	root.Run = func(ctx context.Context, execution *commands.Execution) (any, error) {
+	root.Run = func(ctx context.Context, execution *coretool.Execution) (any, error) {
 		execution.Args = append([]string{sub}, execution.Args...)
 		return inner(ctx, execution)
 	}
@@ -731,4 +733,105 @@ func (c *fullFakeIOAClient) GetSpaceInfo(_ context.Context, spaceID string) (pro
 		}
 	}
 	return protocols.SpaceInfo{}, fmt.Errorf("space %q not found", spaceID)
+}
+
+func TestSendAddsSessionProvenance(t *testing.T) {
+	nodeID := protocols.NewID()
+	resource := New(Config{NodeID: nodeID}, nil)
+	if err := resource.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer resource.Close(context.Background())
+	commands := resource.Service.Commands()
+	ctx := operation.ContextWithInvocation(t.Context(), operation.Invocation{SessionID: "source"})
+	if err := findSubCmd(t, commands, "send").Execute(ctx, []string{"--target-session", "child", "--content", `{"text":"hello"}`, "--meta", `{"source_session_id":"forged","target_session_id":"wrong"}`}); err != nil {
+		t.Fatal(err)
+	}
+	messages, err := resource.Service.Client().Read(ctx, resource.Service.ReceiveSpace(), protocols.ReadOptions{All: true})
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("messages: %v %v", messages, err)
+	}
+	m := messages[0]
+	if m.Meta["source_session_id"] != "source" || m.Meta["target_session_id"] != "child" || len(m.Refs.Nodes) != 1 || m.Refs.Nodes[0] != nodeID {
+		t.Fatalf("provenance: %#v", m)
+	}
+	if m.Meta["interrupt"] != nil {
+		t.Fatal("ordinary send requests interruption")
+	}
+	if err := findSubCmd(t, commands, "send").Execute(ctx, []string{"handoff", "--target-session=child", "--interrupt", "--title", "task", "--message", "work"}); err != nil {
+		t.Fatal(err)
+	}
+	messages, err = resource.Service.Client().Read(ctx, resource.Service.ReceiveSpace(), protocols.ReadOptions{All: true})
+	if err != nil || len(messages) != 2 || messages[1].Meta["source_session_id"] != "source" || messages[1].Meta["interrupt"] != true {
+		t.Fatalf("typed send: %v %v", messages, err)
+	}
+}
+
+func TestSendShortForm(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		args      []string
+		text      string
+		interrupt bool
+		invalid   bool
+	}{
+		{name: "plain", args: []string{"white", "第 2 手 F4"}, text: "第 2 手 F4"},
+		{name: "quoted JSON text", args: []string{"white", `a "quote" and {JSON}`}, text: `a "quote" and {JSON}`},
+		{name: "interrupt", args: []string{"white", "change course", "--interrupt"}, text: "change course", interrupt: true},
+		{name: "JSON", args: []string{"white", "--content", `{"text":"hello"}`}, text: "hello"},
+		{name: "protocol name as recipient", args: []string{"handoff", "hello"}, text: "hello"},
+		{name: "flag text in JSON", args: []string{"white", "--content", `{"text":"--interrupt"}`}, text: "--interrupt"},
+		{name: "missing text", args: []string{"white"}, invalid: true},
+		{name: "empty recipient", args: []string{"", "hello"}, invalid: true},
+		{name: "two targets", args: []string{"white", "hello", "--target-session", "black"}, invalid: true},
+		{name: "extra text", args: []string{"white", "hello", "extra"}, invalid: true},
+		{name: "empty legacy target", args: []string{"--target-session=", "--content", `{"text":"hello"}`}, invalid: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resource := New(Config{}, nil)
+			if err := resource.Start(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer resource.Close(context.Background())
+			ctx := operation.ContextWithInvocation(t.Context(), operation.Invocation{SessionID: "black"})
+			err := findSubCmd(t, resource.Service.Commands(), "send").Execute(ctx, tt.args)
+			if tt.invalid {
+				if err == nil {
+					t.Fatal("invalid send accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			messages, err := resource.Service.Client().Read(ctx, resource.Service.ReceiveSpace(), protocols.ReadOptions{All: true})
+			if err != nil || len(messages) != 1 {
+				t.Fatalf("messages: %v %v", messages, err)
+			}
+			m := messages[0]
+			urgent, _ := m.Meta["interrupt"].(bool)
+			if m.Content["text"] != tt.text || m.Meta["target_session_id"] != tt.args[0] || m.Meta["source_session_id"] != "black" || urgent != tt.interrupt {
+				t.Fatalf("wrong message: %#v", m)
+			}
+		})
+	}
+}
+
+func TestSendProtocolBooleanAndHelp(t *testing.T) {
+	resource := New(Config{}, nil)
+	if err := resource.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer resource.Close(context.Background())
+	command := findSubCmd(t, resource.Service.Commands(), "send")
+	if err := command.Execute(t.Context(), []string{"swarm", "--task", "--interrupt", "--target-session", "worker", "--content=--interrupt"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := resource.Service.Client().Read(t.Context(), resource.Service.ReceiveSpace(), protocols.ReadOptions{All: true})
+	if err != nil || len(rows) != 1 || rows[0].Meta["interrupt"] != true || rows[0].Content["content"] != "--interrupt" {
+		t.Fatalf("protocol flags: %v %v", rows, err)
+	}
+	if err := command.Execute(t.Context(), []string{"handoff", "--help"}); err != nil {
+		t.Fatal(err)
+	}
 }

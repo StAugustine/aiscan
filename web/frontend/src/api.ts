@@ -5,6 +5,7 @@ import { create, type MessageInitShape } from '@bufbuild/protobuf'
 import { anyPack } from '@bufbuild/protobuf/wkt'
 import {
   AOPClient,
+  newID as newRPCID,
   AOPProtocolMessageSchema,
   FileProtocolMessageSchema,
   type AOPPayload,
@@ -18,11 +19,18 @@ import {
 import {
   AgentService,
   CommandProtocolMessageSchema,
+  GuardrailProtocolMessageSchema,
+  JEVProtocolMessageSchema,
+  type JEVProtocolMessage,
+  type JEVLibrary,
+  type GuardrailProtocolMessage,
+  type Review,
   ConfigService,
+  DistributeConfigSchema,
   LLMProbeRequestSchema,
   ReloadProtocolMessageSchema,
   AgentRunOptionsSchema,
-  SCOService,
+  ArtifactService,
   ScanProtocolMessageSchema,
   ScanService,
   ScanStatus,
@@ -45,7 +53,7 @@ import {
   type ScanOptions,
   type SessionRecord,
   type SystemStatus as ServerStatus,
-} from './aiscan-proto'
+} from './cyber-proto'
 
 export type { SCONode };
 export type { AOPEvent };
@@ -56,27 +64,45 @@ export type { AgentListMetadata, AgentView, CommandSpec, ConfigView, DistributeC
 export type { Session as AOPSession } from '@cyber/aop';
 export { ScanStatus };
 
+// Binary framing, matching the AOP channel. The events these services return
+// carry google.protobuf.Any extensions whose type set is open — SessionHistory,
+// SessionScanEvent, the observe payloads, and whatever a future agent attaches.
+// JSON framing expands an Any by looking its type up in a client-side registry,
+// so one unregistered extension makes the entire response undecodable; binary
+// framing leaves the Any as {typeUrl, value} for the caller's own anyUnpack.
 const connectTransport = createConnectTransport({
   baseUrl: window.location.origin,
-  useBinaryFormat: false,
+  useBinaryFormat: true,
 })
 
-// One AIScan facade is initialized for the application. The generated service
+// One Cyber facade is initialized for the application. The generated service
 // clients are lightweight API groups and all share this single transport.
-const aiscanRPC = {
+const cyberRPC = {
   sessions: createClient(SessionService, connectTransport),
   scans: createClient(ScanService, connectTransport),
   config: createClient(ConfigService, connectTransport),
   agents: createClient(AgentService, connectTransport),
   system: createClient(SystemService, connectTransport),
-  sco: createClient(SCOService, connectTransport),
+  artifacts: createClient(ArtifactService, connectTransport),
 }
 const aopClient = new AOPClient()
   .register(CommandProtocolMessageSchema)
-  .register(ScanProtocolMessageSchema)
   .register(ReloadProtocolMessageSchema)
+  .register(GuardrailProtocolMessageSchema)
+  .register(JEVProtocolMessageSchema)
 
-export const AUTH_REQUIRED_EVENT = 'aiscan:auth-required'
+const registeredCapabilities = new Set<string>()
+// Protocol packages are mounted from the server manifest. A profile-neutral
+// Hub therefore does not register or dispatch scan messages unless the Hub or
+// a connected profile advertises the scan capability.
+export function registerCapabilityProtocols(capability: string): void {
+  if (registeredCapabilities.has(capability)) return
+  if (capability === 'scan') aopClient.register(ScanProtocolMessageSchema)
+  registeredCapabilities.add(capability)
+}
+
+export const AUTH_REQUIRED_EVENT = 'cyber:auth-required'
+export const CONFIG_CHANGED_EVENT = 'cyber:config-changed'
 
 export class APIError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -167,7 +193,7 @@ export interface IOAOverview {
 
 export async function getStatus(): Promise<ServerStatus> {
   try {
-    const response = await aiscanRPC.system.getStatus({})
+    const response = await cyberRPC.system.getStatus({})
     if (!response.status) throw new Error('Status is unavailable')
     return response.status
   } catch (error) {
@@ -177,16 +203,28 @@ export async function getStatus(): Promise<ServerStatus> {
 
 export async function listAgents(): Promise<AgentView[]> {
   try {
-    const response = await aiscanRPC.agents.listAgents({})
+    const response = await cyberRPC.agents.listAgents({})
     return response.agents
   } catch (error) {
     throw connectFailure(error, 'Failed to list agents')
   }
 }
 
+// The Hub may intentionally have no local provider client: in the profile-
+// neutral deployment the connected scan/audit node owns the provider. The
+// status endpoint still exposes the saved provider/model, so configuration is
+// present when a model and provider are available even if `llm_available` is
+// false on the Hub itself.
+export function llmConfigured(status: ServerStatus | null | undefined): boolean {
+  return !!(
+    status?.llmModel?.trim() &&
+    (status.llmAvailable || status.llmApiKeyConfigured || status.llmProvider?.trim())
+  )
+}
+
 export async function getConfigStatus(): Promise<ConfigView> {
   try {
-    const response = await aiscanRPC.config.getConfig({})
+    const response = await cyberRPC.config.getConfig({})
     if (!response.config) throw new Error('Config is unavailable')
     return response.config
   } catch (error) {
@@ -196,8 +234,9 @@ export async function getConfigStatus(): Promise<ConfigView> {
 
 export async function saveConfig(config: DistributeConfig): Promise<ConfigView> {
   try {
-    const response = await aiscanRPC.config.updateConfig({ config })
+    const response = await cyberRPC.config.updateConfig({ config })
     if (!response.config) throw new Error('Config update returned no view')
+    window.dispatchEvent(new Event(CONFIG_CHANGED_EVENT))
     return response.config
   } catch (error) {
     throw connectFailure(error, 'Failed to save config')
@@ -206,7 +245,7 @@ export async function saveConfig(config: DistributeConfig): Promise<ConfigView> 
 
 export async function activateLLMProfile(id: string): Promise<ConfigView> {
   try {
-    const response = await aiscanRPC.config.activateProfile({ profileId: id })
+    const response = await cyberRPC.config.activateProfile({ profileId: id })
     if (!response.config) throw new Error('Profile activation returned no view')
     return response.config
   } catch (error) {
@@ -214,20 +253,30 @@ export async function activateLLMProfile(id: string): Promise<ConfigView> {
   }
 }
 
+// Keep the installed policy warm: interaction-mode edits do not reload agents.
+export async function setGuardrailMode(mode: 'safe' | 'auto'): Promise<ConfigView> {
+  const current = await getConfigStatus()
+  return saveConfig(create(DistributeConfigSchema, {
+    extensions: {
+      guardrail: { ...current.extensions.guardrail?.values, mode },
+    },
+  }))
+}
+
 // Blank api_key asks the server to reuse the stored secret.
 export async function testLLM(req: MessageInitShape<typeof LLMProbeRequestSchema>): Promise<LLMProbeResult> {
-  return aiscanRPC.config.testLLM(req)
+  return cyberRPC.config.testLLM(req)
 }
 
 export async function listLLMModels(req: MessageInitShape<typeof LLMProbeRequestSchema>): Promise<ListModelsResult> {
-  return aiscanRPC.config.listModels(req)
+  return cyberRPC.config.listModels(req)
 }
 
 // testConn probes the external dependencies of a settings section
-// (cyberhub | recon | search | ioa). The current (possibly unsaved) form is
+// (cyberhub | recon | search | ioa.client). The current form is
 // sent so edits are tested; blank secrets fall back to stored values server-side.
 export async function testConn(section: string, config: DistributeConfig): Promise<TestConnectionResponse> {
-  return aiscanRPC.config.testConnection({ section, config })
+  return cyberRPC.config.testConnection({ section, config })
 }
 
 // --- IOA overview ---
@@ -242,52 +291,14 @@ export async function getIOAOverview(): Promise<IOAOverview> {
   return { nodes, spaces, messages }
 }
 
-export async function submitScan(target: string, mode: string, options: ScanOptions): Promise<Scan> {
-	try {
-		const response = await aiscanRPC.scans.submitScan({ requestId: newRPCID(), target, mode, options })
-		if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to submit scan')
-		return response.outcome.value
-	} catch (error) {
-		throw connectFailure(error, 'Failed to submit scan')
-	}
-}
-
-export async function getScan(id: string): Promise<Scan> {
-	try {
-		const response = await aiscanRPC.scans.getScan({ scanId: id })
-		if (!response.scan) throw new Error('Scan not found')
-		return response.scan
-	} catch (error) {
-		throw connectFailure(error, 'Scan not found')
-	}
-}
-
-export async function listScans(): Promise<Scan[]> {
-	try {
-		const response = await aiscanRPC.scans.listScans({})
-		return response.scans
-	} catch (error) {
-		throw connectFailure(error, 'Failed to list scans')
-	}
-}
-
-export async function deleteScan(id: string): Promise<void> {
-	try {
-		const response = await aiscanRPC.scans.cancelScan({ requestId: newRPCID(), scanId: id })
-		if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to cancel scan')
-	} catch (error) {
-		throw connectFailure(error, 'Failed to cancel scan')
-	}
-}
-
 // --- Chat session API ---
 
-export async function createChatSession(nodeID: string, title?: string, scanID?: string): Promise<Session> {
+export async function createChatSession(nodeID: string, title?: string, scanID?: string, opts?: { sessionID: string; requestID: string }): Promise<Session> {
   try {
 	const extensions = scanID
 		? [anyPack(SessionBindingSchema, create(SessionBindingSchema, { scanId: scanID }))]
 		: []
-	const response = await requestCore(create(AOPProtocolMessageSchema, { message: { case: 'openSessionRequest', value: { sessionId: newRPCID(), nodeId: nodeID, title: title || '', extensions } } }), 'openSessionResponse')
+	const response = await requestCore(create(AOPProtocolMessageSchema, { message: { case: 'openSessionRequest', value: { sessionId: opts?.sessionID || newRPCID(), nodeId: nodeID, title: title || '', extensions } } }), 'openSessionResponse', opts?.requestID)
     if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to create session')
     return response.outcome.value
   } catch (error) {
@@ -295,18 +306,27 @@ export async function createChatSession(nodeID: string, title?: string, scanID?:
   }
 }
 
-export async function listChatSessions(): Promise<SessionRecord[]> {
-  try {
-    const response = await aiscanRPC.sessions.listSessions({ limit: 100, includeClosed: true })
-    return response.sessions
-  } catch (error) {
-    throw connectFailure(error, 'Failed to list sessions')
-  }
+export type SessionFilters = { search: string; nodeId: string; archived: boolean }
+export async function listChatSessions(filters?: Partial<SessionFilters>): Promise<SessionRecord[]> {
+  const sessions: SessionRecord[] = []
+  let afterCursor = ''
+  do {
+    const response = await cyberRPC.sessions.listSessions({ ...filters, afterCursor, limit: 100, includeClosed: true })
+    sessions.push(...response.sessions)
+    afterCursor = response.nextCursor
+  } while (afterCursor)
+  return [...new Map(sessions.map((record) => [record.session?.id, record])).values()]
+}
+
+export async function updateChatSession(sessionId: string, patch: { title?: string; archived?: boolean }): Promise<SessionRecord> {
+  const response = await cyberRPC.sessions.updateSession({ requestId: newRPCID(), sessionId, ...patch })
+  if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to update session')
+  return response.outcome.value
 }
 
 export async function getChatSession(id: string): Promise<SessionRecord> {
   try {
-    const response = await aiscanRPC.sessions.getSession({ sessionId: id })
+    const response = await cyberRPC.sessions.getSession({ sessionId: id })
     if (!response.session) throw new Error('Session not found')
     return response.session
   } catch (error) {
@@ -316,7 +336,7 @@ export async function getChatSession(id: string): Promise<SessionRecord> {
 
 export async function deleteChatSession(id: string): Promise<void> {
   try {
-    const response = await aiscanRPC.sessions.deleteSession({ requestId: newRPCID(), sessionId: id })
+    const response = await cyberRPC.sessions.deleteSession({ requestId: newRPCID(), sessionId: id })
     if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to delete session')
   } catch (error) {
     throw connectFailure(error, 'Failed to delete session')
@@ -325,7 +345,7 @@ export async function deleteChatSession(id: string): Promise<void> {
 
 export async function resetChatSession(id: string): Promise<SessionRecord> {
   try {
-    const response = await aiscanRPC.sessions.resetSession({ requestId: newRPCID(), sessionId: id })
+    const response = await cyberRPC.sessions.resetSession({ requestId: newRPCID(), sessionId: id })
     if (response.outcome.case !== 'accepted' || !response.outcome.value.current) {
       throw rejectionError(response.outcome.case === 'rejected' ? response.outcome.value : undefined, 'Failed to reset session')
     }
@@ -335,26 +355,30 @@ export async function resetChatSession(id: string): Promise<SessionRecord> {
   }
 }
 
-// The web "/" menu is built from the aiscan.chat.CommandSpec list returned by
+// The web "/" menu is built from the cyber.chat.CommandSpec list returned by
 // SessionService/ListCommands (hub-scope commands merged with the bound
 // agent's reported commands), so it always reflects the real command set
 // instead of a hardcoded list.
 export async function fetchSessionCommands(sessionID: string): Promise<CommandSpec[]> {
   try {
-    const response = await aiscanRPC.sessions.listCommands({ sessionId: sessionID })
+    const response = await cyberRPC.sessions.listCommands({ sessionId: sessionID })
     return response.commands
   } catch (error) {
     throw connectFailure(error, 'Failed to load commands')
   }
 }
 
+export type ChatSendOptions = {
+  persist?: boolean
+  evalCriteria?: string
+  evalRounds?: string
+  images?: { data: Uint8Array; mediaType: string; filename: string }[]
+}
+
 export async function sendChatMessage(
   sessionID: string,
   content: string,
-  opts?: {
-    persist?: boolean
-    evalCriteria?: string
-    evalMaxRounds?: number
+  opts?: ChatSendOptions & {
     messageID?: string
     turnID?: string
     requestID?: string
@@ -366,13 +390,18 @@ export async function sendChatMessage(
   const extensions = []
   const criteria = opts?.persist ? opts.evalCriteria?.trim() : ''
   if (criteria) {
-    const value = create(AgentRunOptionsSchema, { evalCriteria: criteria, evalMaxRounds: Math.max(opts?.evalMaxRounds || 0, 0) })
+    const value = create(AgentRunOptionsSchema, { evalCriteria: criteria, evalRounds: opts?.evalRounds?.trim() || '' })
     extensions.push(anyPack(AgentRunOptionsSchema, value))
   }
   try {
 	const request = create(AOPProtocolMessageSchema, { message: { case: 'runTurnRequest', value: {
 	  sessionId: sessionID, turnId: turnID, continueSession: opts?.continueSession === true,
-	  input: { id: messageID, role: 'user', content: opts?.continueSession ? [] : [{ value: { case: 'text', value: { text: content } } }] }, extensions,
+	  input: { id: messageID, role: 'user', content: opts?.continueSession ? [] : [
+      ...(content ? [{ value: { case: 'text' as const, value: { text: content } } }] : []),
+      ...(opts?.images || []).map(image => ({ value: { case: 'media' as const, value: {
+        kind: 'image', resource: { mediaType: image.mediaType, filename: image.filename, source: { case: 'data' as const, value: image.data } },
+      } } })),
+    ] }, extensions,
 	} } })
 	const response = await requestCore(request, 'runTurnResponse', opts?.requestID)
     if (response.outcome.case !== 'accepted') throw rejectionError(response.outcome.value, 'Failed to send message')
@@ -382,10 +411,10 @@ export async function sendChatMessage(
   }
 }
 
-export async function executeChatCommand(sessionID: string, line: string): Promise<void> {
+export async function executeChatCommand(sessionID: string, line: string, requestID?: string): Promise<void> {
   try {
 	const request = create(CommandProtocolMessageSchema, { message: { case: 'request', value: { sessionId: sessionID, line } } })
-	const response = await aopClient.request(CommandProtocolMessageSchema, request)
+	const response = await aopClient.request(CommandProtocolMessageSchema, request, { id: requestID })
 	if (response.$typeName === 'aop.ProtocolMessage') {
 		const core = response as AOPProtocolMessage
 		if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
@@ -393,6 +422,40 @@ export async function executeChatCommand(sessionID: string, line: string): Promi
   } catch (error) {
 	throw error instanceof Error ? error : new Error('Failed to execute command')
   }
+}
+
+async function requestGuardrail(request: GuardrailProtocolMessage): Promise<GuardrailProtocolMessage> {
+  const response = await aopClient.request(GuardrailProtocolMessageSchema, request, { timeoutMs: 12_000, requireConnected: request.message.case === 'resolve' })
+  if (response.$typeName === 'aop.ProtocolMessage') {
+    const core = response as AOPProtocolMessage
+    if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
+  }
+  if (response.$typeName !== 'cyber.guardrail.ProtocolMessage') throw new Error('Unexpected guardrail response')
+  return response as GuardrailProtocolMessage
+}
+
+export async function pendingGuardrailReviews(sessionId: string): Promise<Review[]> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'pending', value: { sessionId } } }))
+  if (response.message.case !== 'pendingResult') throw new Error('Expected pending guardrail reviews')
+  return response.message.value.reviews
+}
+
+export async function getJEVLibrary(sessionId: string): Promise<JEVLibrary> {
+  const response = await aopClient.request(JEVProtocolMessageSchema,
+    create(JEVProtocolMessageSchema, { message: { case: 'request', value: { sessionId } } }), { timeoutMs: 12_000 })
+  if (response.$typeName === 'aop.ProtocolMessage') {
+    const core = response as AOPProtocolMessage
+    if (core.message.case === 'protocolError') throw new Error(core.message.value.message)
+  }
+  if (response.$typeName !== 'cyber.jev.ProtocolMessage') throw new Error('Unexpected JEV response')
+  const value = response as JEVProtocolMessage
+  if (value.message.case !== 'library') throw new Error('Expected JEV library')
+  return value.message.value
+}
+
+export async function resolveGuardrailReview(sessionId: string, operationId: string, approve: boolean): Promise<void> {
+  const response = await requestGuardrail(create(GuardrailProtocolMessageSchema, { message: { case: 'resolve', value: { sessionId, operationId, approve } } }))
+  if (response.message.case !== 'resolved') throw new Error('Expected guardrail resolution')
 }
 
 export async function cancelChatSession(sessionID: string, turnID: string): Promise<void> {
@@ -435,46 +498,41 @@ export async function uploadChatFile(sessionID: string, file: File): Promise<Fil
 }
 
 // Chat history is the raw AOP event log; views project EventDelivery records
-// into their own render models (see useChatSession.deliveryToChatMessage).
-export async function listChatMessages(sessionID: string): Promise<EventDelivery[]> {
+// directly into the existing AOP reducer.
+export async function listChatEvents(sessionID: string, afterCursor = ''): Promise<EventDelivery[]> {
   try {
-	const response = await aiscanRPC.sessions.listEvents({ sessionId: sessionID, limit: 500 })
-    return response.events
+    const events: EventDelivery[] = []
+    do {
+      const response = await cyberRPC.sessions.listEvents({ sessionId: sessionID, limit: 500, afterCursor })
+      events.push(...response.events)
+      if (response.nextCursor === afterCursor && afterCursor) throw new Error('History cursor did not advance')
+      afterCursor = response.nextCursor
+    } while (afterCursor)
+    return events
   } catch (error) {
     throw connectFailure(error, 'Failed to list messages')
   }
 }
 
-// Fetch a scan's markdown report, re-rendered server-side in the given language
-// ('en' | 'zh'). Returns '' when the report isn't ready yet (404) so callers can
-// just show a placeholder.
-export async function fetchScanReport(scanID: string, lang: string): Promise<string> {
-	try {
-		const response = await aiscanRPC.scans.getScanReport({ scanId: scanID, language: lang })
-		return response.markdown
-	} catch {
-		return ''
-	}
-}
-
 export function subscribeAOPEvents(
   sessionID: string,
-  onEvent: (event: AOPEvent) => void,
-  onReconnect?: () => void,
+  onEvent: (event: AOPEvent, cursor: string) => void,
+  afterCursor = '',
 ): () => void {
 	const watch = (cursor: string) => create(AOPProtocolMessageSchema, { message: { case: 'watchEventsRequest', value: { sessionId: sessionID, afterCursor: cursor } } })
-	return aopClient.subscribe(AOPProtocolMessageSchema, watch(''), (payload) => {
+	return aopClient.subscribe(AOPProtocolMessageSchema, watch(afterCursor), (payload, envelope) => {
 		if (payload.$typeName !== 'aop.ProtocolMessage') return
 		const core = payload as AOPProtocolMessage
-		if (core.message.case === 'event') onEvent(core.message.value)
-	}, { durable: true, resume: (cursor) => { onReconnect?.(); return watch(cursor) } })
+		if (core.message.case === 'event') onEvent(core.message.value, envelope.deliveryCursor)
+	}, { durable: true, resume: (cursor) => watch(cursor || afterCursor) })
 }
 
 function rejectionError(value: { code?: string; message?: string } | undefined, fallback: string): Error {
-  return new Error(value?.message || value?.code || fallback)
+  return Object.assign(new Error(value?.message || value?.code || fallback), { rejected: true, code: value?.code })
 }
 
 function connectFailure(error: unknown, fallback: string): Error {
+  if ((error as { rejected?: boolean })?.rejected && error instanceof Error) return error
   const failure = ConnectError.from(error)
   if (failure.code === Code.Unauthenticated) window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT))
   return new Error(failure.rawMessage || failure.message || fallback)
@@ -493,55 +551,15 @@ async function requestCore<C extends CoreCase>(request: AOPProtocolMessage, expe
 	return core.message.value as CoreValue<C>
 }
 
-function newRPCID(): string {
-  const value = globalThis.crypto
-  if (value && typeof value.randomUUID === 'function') {
-    try { return value.randomUUID() } catch {}
-  }
-  if (value && typeof value.getRandomValues === 'function') {
-    const bytes = new Uint8Array(16)
-    value.getRandomValues(bytes)
-    bytes[6] = (bytes[6] & 0x0f) | 0x40
-    bytes[8] = (bytes[8] & 0x3f) | 0x80
-    const hex = Array.from(bytes, (item) => item.toString(16).padStart(2, '0')).join('')
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-}
-
 export { aopClient }
 
-// ── SCO Nodes ──
-
-export async function listSCONodes(opts?: { type?: string; scanId?: string; limit?: number }): Promise<SCONode[]> {
-  const response = await aiscanRPC.sco.listNodes({ type: opts?.type || '', operationId: opts?.scanId || '', limit: opts?.limit || 0 })
-  return (response.nodes?.nodes || []).map(decodeSCONode)
-}
-
-export async function getSCONode(id: string): Promise<SCONode> {
-  return decodeSCONode((await aiscanRPC.sco.getNode({ id })).node)
-}
-
-export async function getSCOStats(): Promise<Record<string, number>> {
-  const values = (await aiscanRPC.sco.getStats({})).values
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [key, Number(value)]))
-}
-
-export async function getSupportedArtifacts(): Promise<string[]> {
-  return (await aiscanRPC.sco.listArtifacts({})).artifacts
-}
-
-export async function importSCOData(
-  file: File,
-  artifact: string,
-  scanId = 'import',
-): Promise<{ status: string; nodes: number; artifact: string; duplicates: number }> {
-  const response = await aiscanRPC.sco.importNodes({ data: new Uint8Array(await file.arrayBuffer()), artifact, operationId: scanId })
-  return { status: 'ok', nodes: Number(response.nodes), artifact: response.artifact, duplicates: Number(response.duplicates) }
-}
-
-function decodeSCONode(data: Uint8Array): SCONode {
-  return JSON.parse(new TextDecoder().decode(data)) as SCONode
+export async function syncArtifactEvents(afterCursor = '', artifacts: AOPEvent[] = []): Promise<EventDelivery[]> {
+  try {
+    const response = await cyberRPC.artifacts.syncArtifacts({ afterCursor, artifacts })
+    return response.artifacts
+  } catch (error) {
+    throw connectFailure(error, 'Failed to sync artifacts')
+  }
 }
 
 async function apiJSON<T>(path: string, fallbackMessage: string, init?: RequestInit): Promise<T> {
@@ -569,4 +587,10 @@ async function errorMessage(res: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+export async function getScan(id: string): Promise<Scan> {
+  const response = await cyberRPC.scans.getScan({ scanId: id })
+  if (!response.scan) throw new Error('Scan not found')
+  return response.scan
 }

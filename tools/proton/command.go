@@ -15,11 +15,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/tools/toolargs"
+	aop "github.com/chainreactors/cyber/aop"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 	"github.com/chainreactors/neutron/operators"
 	"github.com/chainreactors/neutron/protocols"
 	"github.com/chainreactors/proton/proton/file"
@@ -30,6 +30,7 @@ import (
 type Command struct {
 	toolargs.Base
 	resourceProvider func(string) []byte
+	excludePaths     []string
 }
 
 func New() *Command {
@@ -140,13 +141,13 @@ type protonFlags struct {
 	Debug   bool `long:"debug" description:"enable debug logging"`
 }
 
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("proton", &err)
 	args := execution.Args
-	args = c.resolveRelativePaths(args)
+	args = toolargs.ResolveRelativePaths(args, protonFileFlags, c.WorkDir)
 	var flags protonFlags
 	parser := goflags.NewParser(&flags, goflags.Default&^goflags.PrintErrors)
-	remaining, err := parser.ParseArgs(normalizeShortFlags(args))
+	remaining, err := parser.ParseArgs(toolargs.NormalizeFlags(args, protonKnownFlags, toolargs.CommonAliases))
 	if err != nil {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
 			fmt.Fprint(execution.Stdout, c.Usage()+"\n")
@@ -208,7 +209,7 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 		return nil, fmt.Errorf("proton: %w", err)
 	}
 	if len(inputs) == 0 && execution.Stdin != nil {
-		stdinFile, stdinErr := os.CreateTemp("", "aiscan-proton-stdin-*")
+		stdinFile, stdinErr := os.CreateTemp("", "cyber-proton-stdin-*")
 		if stdinErr != nil {
 			return nil, fmt.Errorf("proton: create stdin file: %w", stdinErr)
 		}
@@ -267,13 +268,20 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	c.Logger.Infof("proton action=scanning targets=%d rules=%d", len(inputs), scanner.Stats.Rules)
 
 	for _, input := range inputs {
-		info, statErr := os.Stat(input)
-		if statErr != nil {
-			c.Logger.Warnf("proton: skip %s: %v", input, statErr)
+		if excludedPath(input, c.excludePaths) {
 			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		info, statErr := os.Stat(input)
+		if statErr != nil {
+			return nil, fmt.Errorf("proton: input %s: %w", input, statErr)
+		}
 		if info.IsDir() {
-			walkAndScan(ctx, execution.Stderr, scanner, input, callback)
+			if err := walkAndScan(ctx, execution.Stderr, scanner, input, callback, c.excludePaths...); err != nil {
+				return nil, err
+			}
 		} else {
 			scanSingleFile(scanner, input, callback)
 		}
@@ -373,10 +381,6 @@ var protonFileFlags = map[string]bool{
 	"-t": true, "--templates": true,
 }
 
-func (c *Command) resolveRelativePaths(args []string) []string {
-	return toolargs.ResolveRelativePaths(args, protonFileFlags, c.WorkDir)
-}
-
 // --- output ---
 
 // jsonFinding is proton's nuclei-style JSON contract. It deliberately uses
@@ -449,7 +453,7 @@ func scanSingleFile(scanner *file.Scanner, path string, callback func(file.Findi
 	}
 }
 
-func walkAndScan(ctx context.Context, stderr io.Writer, scanner *file.Scanner, target string, callback func(file.Finding)) {
+func walkAndScan(ctx context.Context, stderr io.Writer, scanner *file.Scanner, target string, callback func(file.Finding), excludes ...string) error {
 	numWorkers := runtime.NumCPU()
 	if numWorkers > 8 {
 		numWorkers = 8
@@ -486,12 +490,18 @@ func walkAndScan(ctx context.Context, stderr io.Writer, scanner *file.Scanner, t
 		}()
 	}
 
-	if walkErr := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		if err != nil {
 			return err
+		}
+		if excludedPath(path, excludes) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() {
 			if file.ShouldSkipDir(d.Name()) {
@@ -513,14 +523,20 @@ func walkAndScan(ctx context.Context, stderr io.Writer, scanner *file.Scanner, t
 			if !group.MatchesFile(path, ext) {
 				continue
 			}
-			jobCh <- job{path: path, group: group}
+			select {
+			case jobCh <- job{path: path, group: group}:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 		return nil
-	}); walkErr != nil && ctx.Err() == nil {
-		fmt.Fprintf(stderr, "proton: walk %s: %v\n", target, walkErr)
-	}
+	})
 	close(jobCh)
 	wg.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return walkErr
 }
 
 // --- helpers ---
@@ -608,6 +624,20 @@ var protonKnownFlags = map[string]struct{}{
 	"-bin": {}, "-timeout": {}, "-debug": {},
 }
 
-func normalizeShortFlags(args []string) []string {
-	return toolargs.NormalizeFlags(args, protonKnownFlags, toolargs.CommonAliases)
+func excludedPath(path string, excludes []string) bool {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, exclude := range excludes {
+		base, err := filepath.Abs(exclude)
+		if err != nil {
+			continue
+		}
+		relative, err := filepath.Rel(base, absolute)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

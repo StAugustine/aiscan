@@ -1,0 +1,402 @@
+package config
+
+import (
+	"context"
+	"fmt"
+	"gopkg.in/yaml.v3"
+	"math"
+	"os"
+	"reflect"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/chainreactors/cyber/core/resource"
+	types "github.com/chainreactors/cyber/core/types"
+	"github.com/go-viper/mapstructure/v2"
+)
+
+// Values is configuration data, never a registry of running services.
+type Values map[string]map[string]any
+
+// Section is an inert configuration declaration.
+type Section struct {
+	Key         string
+	Aliases     []string
+	New         func() any
+	Validate    func(any) error
+	Secrets     []string
+	AliasFields func(map[string]any) (map[string]any, error)
+	Environment func(Sources) (overrides, fallbacks map[string]any, err error)
+	Normalize   func(any) error
+}
+type Sections struct {
+	mu           sync.Mutex
+	declarations map[string]Section
+	aliases      map[string]string
+	connections  map[string]func(context.Context, *types.DistributeConfig, *types.DistributeConfig) []*types.ConnectionCheck
+	sealed       bool
+}
+
+func NewSections() *Sections {
+	return &Sections{
+		declarations: map[string]Section{},
+		aliases:      map[string]string{},
+		connections:  map[string]func(context.Context, *types.DistributeConfig, *types.DistributeConfig) []*types.ConnectionCheck{},
+	}
+}
+
+// Add installs one atomic declaration batch.
+func (r *Sections) Add(sections ...Section) (resource.Handle, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sealed {
+		return nil, fmt.Errorf("configuration declarations are sealed")
+	}
+	names := map[string]bool{}
+	for key := range r.declarations {
+		names[key] = true
+	}
+	for alias := range r.aliases {
+		names[alias] = true
+	}
+	for _, section := range sections {
+		if strings.TrimSpace(section.Key) == "" || section.New == nil {
+			return nil, fmt.Errorf("configuration section requires key and factory")
+		}
+		local := map[string]bool{}
+		for index, name := range append([]string{section.Key}, section.Aliases...) {
+			// A root YAML alias and extensions key are different locations.
+			if index > 0 && name == section.Key && !local[name] {
+				local[name] = true
+				continue
+			}
+			if strings.TrimSpace(name) == "" {
+				return nil, fmt.Errorf("empty configuration name")
+			}
+			if names[name] {
+				return nil, fmt.Errorf("duplicate configuration name %q", name)
+			}
+			names[name] = true
+		}
+	}
+	registered := make([]Section, 0, len(sections))
+	for _, section := range sections {
+		section.Aliases = append([]string(nil), section.Aliases...)
+		section.Secrets = append([]string(nil), section.Secrets...)
+		r.declarations[section.Key] = section
+		for _, alias := range section.Aliases {
+			r.aliases[alias] = section.Key
+		}
+		registered = append(registered, section)
+	}
+	closed := false
+	return resource.HandleFunc(func(context.Context) error {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if closed {
+			return nil
+		}
+		closed = true
+		if r.sealed {
+			return nil
+		}
+		for _, section := range registered {
+			delete(r.declarations, section.Key)
+			for _, alias := range section.Aliases {
+				delete(r.aliases, alias)
+			}
+		}
+		return nil
+	}), nil
+}
+func (r *Sections) Seal() {
+	r.mu.Lock()
+	r.sealed = true
+	r.mu.Unlock()
+}
+
+// Has only queries declarations; the host owns the declaration lifecycle.
+func (r *Sections) Has(key string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.declarations[key]
+	return ok
+}
+func CloneValues(values Values) Values {
+	out := make(Values, len(values))
+	for key, fields := range values {
+		if fields == nil {
+			out[key] = nil
+		} else {
+			out[key] = CloneDocument(fields)
+		}
+	}
+	return out
+}
+func mergeFields(dst, src map[string]any) {
+	for key, value := range src {
+		if nested, ok := value.(map[string]any); ok {
+			target, _ := dst[key].(map[string]any)
+			if target == nil {
+				target = map[string]any{}
+				dst[key] = target
+			}
+			mergeFields(target, nested)
+		} else {
+			dst[key] = value
+		}
+	}
+}
+func (r *Sections) Normalize(document map[string]any) (Values, error) {
+	out := Values{}
+	if raw := document["extensions"]; raw != nil {
+		switch values := raw.(type) {
+		case Values:
+			out = CloneValues(values)
+		case map[string]any:
+			for key, raw := range values {
+				fields, ok := raw.(map[string]any)
+				if raw != nil && !ok {
+					return nil, fmt.Errorf("extensions.%s must be an object", key)
+				}
+				out[key] = CloneDocument(fields)
+			}
+		default:
+			return nil, fmt.Errorf("extensions must be an object")
+		}
+	}
+	for alias, key := range r.aliases {
+		if raw, ok := document[alias]; ok {
+			fields, ok := raw.(map[string]any)
+			if raw != nil && !ok {
+				return nil, fmt.Errorf("configuration %s must be an object", alias)
+			}
+			fields = CloneDocument(fields)
+			var err error
+			if transform := r.declarations[key].AliasFields; transform != nil {
+				fields, err = transform(fields)
+				if err != nil {
+					return nil, fmt.Errorf("configuration %s: %w", alias, err)
+				}
+			}
+			if existing, ok := out[key]; ok {
+				if fields == nil {
+					fields = map[string]any{}
+				}
+				for name, value := range fields {
+					if current, present := existing[name]; present && !reflect.DeepEqual(current, value) {
+						return nil, fmt.Errorf("conflicting configuration %s.%s and extensions.%s.%s", alias, name, key, name)
+					}
+				}
+				mergeFields(fields, existing)
+			}
+			out[key] = fields
+		}
+	}
+	for key := range out {
+		if _, ok := r.declarations[key]; !ok {
+			return nil, fmt.Errorf("unregistered extension configuration %q", key)
+		}
+	}
+	return out, nil
+}
+func (r *Sections) Resolve(filename string, explicit Values) (Values, error) {
+	result, err := r.ResolveSnapshot(filename, explicit, nil)
+	if err != nil {
+		return nil, err
+	}
+	return result.Values(), nil
+}
+func (r *Sections) ResolveSnapshot(filename string, explicit Values, lookup func(string) (string, bool)) (*Resolved, error) {
+	values := Values{}
+	if filename != "" {
+		b, err := os.ReadFile(filename)
+		if err != nil {
+			return nil, err
+		}
+		var document map[string]any
+		if err = yaml.Unmarshal(b, &document); err != nil {
+			return nil, err
+		}
+		values, err = r.Normalize(document)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return r.ResolveValues(values, explicit, lookup)
+}
+func (r *Sections) Decode(key string, fields map[string]any) (any, error) {
+	s, ok := r.declarations[key]
+	if !ok {
+		return nil, fmt.Errorf("unregistered extension configuration %q", key)
+	}
+	return s.Decode(fields)
+}
+
+// Decode applies this declaration's factory, normalization and validation.
+func (s Section) Decode(fields map[string]any) (any, error) {
+	value := s.New()
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		TagName: "json", Result: value, ErrorUnused: true,
+		DecodeHook: func(from, to reflect.Type, value any) (any, error) {
+			kind := to.Kind()
+			if kind < reflect.Int || kind > reflect.Uint64 {
+				return value, nil
+			}
+			number := reflect.ValueOf(value)
+			target := reflect.New(to).Elem()
+			unsigned := kind >= reflect.Uint
+			overflow := false
+			switch from.Kind() {
+			case reflect.Float32, reflect.Float64:
+				f := number.Float()
+				lower, upper := -math.Ldexp(1, to.Bits()-1), math.Ldexp(1, to.Bits()-1)
+				if unsigned {
+					lower, upper = 0, math.Ldexp(1, to.Bits())
+				}
+				overflow = math.IsNaN(f) || math.IsInf(f, 0) || math.Trunc(f) != f || f < lower || f >= upper
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				i := number.Int()
+				if unsigned {
+					overflow = i < 0 || target.OverflowUint(uint64(i))
+				} else {
+					overflow = target.OverflowInt(i)
+				}
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				u := number.Uint()
+				if unsigned {
+					overflow = target.OverflowUint(u)
+				} else {
+					overflow = u > (uint64(1)<<(to.Bits()-1))-1
+				}
+			}
+			if overflow {
+				return nil, fmt.Errorf("expected %s integer in range, got %v", to, value)
+			}
+			return value, nil
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(fields); err != nil {
+		return nil, fmt.Errorf("extension %s: %w", s.Key, err)
+	}
+	if s.Normalize != nil {
+		if err := s.Normalize(value); err != nil {
+			return nil, fmt.Errorf("extension %s: %w", s.Key, err)
+		}
+	}
+	if s.Validate != nil {
+		if err := s.Validate(value); err != nil {
+			return nil, fmt.Errorf("extension %s: %w", s.Key, err)
+		}
+	}
+	return value, nil
+}
+func (r *Sections) Keys() []string {
+	keys := make([]string, 0, len(r.declarations))
+	for key := range r.declarations {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Aliases lists the root YAML keys this registry consumes on Normalize.
+func (r *Sections) Aliases() []string {
+	aliases := make([]string, 0, len(r.aliases))
+	for alias := range r.aliases {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+func (r *Sections) Defaults() Values {
+	out := Values{}
+	for _, key := range r.Keys() {
+		fields := map[string]any{}
+		decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{TagName: "json", Result: &fields})
+		if err != nil {
+			panic(err)
+		}
+		if err := decoder.Decode(r.declarations[key].New()); err != nil {
+			panic(fmt.Errorf("configuration %s defaults: %w", key, err))
+		}
+		out[key] = fields
+	}
+	return out
+}
+
+// View omits secrets. Configured secret paths are metadata, not secret values.
+func (r *Sections) View(values Values) (Values, map[string][]string) {
+	out := CloneValues(values)
+	configured := map[string][]string{}
+	for key, fields := range out {
+		s, ok := r.declarations[key]
+		if !ok {
+			delete(out, key)
+			continue
+		}
+		for _, path := range s.Secrets {
+			parent, name := fieldParent(fields, path)
+			if parent == nil {
+				continue
+			}
+			if value, ok := parent[name]; ok && value != "" && value != nil {
+				configured[key] = append(configured[key], path)
+			}
+			delete(parent, name)
+		}
+	}
+	return out, configured
+}
+func fieldParent(fields map[string]any, path string) (map[string]any, string) {
+	parts := strings.Split(path, ".")
+	for _, part := range parts[:len(parts)-1] {
+		fields, _ = fields[part].(map[string]any)
+		if fields == nil {
+			return nil, ""
+		}
+	}
+	return fields, parts[len(parts)-1]
+}
+func (r *Sections) Preserve(incoming, current Values) Values {
+	out := CloneValues(current)
+	for key, fields := range incoming {
+		next := CloneValues(Values{key: fields})[key]
+		for _, path := range r.declarations[key].Secrets {
+			p, name := fieldParent(next, path)
+			old, oldName := fieldParent(current[key], path)
+			if old == nil {
+				continue
+			}
+			if p == nil {
+				p = next
+				if p == nil {
+					p = map[string]any{}
+					next = p
+				}
+				parts := strings.Split(path, ".")
+				for _, part := range parts[:len(parts)-1] {
+					nested, _ := p[part].(map[string]any)
+					if nested == nil {
+						nested = map[string]any{}
+						p[part] = nested
+					}
+					p = nested
+				}
+				name = parts[len(parts)-1]
+			}
+			if p[name] == nil || p[name] == "" {
+				p[name] = old[oldName]
+			}
+		}
+		out[key] = next
+	}
+	return out
+}

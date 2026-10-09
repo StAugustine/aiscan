@@ -14,10 +14,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/core/truncate"
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/headless"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/core/truncate"
+	"github.com/chainreactors/cyber/tools/headless"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
@@ -33,9 +33,11 @@ const (
 
 // Command implements command.Command for headless browser operations.
 type Command struct {
-	mu      sync.Mutex
-	browser *rod.Browser
-	workDir string
+	nativeMu  sync.Mutex
+	nativeOps map[string]nativeOperation
+	mu        sync.Mutex
+	browser   *rod.Browser
+	workDir   string
 
 	// Session management for multi-step interactive workflows.
 	openMu     sync.Mutex
@@ -97,6 +99,16 @@ Global Options:
   -s <name> / -s=<name>                            Target a named session (all subcommands)
   Environment: PLAYWRIGHT_CLI_SESSION=<name>       Default session when -s is not provided
 
+Selector Syntax:
+  Standard CSS, xpath:<expression>, text=<text>, label=<text>,
+  testid=<value>, role=button[name="Name"] are supported.
+  Extended CSS pseudo-classes such as :has-text() and :text-is() are not supported.
+  A selector must resolve to the intended current element; use a unique existing address.
+
+JavaScript Evaluation:
+  Pass an evaluated expression, for example (() => { return document.body.innerText; })().
+  Object results are returned as JSON. A function without invocation is not a page read.
+
 Unified Subcommands (URL or session):
   goto <url|session> [selector]                  Navigate to URL and return text, or extract text from session
   content <url|session> [selector]               Open URL and return HTML, or extract HTML from session
@@ -123,6 +135,7 @@ Session Subcommands (multi-step interactive workflows):
   detach <session>                                Disconnect from attached session without closing browser
 
   Navigation:
+    scroll <session> <up|down>                  Scroll the viewport
     reload <session>                            Reload the current page
     go-back <session>                           Navigate back in history
     go-forward <session>                        Navigate forward in history
@@ -191,7 +204,8 @@ Session Subcommands (multi-step interactive workflows):
 
   DevTools:
     console <session> [--clear]                 Show/clear captured console messages
-    snapshot <session> [--depth N]              Capture accessibility tree snapshot
+    snapshot <session> [--depth N] [--json]     Capture current structured DOM or accessibility tree
+    operation-status <host-call-id>            Read a native operation receipt
     requests <session>                          List all captured network requests
     request <session> <index>                   Show full detail for a specific request
     route-list <session>                        List active route interception rules
@@ -243,7 +257,7 @@ Examples:
 }
 
 // Execute dispatches to the appropriate sub-command.
-func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any, err error) {
+func (c *Command) Run(ctx context.Context, execution *coretool.Execution) (_ any, err error) {
 	defer telemetry.RecoverAsError("playwright", &err)
 	args := execution.Args
 	if len(args) == 0 {
@@ -251,7 +265,7 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	}
 
 	// Extract global -s flag. The environment-derived default is resolved once
-	// by core/config and injected when the command is constructed.
+	// by pkg/config and injected when the command is constructed.
 	globalSession := c.defaultSession
 	var cleanArgs []string
 	for i := 0; i < len(args); i++ {
@@ -278,8 +292,12 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	}
 
 	var result string
+	finishNative := c.beginNative(ctx, sub, subArgs)
+	defer func() { finishNative(err) }()
 
 	switch sub {
+	case "operation-status":
+		result, err = c.execOperationStatus(subArgs)
 	// --- Unified URL/session commands (Playwright-aligned) ---
 	case "goto":
 		if c.firstArgIsSession(subArgs) {
@@ -350,6 +368,8 @@ func (c *Command) Run(ctx context.Context, execution *commands.Execution) (_ any
 	// --- Navigation ---
 	case "reload":
 		result, err = c.execReload(ctx, subArgs)
+	case "scroll":
+		result, err = c.execScroll(ctx, subArgs)
 	case "go-back", "back":
 		result, err = c.execGoBack(ctx, subArgs)
 	case "go-forward", "forward":
@@ -950,7 +970,7 @@ func (c *Command) execPDF(ctx context.Context, args []string) (string, error) {
 	}
 	defer func() { _ = reader.Close() }()
 
-	data, err := readAll(reader)
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return "", fmt.Errorf("playwright pdf: read: %w", err)
 	}
@@ -1357,7 +1377,7 @@ func (c *Command) injectGlobalSession(sub string, subArgs []string, globalSessio
 		}
 		return append(subArgs, "--session", globalSession)
 
-	case "sessions", "list", "close-all", "kill-all", "pdf":
+	case "sessions", "list", "close-all", "kill-all", "pdf", "operation-status":
 		return subArgs
 
 	case "goto", "screenshot", "content", "evaluate", "network":
@@ -1576,8 +1596,4 @@ func writeFile(path string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
-}
-
-func readAll(r io.Reader) ([]byte, error) {
-	return io.ReadAll(r)
 }

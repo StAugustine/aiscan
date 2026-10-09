@@ -6,7 +6,8 @@ import (
 	"reflect"
 	"testing"
 
-	cfg "github.com/chainreactors/aiscan/core/config"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	cfg "github.com/chainreactors/cyber/pkg/config"
 )
 
 func TestParseCLIReconCommandsAndFlags(t *testing.T) {
@@ -29,10 +30,14 @@ func TestParseCLIReconCommandsAndFlags(t *testing.T) {
 	if !reflect.DeepEqual(parsed.ScannerArgs, wantArgs) {
 		t.Fatalf("scanner args = %#v, want %#v", parsed.ScannerArgs, wantArgs)
 	}
-	if parsed.Option.FofaKey != "FOFAKEY" || parsed.Option.HunterAPIKey != "HUNTERKEY" || parsed.Option.ReconProxy != "socks5://127.0.0.1:1080" {
-		t.Fatalf("recon options = %#v", parsed.Option.ReconOptions)
+	recon, err := scannerext.ReadRecon(&parsed.Option)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if parsed.Option.ReconLimit == nil || *parsed.Option.ReconLimit != 0 {
-		t.Fatalf("recon limit = %#v, want explicit 0", parsed.Option.ReconLimit)
+	if recon.FofaKey != "FOFAKEY" || recon.HunterAPIKey != "HUNTERKEY" || recon.Proxy != "socks5://127.0.0.1:1080" {
+		t.Fatalf("recon options = %#v", recon)
+	}
+	if recon.Limit == nil || *recon.Limit != 0 {
+		t.Fatalf("recon limit = %#v, want explicit 0", recon.Limit)
 	}
 }

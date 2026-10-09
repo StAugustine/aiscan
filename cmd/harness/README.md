@@ -1,13 +1,12 @@
 # Repository harness
 
 `cmd/harness/` 是仓库测试 harness。场景测试从当前工作区源码构建 `cmd/aiscan` 的 `full`
-版本，启动真实产品子进程，通过公开 HTTP / Connect JSON / stdio 接口操作，验证实际配置文件、
+版本，启动真实应用子进程，通过公开 HTTP / Connect JSON / stdio 接口操作，验证实际配置文件、
 进程重启与资源释放。场景测试不导入业务实现包，不注入 fake store、Provider 或 Host。
 
-同目录的导出构造器（`Set`、`Commands`、`Tools`、`AppEntries`、`AppLoad`）供包测试构建
-自己拥有的 extension host；生产代码必须构造显式 Profile，不能使用这些构造器。
-harness 依赖 `pkg`，因此被它依赖的包（`agent`、`pkg/app`、`tools/proton`）不能反向导入
-harness，这些包改为在自己的测试文件里构建 host。
+包测试需要的进程内 Extension 宿主通过 `pkg/testutil/hosttest` 访问；包含 Provider、
+Skills 和终端等应用能力的夹具通过 `pkg/testutil/apptest` 访问。实现在 `pkg/internal/testutil`，
+用于测试装配与资源清理。生产代码构造显式 Profile，守卫测试会拒绝非测试文件引用这两个辅助包。
 
 协议回显测试位于 `pkg/host/process_test.go`，不计入用户场景验收。
 
@@ -19,11 +18,11 @@ go test -count=1 -v -timeout 5m ./cmd/harness/...
 make harness
 ```
 
-需要 Go 与完整产品构建、运行所需的原生依赖；缺失时直接失败，不跳过或替换实现。
+需要 Go、已初始化的子模块及各场景所用的程序；默认 full 构建使用纯 Go，不需要录屏 SDK。前端场景另需 Node.js/npm、前端依赖和 Playwright Chromium。依赖缺失时直接失败，不跳过或替换实现。
 Web 服务以 `--no-agent` 启动，绑定 `127.0.0.1:0`；IOA 场景额外启动两个独立的
-`aiscan agent --transport stdio` 进程。每个场景有独立的配置、数据库与
+`aiscan agent --transport stdio` 进程，扫描场景启动独立的 Web Agent 和本地 HTTP 目标。每个场景有独立的配置、数据库与
 数据目录。无 LLM 场景仅继承操作系统及动态库加载所需环境变量。真实 LLM 场景
-只额外注入明确配置的 `AISCAN_HARNESS_LLM_*`，不读取个人默认模型设置。
+只额外注入明确配置的 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER`，不读取个人默认模型设置。
 
 当前验收范围：
 
@@ -32,31 +31,39 @@ Web 服务以 `--no-agent` 启动，绑定 `127.0.0.1:0`；IOA 场景额外启�
 | `TestUserConfigurationAcrossCrashAndRestart` | 登录、跨客户端配置可见性、非法修改保持旧文件、错误后的有效保存、空白密钥保留、强制终止后恢复、重新编辑与登出再登录 |
 | `TestUserConcurrentProfileChanges` | 随机选择配置，三个独立客户端并发读取；检查每次读取是完整的旧/新状态、写入后全部客户端收敛、重启恢复最后一次提交 |
 | `TestUserStartupRecoveryAndConfirmedExit` | 错误 YAML 启动失败、用户修正文件后启动、保存、首次退出提示后二次确认、退出码 130、操作系统释放端口及数据库文件、再次启动恢复配置 |
-| `TestLiveLLMRecoveryAcrossRestart`（`live_llm`） | 真实模型响应、产品模型状态、漏填模型后的错误与重试、产品重启后从新客户端再次调用真实模型 |
+| `TestUserHubScanRequiresConnectedNode` | 无节点时明确拒绝且不创建扫描记录；外部 Agent 接入后完成真实 HTTP 目标扫描；节点退出后再次拒绝，已完成记录保持不变；无需 LLM |
+| `TestUserAgentOneShotFormatsSkillAndResume` | 真实 CLI 进程与本地 OpenAI 兼容端点；text/json/stream-json、AOP JSONL、续跑和本地 skill 路径；检查 API key 不进入 prompt、输出或事件文件 |
+| `TestUserIOAMemoryCommandRoundTrip` | 实际应用进程使用无 HTTP 服务的内存 IOA；命令来源 Session、消息引用、空间切换及历史保留；已关闭 Session 的投递明确报错 |
+| `TestUserIOAExternalProcessesRoundTrip` | 两个独立应用进程使用外部 IOA 服务；后来者读取历史、跨节点往返与引用、来源 Session；已关闭 Session 不触发其他会话 |
+| `TestLiveLLMRecoveryAcrossRestart`（`live_llm`） | 真实模型响应、应用模型状态、漏填模型后的错误与重试、应用重启后从新客户端再次调用真实模型 |
 | `TestLiveLLMConcurrentClients`（`live_llm`） | 两个客户端并发请求真实模型，同时第三个客户端读取配置与状态，完成后登出再登录并再次调用模型 |
-| `TestLiveLLMMultiAgentIOAThreadAndIsolation`（`live_llm`） | 两个独立 AI 上下文经两个产品进程实际调用 IOA；随机任务、计算回复、节点定向与原消息引用、回执、完整线程读取、空间切换与隔离 |
-| `TestLiveLLMParentDelegatesIOASiblings`（`live_llm`） | 产品主 Agent 实际调用 `subagent` 创建两个异步子会话；子会话经 IOA 交换 offer → reply → ack；主 Agent 收到两份完成通知后读取线程并结束；校验父子事件和自动 handoff 记录 |
+| `TestLiveLLMMultiAgentIOAThreadAndIsolation`（`live_llm`） | 两个独立 AI 上下文经两个应用进程实际调用 IOA；随机任务、计算回复、节点定向与原消息引用、回执、完整线程读取、空间切换与隔离 |
+| `TestLiveLLMParentDelegatesIOASiblings` / `TestLiveLLMParentDelegatesIOASiblingsMemory`（`live_llm`） | 外部 / 内存 IOA：应用主 Agent 实际创建两个异步子会话；经 peer Inbox 交换 offer → reply → ack；主 Agent 收到两份完成通知后读取线程并结束；校验父子事件、Session 定向与自动 handoff 记录 |
 
-随机场景打印种子并写入 `seed.txt`。设置 `AISCAN_HARNESS_SEED=<整数>` 可重放操作序列，
-`AISCAN_HARNESS_STEPS` 控制切换次数（默认 12，范围 1–100，CI 使用 48）；
+随机场景打印种子并写入 `seed.txt`。设置 `CYBER_HARNESS_SEED=<整数>` 可重放操作序列，
+`CYBER_HARNESS_STEPS` 控制切换次数（默认 12，范围 1–100）；
 线程调度不保证逐次一致。每次运行都记录各客户端的请求路径、响应、状态和耗时，
-以及产品进程日志、实际 YAML、数据库。真实模型密钥只经环境和内存中的 HTTP 请求传递，
+以及应用进程日志、实际 YAML、数据库。真实模型密钥只经环境和内存中的 HTTP 请求传递，
 不写入 YAML。日志按完整行脱敏，HTTP 响应也在记录和报错前脱敏。默认保存在 `.runlogs/harness/<run>/`；
-`AISCAN_HARNESS_ARTIFACTS` 可指定保存父目录。临时产品二进制在运行结束后删除。
+`CYBER_HARNESS_ARTIFACTS` 可指定保存父目录。临时应用二进制在运行结束后删除。
 
 当前 CLI 在二次退出确认后调用 `os.Exit(130)`；退出测试不能证明 App 的 defer 收尾执行。
 Web 长期服务也不受 `--timeout` 控制。两点按实际用户行为记录，不把强制退出称为优雅关闭。
 
-默认三个场景验证无 LLM 的 Web 配置工作流。两个 LLM 连接场景通过产品的 `TestLLM`
+无模型 IOA 场景通过公开命令协议操作真实存储与订阅，模型地址设为不可连接的本地端口；
+启动探测预期失败，场景不生成模型回复，也不证明模型参与协作。关闭接收 Session 后，
+消息仍保存成功，但接收进程必须记录无活动接收者，且不能启动其他 Session 的推理。
+
+默认场景验证无 LLM 的 Web 配置工作流与外部节点扫描。两个 LLM 连接场景通过应用的 `TestLLM`
 接口向真实 Provider 发送 `ping`，要求成功且回复非空，不匹配固定文本或用假模型替代。
-这两个场景有 6 次显式模型请求，另有 3 次产品启动健康检查；每次请求的
-输出上限由产品探测接口限制为 16 tokens，无测试级自动重试。服务失败和超时直接失败。
+这两个场景有 6 次显式模型请求，另有 3 次应用启动健康检查；每次请求的
+输出上限由应用探测接口限制为 16 tokens，无测试级自动重试。服务失败和超时直接失败。
 
 ## IOA 多 AI 任务
 
 IOA 场景中，每个 AI 保有独立模型历史，调用真实模型的 function calling。模型输出只能
 选择加入预设空间、查看节点、读取消息/线程、发送纯文本及消息/节点引用；测试驱动
-把这些操作交给各自产品进程的公开命令协议，不接受任意 shell 命令。
+把这些操作交给各自应用进程的公开命令协议，不接受任意 shell 命令。
 
 1. A 发布包含随机 nonce 与任务词的消息，并读取确认。
 2. B 从 IOA 读取任务，保留 nonce、将任务词转为大写，向 A 定向回复并引用原消息。
@@ -66,51 +73,77 @@ IOA 场景中，每个 AI 保有独立模型历史，调用真实模型的 funct
 
 模型不能相互读取本地历史；B 的初始提示中没有随机任务内容，也没有消息 ID。
 线程消息由模型实际发送，harness 不代发或纠正。每个 AI 在整个场景中最多 24 次
-模型请求，每次最多 512 输出 tokens；两者共享 140 秒模型任务期限。另有两次产品
+模型请求，每次最多 512 输出 tokens；两者共享 140 秒模型任务期限。另有两次应用
 启动探测。接口错误、预算耗尽、错误内容、重复消息或缺少证据均失败，不自动重跑。
 `*-model.jsonl` 保存各 AI 的任务、调用、真实响应与 token 用量；每个进程保存脱敏的
 `protocol.jsonl` 和 `stderr.log`，验收成功时额外生成 `ioa-evidence.json`。
 
-**覆盖边界：这是两个 AI 操作真实产品 IOA 的主动读取/回复场景。** 产品启动时各自
-订阅独立空 inbox，随后模型用 IOA 命令加入工作空间；命令空间切换不会替换启动时的
-inbox 订阅。这样不会同时启动另一条产品 Agent 推理循环；如果出现内部 `turnStarted`，
-测试直接失败。它不证明 SSE 自动唤醒、并发协作、掉线重连或 Agent 自主调度正确。
+**覆盖边界：这是两个 AI 操作真实应用 IOA 的主动读取/回复场景。** 命令空间切换同步
+切换订阅。测试驱动将节点定向消息明确寻址到应用外的 `external-operator`，由外部 AI
+主动读取记录；该目标不是活动的应用 Session，因此不会触发应用内部推理。
+如果出现内部 `turnStarted`，测试直接失败。它不证明 SSE 自动唤醒、并发协作、
+掉线重连或 Agent 自主调度正确；活动子会话 Inbox 由下面的场景验证。
 空间隔离验证的是当前空间的消息选择，不是空间访问控制权限。
 
 ## 主 Agent → subagent → IOA 闭环
 
-`TestLiveLLMParentDelegatesIOASiblings` 只向一个真实产品进程提交一次根任务。
+`TestLiveLLMParentDelegatesIOASiblings` 及其 `Memory` 版本只向一个真实应用进程提交一次根任务，
+分别使用外部 IOA 服务和进程内 IOA（无 HTTP 监听）。
 主 Agent 自己加入工作空间并调用内置 `subagent` 工具，创建 `worker-a` 和 `worker-b`
 两个 `async` 子会话；harness 不创建子会话，也不代发消息。
 
-- A 发送随机 `offer:nonce`，B 从 IOA 发现 nonce 并发送引用 offer 的 `reply:nonce`。
-- A 读取 reply，发送引用 reply 的 `ack:nonce`；B 读取 ack 后完成。
+- 主 Agent 先创建 B，再创建 A；A 从自动 delegate 记录发现 B 的 Session ID。
+- A 定向发送随机 `offer:nonce`，B 只能从 peer Inbox 得知 nonce，不能主动读取历史；随后引用 offer 向源 Session 回复 `reply:nonce`。
+- A 从 peer Inbox 收到 reply，引用 reply 发送 `ack:nonce`；B 从 peer Inbox 收到 ack 后完成。
 - 主 Agent 的真实 system inbox 收到两份 `subagent_completion`，随后读取最终 IOA 线程并返回结果。
 - harness 将每个 IOA 消息 ID 与对应子会话的 `bash` 工具结果关联，检查父会话 ID、派发 tool call ID、异步会话重叠、子会话完成及主会话最终结束。
-- 同时验证产品自动写入的两条 delegate、两条 return handoff，以及 return 对 delegate 的引用。
+- 同时验证应用自动写入的两条 delegate、两条 return handoff，以及 return 对 delegate 的引用。
+- 模型请求日志必须含实际的 `origin="peer"` 输入，消息元数据的源 / 目标 Session 必须匹配对应子会话。等待期间允许 `ioa space nodes` 保持任务运行；此测试不证明已结束任务可被重新唤醒。
 
-当前产品的子 Agent 是**独立会话，共享工具注册表和 IOA 节点**。因此消息 sender 相同，
-由 AOP 子会话证明消息来自哪个子 Agent；这个场景不声称子 Agent 有独立的 IOA 身份、
+当前应用的子 Agent 是**独立会话，共享工具注册表和 IOA 节点**。因此消息 sender 相同，
+由消息 Session 元数据及 AOP 子会话证明消息来自哪个子 Agent；这个场景不声称子 Agent 有独立的 IOA 节点身份、
 权限或进程。两个独立节点的通信由上一节的场景覆盖。
 
-真实模型由本机测试网关转发，网关只暴露产品已有的 `bash` 和父会话的 `subagent`，
-并在交给产品执行前校验每个响应的完整工具参数。仅允许本次预设空间的 IOA 读写，
+真实模型由本机测试网关转发，网关只暴露应用已有的 `bash` 和父会话的 `subagent`，
+并在交给应用执行前校验每个响应的完整工具参数。仅允许本次预设空间的 IOA 读写，
 禁止额外派发、直接 `subagent.message` 转发和任意 shell 命令。它不生成、修正或回放
 模型回答。SSE 响应完整缓冲后原样交付，因此这里不测 token 流的实时延迟。
 
 整个父子任务最多 40 次真实模型请求（含启动探测），每次最多 1024 输出 tokens，
 根任务限 16 个 turn，150 秒内必须完成。任意越界调用、超时、遗漏消息或生命周期
-证据均失败；不以重试或 skip 变绿。真实 API key 只存在于测试网关，产品收到的是
-本机网关的测试 token。`subagent-model.jsonl` 保存脱敏请求/响应，产品保存完整协议日志，
+证据均失败；不以重试或 skip 变绿。真实 API key 只存在于测试网关，应用收到的是
+本机网关的测试 token。`subagent-model.jsonl` 保存脱敏请求/响应，应用保存完整协议日志，
 `subagent-evidence.json` 汇总父子关系、IOA 消息、handoff 和每个角色的模型请求数。
 
-这个测试已经包含在 live CI 的 `^TestLiveLLM` 选择器中。单独运行：
+两个版本均匹配手动 live suite 的 `^TestLiveLLM` 选择器。单独运行：
 
 ```sh
-make harness-llm-subagent
+go test -tags live_llm -run '^TestLiveLLMParentDelegatesIOASiblings' -count=1 -v -timeout 6m ./cmd/harness
 ```
 
-## 尚待补齐的任务
+## 五子棋协作任务
+
+任务定义见 [两个 Agent 通过 IOA 下五子棋](gomoku-task.md)。任务由自然语言定义，直接启动 black、white 两个独立 Session，没有协调者或子任务。双方自主选点，经 IOA 自动投递交替落子；各自交付棋谱，黑方交付 HTML 回放。运行入口仅启动通用扩展宿主、外部 IOA、限制模型预算并保存日志；测试入口退出成功不等于棋局正确，仍需复盘真实 IOA 记录。通用宿主复用现有 Agent/Session/IOA 扩展，不加载扫描技能。
+
+验收需要完整合法的棋局、实际 IOA 消息与交付产物；未到终局或输出预算耗尽时，保留未完成状态，不能以消息投递成功代替整局验收。
+
+```sh
+go test -tags live_llm -run '^TestLiveLLMIOAGomoku$' -count=1 -v -timeout 35m ./cmd/harness
+```
+
+## 多租户订单长任务
+
+`TestLiveLLMIOALongTask` 运行多租户订单系统的审计、修复、回归与交接，包含实际代码修复、途中需求变化、一次工具故障及新负责人接续。独立业务环境及实际应用接线分别由 `TestUserOrderLabFixtureContract`、`TestUserIOALongTaskRuntimeSmoke` 验证，两者不包含模型回答；完整模型流程需要另行运行并核对业务证据。
+
+显式配置 `CYBER_API_KEY`、`CYBER_BASE_URL`、`CYBER_MODEL`、`CYBER_PROVIDER` 后运行一轮长任务（默认外部 IOA；设置 `CYBER_HARNESS_LONG_BACKEND=memory` 使用进程内 IOA）：
+
+```sh
+go test -tags live_llm -run '^TestLiveLLMIOALongTask$' -count=1 -v -timeout 65m ./cmd/harness
+```
+
+该场景额外需要 Python 与 Go；隔离项目位于运行产物目录的 `project/`。驱动通过预定的三次用户输入提供调查目标、新要求和新负责人接手目标；模型自主完成其间的工具调用。服务端请求日志与报告逐项核对，交付策略还会在原始服务源码和新数据上重建验收。测试网关检查工具与明显的私有证据路径，文件完整性另有校验；这不构成操作系统级沙箱或对抗恶意 Agent 的权限隔离保证。
+
+长任务期限为 60 分钟、最多 200 次模型请求和累计 120,000 输出 tokens；单次上限 16,384 tokens（包含模型推理），请求期限 5 分钟。Provider 缺少 usage 时按单次最大值计入预算，证据中单独记录。被工具校验拒绝的响应也保留并计入预算；任务响应达到输出上限明确报错，不视为正常完成。结果写入 `long-task-evidence.json`，配置缺失也会保留失败状态。应用进程、业务服务以及模型任务的测试记录需分别解读，不能把环境检查通过称为长任务通过。
 
 | 机制 | 模型需要实际完成的任务 | harness 独立检查的证据 |
 | --- | --- | --- |
@@ -123,31 +156,37 @@ make harness-llm-subagent
 返回成功，都不能替代上述证据。固定回放、缺少配置后的 skip、没有匹配到测试的
 `no tests to run` 也不能算真实任务通过。
 
-实现时需明确区分两种覆盖：模型作为外部用户操作公开协议，验证的是产品机制；
-模型运行在产品自身 Agent 循环中，才覆盖产品的工具选择、上下文与异步消息处理。
+实现时需明确区分两种覆盖：模型作为外部用户操作公开协议，验证的是应用机制；
+模型运行在应用自身 Agent 循环中，才覆盖应用的工具选择、上下文与异步消息处理。
 前者不能宣称覆盖后者。每个场景使用临时目录和回环地址，对可执行动作、模型请求数、
 输出 tokens、总时长和资源收尾设置硬限制；`--tools` 是可选工具组设置，并非执行白名单。
 
-## CI 与真实 LLM 配置
+## JEV 机制与真实验证
 
-| 路径 | 触发与验收 |
+当前 JEV / Reflex 的控制流、验证范围和复用边界见 [JEV / Reflex 机制](../../docs/architecture.md#jev-与-reflex)。机制测试位于 [exts/jev](../../exts/jev)，从仓库根目录运行：
+
+```sh
+go test -count=1 ./exts/jev
+```
+
+真实模型验证需要显式设置各测试的 opt-in 开关及 `CYBER_API_KEY`、`CYBER_MODEL`、`CYBER_BASE_URL`、`TYPESAFE_API_KEY`，并准备测试使用的浏览器等依赖。具体运行入口以测试源码为准；普通离线通过不能称为真实模型接管通过。
+
+业务完成、实际 Reflex 参与及加速分别检查。主模型完成任务不证明 JEV 参与；后台请求不代表前台函数执行；后台用量未结算时不能按零费用计算。耗时或 token 比较必须保留失败和负收益，少量样本不能证明稳定加速。
+
+## 手动执行与真实 LLM 配置
+
+Harness 不属于 GitHub CI 或 release gate，只在需要验证真实应用进程时手动运行。
+普通 CI 单元测试显式排除 `cmd/harness`，避免隐式启动应用进程或调用模型。
+race 检查覆盖测试驱动；应用子进程按 [editions.env](../../editions.env) 中的 `FULL_CAPS_TAGS` 和 `FULL_CGO` 构建，不继承测试驱动的 race 设置。当前 full 组合不加载 native CSTX 或录屏扩展。
+
+运行 live suite 前设置以下本地环境变量：
+
+| 配置 | 要求 |
 | --- | --- |
-| `harness-offline` | 每个 PR、master push、手动触发；Linux / Windows × 两个种子，race 检查驱动、随机用例顺序、48 次并发配置切换 |
-| `harness-live` | master push 和手动触发；不在 PR 代码上注入密钥；缺少配置直接失败 |
-| `harness-gate` | 要求所有被选中的 suite 成功，失败或取消会阻断 release-verify；PR 的 live job 明确标记为未执行 |
-
-普通单元覆盖率任务排除 harness 包，由独立 job 验收产品进程，避免重复运行。
-两条路径均保存 JSON 测试结果和运行产物 14 天。race 检查当前覆盖测试驱动，
-产品子进程仍由普通 `go build -tags full cstx` 构建。
-
-在 GitHub 仓库设置中配置：
-
-| 配置 | 类型 | 要求 |
-| --- | --- | --- |
-| `AISCAN_HARNESS_LLM_API_KEY` | Secret | 必填，使用独立测试密钥 |
-| `AISCAN_HARNESS_LLM_BASE_URL` | Actions Variable | 必填，HTTP(S) API 根地址，不含 URL 凭据或查询参数 |
-| `AISCAN_HARNESS_LLM_MODEL` | Actions Variable | 必填，支持 function calling 的模型；本地验证使用 `deepseek-chat` |
-| `AISCAN_HARNESS_LLM_PROVIDER` | Actions Variable | 可选，默认 `openai`；完整 live suite 的 IOA 操作器当前支持 `openai`、`deepseek`（OpenAI 兼容接口）；连接场景单独运行时仍支持产品其他 Provider |
+| `CYBER_API_KEY` | 必填，与 Cyber 各二进制共用模型密钥 |
+| `CYBER_BASE_URL` | 必填，HTTP(S) API 根地址，不含 URL 凭据或查询参数 |
+| `CYBER_MODEL` | 必填，支持 function calling 的模型；应使用当前账户可用模型，长任务实测使用 `deepseek-v4-pro` |
+| `CYBER_PROVIDER` | 可选，默认 `openai`；完整 live suite 的 IOA 操作器当前支持 `openai`、`deepseek`（OpenAI 兼容接口）；连接场景单独运行时仍支持应用其他 Provider |
 
 本地使用同名环境变量后执行 `make harness-llm`，或：
 
@@ -157,7 +196,9 @@ go test -tags live_llm -run '^TestLiveLLM' -count=1 -v -timeout 8m ./cmd/harness
 make harness-llm-ioa
 ```
 
-`live_llm` 是显式测试选择，不以 `t.Skip` 隐藏缺少模型配置。默认无 LLM 测试不编入
-live 场景，即使机器存在个人模型密钥也不会自动调用。HTTP 客户端模拟用户操作接口；
-当前尚未验证浏览器渲染、Agent 会话任务的推理质量或整仓库所有功能。新增场景应明确
+`live_llm` 是显式测试选择，`TestLiveLLM*` 缺少模型配置时直接失败；JEV 的真实验证还需按对应测试设置运行开关。
+默认无 LLM 测试不编入 live 场景，即使机器存在个人模型密钥也不会自动调用。普通 HTTP 场景
+不覆盖浏览器渲染；前端套件覆盖所选生产前端场景，不能代表整仓库所有功能。新增场景应明确
 实际入口、前置条件、可观察结果与退出条件，避免用固定快照数量代替覆盖范围。
+
+模型配置优先使用共享 `CYBER_*`；原 `CYBER_HARNESS_LLM_*` 作为低优先级兼容别名保留。普通离线测试不继承这些凭据，仅显式 live 场景注入，日志同时脱敏新旧变量。

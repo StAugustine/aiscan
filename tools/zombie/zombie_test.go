@@ -9,8 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/commands"
+	"github.com/chainreactors/cyber/core/telemetry"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/toolargs"
 )
 
 func TestExecuteDebugActivatesTelemetryLogger(t *testing.T) {
@@ -18,7 +19,7 @@ func TestExecuteDebugActivatesTelemetryLogger(t *testing.T) {
 	cmd := New(nil).WithLogger(telemetry.NewLogger(telemetry.LogConfig{Output: &logs}))
 
 	var output bytes.Buffer
-	if _, err := cmd.Run(context.Background(), &commands.Execution{Args: []string{"--debug", "--help"}, Stdout: &output, Stderr: &output}); err != nil {
+	if _, err := cmd.Run(context.Background(), &coretool.Execution{Args: []string{"--debug", "--help"}, Stdout: &output, Stderr: &output}); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if got := logs.String(); !strings.Contains(got, "● zombie debug enabled") {
@@ -29,7 +30,7 @@ func TestExecuteDebugActivatesTelemetryLogger(t *testing.T) {
 func TestExecuteRejectsInvalidCallScopedProxy(t *testing.T) {
 	cmd := New(nil).WithProxy("http://startup.example:8080")
 	var output bytes.Buffer
-	_, err := cmd.Run(context.Background(), &commands.Execution{
+	_, err := cmd.Run(context.Background(), &coretool.Execution{
 		Args:   []string{"--help"},
 		Env:    []string{"ALL_PROXY=not-a-proxy"},
 		Stdout: &output,
@@ -42,10 +43,7 @@ func TestExecuteRejectsInvalidCallScopedProxy(t *testing.T) {
 
 func TestResolveRelativePathsOnlyRewritesZombieFileFlags(t *testing.T) {
 	dir := t.TempDir()
-	cmd := New(nil)
-	cmd.SetWorkDir(dir)
-
-	got := cmd.resolveRelativePaths([]string{
+	got := toolargs.ResolveRelativePaths([]string{
 		"-l",
 		"-o", "string",
 		"-I", "ips.txt",
@@ -62,7 +60,7 @@ func TestResolveRelativePathsOnlyRewritesZombieFileFlags(t *testing.T) {
 		"--gogo=more-gogo.json",
 		"-f", "out.json",
 		"--file=more-out.json",
-	})
+	}, zombieFileFlags, dir)
 	want := []string{
 		"-l",
 		"-o", "string",

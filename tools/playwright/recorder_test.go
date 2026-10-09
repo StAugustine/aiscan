@@ -7,6 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	coretool "github.com/chainreactors/cyber/core/tool"
+	"github.com/chainreactors/cyber/tools/headless"
+	"github.com/go-rod/rod/lib/launcher"
+	"gopkg.in/yaml.v3"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,15 +19,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/chainreactors/aiscan/pkg/commands"
-	"github.com/chainreactors/aiscan/pkg/headless"
-	"github.com/go-rod/rod/lib/launcher"
-	"gopkg.in/yaml.v3"
 )
 
 func TestRecorderBasicActions(t *testing.T) {
-	rec := newRecorder("https://example.com")
+	rec := &recorder{}
 
 	rec.record(RecordedAction{
 		Action: headless.ActionNavigate,
@@ -67,27 +66,8 @@ func TestRecorderBasicActions(t *testing.T) {
 	}
 }
 
-func TestRecorderTemplateURL(t *testing.T) {
-	rec := newRecorder("https://example.com/app/login")
-
-	tests := []struct {
-		input string
-		want  string
-	}{
-		{"https://example.com/app/login", "{{BaseURL}}/app/login"},
-		{"https://example.com/other", "{{BaseURL}}/other"},
-		{"https://other.com/path", "https://other.com/path"},
-	}
-	for _, tt := range tests {
-		got := rec.templateURL(tt.input)
-		if got != tt.want {
-			t.Errorf("templateURL(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestRecorderYAMLOutput(t *testing.T) {
-	rec := newRecorder("https://example.com")
+	rec := &recorder{}
 	rec.record(RecordedAction{
 		Action: headless.ActionNavigate,
 		Args:   map[string]string{"url": "{{BaseURL}}"},
@@ -135,7 +115,7 @@ func TestRecorderYAMLOutput(t *testing.T) {
 func TestRecordCommandMapping(t *testing.T) {
 	sess := &Session{
 		Name: "test",
-		rec:  newRecorder("https://example.com"),
+		rec:  &recorder{},
 	}
 
 	tests := []struct {
@@ -180,7 +160,7 @@ func TestRecordCommandMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		before := sess.rec.len()
-		ok := recordCommand(sess, tt.cmd, tt.args)
+		ok := recordCommandResult(sess, tt.cmd, tt.args, "")
 		if !ok {
 			t.Errorf("recordCommand(%q) returned false", tt.cmd)
 			continue
@@ -195,11 +175,11 @@ func TestRecordCommandMapping(t *testing.T) {
 }
 
 func TestRecordCommandReplaySemantics(t *testing.T) {
-	sess := &Session{Name: "test", rec: newRecorder("https://example.com")}
+	sess := &Session{Name: "test", rec: &recorder{}}
 
-	recordCommand(sess, "fill", []string{"test", "label=Email", "alice@example.com"})
-	recordCommand(sess, "press", []string{"test", `role=button[name="Sign in"]`, "Shift+Enter"})
-	recordCommand(sess, "wait-for", []string{"test", "testid=ready"})
+	recordCommandResult(sess, "fill", []string{"test", "label=Email", "alice@example.com"}, "")
+	recordCommandResult(sess, "press", []string{"test", `role=button[name="Sign in"]`, "Shift+Enter"}, "")
+	recordCommandResult(sess, "wait-for", []string{"test", "testid=ready"}, "")
 
 	actions := sess.rec.snapshot()
 	if len(actions) != 3 {
@@ -220,7 +200,7 @@ func TestRecordCommandReplaySemantics(t *testing.T) {
 }
 
 func TestRecordCommandResultPreservesBooleanState(t *testing.T) {
-	sess := &Session{Name: "test", rec: newRecorder("https://example.com")}
+	sess := &Session{Name: "test", rec: &recorder{}}
 	if !recordCommandResult(sess, "is-visible", []string{"test", "#optional"}, "#optional visible = false") {
 		t.Fatal("is-visible result was not recorded")
 	}
@@ -232,10 +212,10 @@ func TestRecordCommandResultPreservesBooleanState(t *testing.T) {
 func TestRecordCommandXPath(t *testing.T) {
 	sess := &Session{
 		Name: "test",
-		rec:  newRecorder("https://example.com"),
+		rec:  &recorder{},
 	}
 
-	recordCommand(sess, "click", []string{"test", "xpath://div[@id='login']"})
+	recordCommandResult(sess, "click", []string{"test", "xpath://div[@id='login']"}, "")
 	actions := sess.rec.snapshot()
 	if len(actions) != 1 {
 		t.Fatalf("expected 1 action, got %d", len(actions))
@@ -249,7 +229,7 @@ func TestRecordCommandXPath(t *testing.T) {
 }
 
 func TestRecorderEmpty(t *testing.T) {
-	rec := newRecorder("https://example.com")
+	rec := &recorder{}
 	if tmpl := rec.generateTemplate("empty", "Empty"); tmpl != nil {
 		t.Error("expected nil template for empty recorder")
 	}
@@ -258,10 +238,10 @@ func TestRecorderEmpty(t *testing.T) {
 func TestRecordSetExtraHeaders(t *testing.T) {
 	sess := &Session{
 		Name: "test",
-		rec:  newRecorder("https://example.com"),
+		rec:  &recorder{},
 	}
 
-	ok := recordCommand(sess, "set-extra-headers", []string{"test", `{"Authorization":"Bearer token","X-Custom":"value"}`})
+	ok := recordCommandResult(sess, "set-extra-headers", []string{"test", `{"Authorization":"Bearer token","X-Custom":"value"}`}, "")
 	if !ok {
 		t.Fatal("recordCommand returned false for set-extra-headers")
 	}
@@ -332,7 +312,7 @@ func loginTestServer() *httptest.Server {
 func recExecString(t *testing.T, cmd *Command, ctx context.Context, args []string) string {
 	t.Helper()
 	var output bytes.Buffer
-	if _, err := cmd.Run(ctx, &commands.Execution{Args: args, Stdout: &output, Stderr: &output}); err != nil {
+	if _, err := cmd.Run(ctx, &coretool.Execution{Args: args, Stdout: &output, Stderr: &output}); err != nil {
 		t.Fatalf("Execute(%v) error = %v", args, err)
 	}
 	return output.String()
@@ -341,7 +321,7 @@ func recExecString(t *testing.T, cmd *Command, ctx context.Context, args []strin
 // recExecStringErr is a test helper that runs cmd.Execute and returns (output, error).
 func recExecStringErr(cmd *Command, ctx context.Context, args []string) (string, error) {
 	var output bytes.Buffer
-	_, err := cmd.Run(ctx, &commands.Execution{Args: args, Stdout: &output, Stderr: &output})
+	_, err := cmd.Run(ctx, &coretool.Execution{Args: args, Stdout: &output, Stderr: &output})
 	return output.String(), err
 }
 
@@ -398,7 +378,7 @@ func TestIntegration_RecordFullLoginFlow(t *testing.T) {
 	recExecString(t, cmd, ctx, []string{"fill", "login", "#password", "secret123"})
 
 	// Select role
-	if _, err := cmd.Run(ctx, &commands.Execution{Args: []string{"select-option", "login", "#role", "admin"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+	if _, err := cmd.Run(ctx, &coretool.Execution{Args: []string{"select-option", "login", "#role", "admin"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		// select might fail depending on rod version, skip if error
 		t.Logf("select-option skipped: %v", err)
 	}
@@ -410,7 +390,7 @@ func TestIntegration_RecordFullLoginFlow(t *testing.T) {
 	recExecString(t, cmd, ctx, []string{"wait-for", "login", "--stable"})
 
 	// Extract text
-	if _, err := cmd.Run(ctx, &commands.Execution{Args: []string{"inner-text", "login", "#status"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+	if _, err := cmd.Run(ctx, &coretool.Execution{Args: []string{"inner-text", "login", "#status"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		t.Logf("inner-text skipped: %v", err)
 	}
 
@@ -525,7 +505,7 @@ func TestIntegration_RecordStartStop(t *testing.T) {
 	}
 
 	// Do some actions
-	if _, err := cmd.Run(ctx, &commands.Execution{Args: []string{"click", "s2", "#about-link"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
+	if _, err := cmd.Run(ctx, &coretool.Execution{Args: []string{"click", "s2", "#about-link"}, Stdout: io.Discard, Stderr: io.Discard}); err != nil {
 		t.Logf("click about link: %v (continuing)", err)
 	}
 
@@ -816,7 +796,7 @@ func TestIntegration_RecordExtendedRoundTrip(t *testing.T) {
 <label><input type="checkbox" data-testid="terms"> Accept terms</label>
 <select aria-label="Plan"><option value="free">Free</option><option value="pro">Professional</option></select>
 <button id="continue">Continue</button>
-<script>document.getElementById('continue').addEventListener('aiscan', () => document.body.dataset.event = 'seen')</script>
+<script>document.getElementById('continue').addEventListener('cyber', () => document.body.dataset.event = 'seen')</script>
 </body></html>`)
 	}))
 	defer srv.Close()
@@ -833,7 +813,7 @@ func TestIntegration_RecordExtendedRoundTrip(t *testing.T) {
 	recExecString(t, cmd, ctx, []string{"select-option", "extended", `role=combobox[name="Plan"]`, "pro"})
 	recExecString(t, cmd, ctx, []string{"hover", "extended", `role=button[name="Continue"]`})
 	recExecString(t, cmd, ctx, []string{"dblclick", "extended", `role=button[name="Continue"]`})
-	recExecString(t, cmd, ctx, []string{"dispatch-event", "extended", "#continue", "aiscan"})
+	recExecString(t, cmd, ctx, []string{"dispatch-event", "extended", "#continue", "cyber"})
 	recExecString(t, cmd, ctx, []string{"localstorage-set", "extended", "token", "abc123"})
 	recExecString(t, cmd, ctx, []string{"cookie-set", "extended", "session=cookie-value"})
 	recExecString(t, cmd, ctx, []string{"set-viewport", "extended", "1024", "768"})

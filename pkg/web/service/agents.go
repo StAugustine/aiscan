@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -9,13 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	filepb "github.com/chainreactors/aiscan/aop/file"
-	ptypb "github.com/chainreactors/aiscan/aop/pty"
-	toolpb "github.com/chainreactors/aiscan/aop/tool"
-	"github.com/chainreactors/aiscan/pkg/terminal"
-	types "github.com/chainreactors/aiscan/pkg/types"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
+	"github.com/chainreactors/cyber/core/extension"
+	coretool "github.com/chainreactors/cyber/core/tool"
+
+	aop "github.com/chainreactors/cyber/aop"
+	ptypb "github.com/chainreactors/cyber/aop/pty"
+	toolpb "github.com/chainreactors/cyber/aop/tool"
+	types "github.com/chainreactors/cyber/core/types"
 	"github.com/gorilla/websocket"
 	protobuf "google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -34,36 +35,25 @@ func cloneCommandSpecs(values []*types.CommandSpec) []*types.CommandSpec {
 	return out
 }
 
-type taskResult struct {
-	Output string
-	File   *filepb.Result
-	Err    string
-	Code   string
-	Turn   int
-}
-
 // nodeState is the per-node task/session bookkeeping shared by both pool
 // member kinds. tasks map in-flight operation IDs to their waiter channels;
 // toolCalls marks tasks dispatched via DispatchToolCall: only they converge
 // on a tool.result. Chat tasks see tool.result events too (LLM tool use)
-// and must ignore them as terminals. childSessions tracks derived sub-agent
-// session IDs per task: only a ROOT session.end converges the task.
+// and must ignore them as terminals. Turn terminals are matched to their root session.
 type nodeState struct {
 	mu            sync.Mutex
-	tasks         map[string]chan taskResult
-	turns         map[string]int
+	tasks         map[string]chan protobuf.Message
 	openSessions  map[string]struct{}
 	toolCalls     map[string]struct{}
-	childSessions map[string]map[string]struct{}
+	archiveErrors map[string]string
 }
 
 func newNodeState() *nodeState {
 	return &nodeState{
-		tasks:         make(map[string]chan taskResult),
-		turns:         make(map[string]int),
+		tasks:         make(map[string]chan protobuf.Message),
 		openSessions:  make(map[string]struct{}),
 		toolCalls:     make(map[string]struct{}),
-		childSessions: make(map[string]map[string]struct{}),
+		archiveErrors: make(map[string]string),
 	}
 }
 
@@ -82,18 +72,22 @@ func (s *nodeState) sessionOpen(sessionID string) bool {
 
 // finishTask delivers result to the waiter of taskID and clears its
 // bookkeeping. Idempotent — a late frame after convergence is a no-op.
-func (s *nodeState) finishTask(taskID string, result taskResult) {
+func (s *nodeState) finishTask(taskID string, result protobuf.Message) {
 	if taskID == "" {
 		return
 	}
 	s.mu.Lock()
 	ch, ok := s.tasks[taskID]
-	result.Turn = s.turns[taskID]
 	if ok {
+		if message := s.archiveErrors[taskID]; message != "" {
+			if previous := taskError(result); previous != nil && previous.Message != "" {
+				message = previous.Message + "; " + message
+			}
+			result = &aop.ProtocolError{Code: "RESULT_ARCHIVE_FAILED", Message: message}
+		}
+		delete(s.archiveErrors, taskID)
 		delete(s.tasks, taskID)
-		delete(s.turns, taskID)
 		delete(s.toolCalls, taskID)
-		delete(s.childSessions, taskID)
 	}
 	s.mu.Unlock()
 	if ok && ch != nil {
@@ -103,14 +97,13 @@ func (s *nodeState) finishTask(taskID string, result taskResult) {
 }
 
 // dropTask clears taskID's bookkeeping and closes its waiter with no result.
-func (s *nodeState) dropTask(taskID string) (chan taskResult, bool) {
+func (s *nodeState) dropTask(taskID string) (chan protobuf.Message, bool) {
 	s.mu.Lock()
 	ch, pending := s.tasks[taskID]
 	if pending {
+		delete(s.archiveErrors, taskID)
 		delete(s.tasks, taskID)
-		delete(s.turns, taskID)
 		delete(s.toolCalls, taskID)
-		delete(s.childSessions, taskID)
 	}
 	s.mu.Unlock()
 	return ch, pending
@@ -126,28 +119,16 @@ func (s *nodeState) convergeOnToolResult(taskID string, ev *aop.Event) {
 		return
 	}
 	s.mu.Unlock()
-	d := ev.GetToolResult()
-	res := taskResult{Output: aopToolResultText(d.Output)}
-	if d.IsError {
-		res.Err = res.Output
-		res.Output = ""
-	}
-	s.finishTask(taskID, res)
+	s.finishTask(taskID, protobuf.CloneOf(ev.GetToolResult()))
 }
 
-// convergeOnTurnEnd closes a chat task when the ROOT agent session ends.
-// A canceled run still carries the ctx error ("context canceled") — only
-// non-canceled stops surface it as a task error.
-func (s *nodeState) convergeOnTurnEnd(taskID string, ev *aop.Event) {
-	if taskID == "" {
-		return
+// convergeOnTurnEnd releases the waiter after the Runtime terminal was forwarded.
+// Its error is already in that event; returning it again would synthesize a
+// second Web terminal for the same turn.
+func (s *nodeState) convergeOnTurnEnd(taskID string, _ *aop.Event) {
+	if taskID != "" {
+		s.finishTask(taskID, nil)
 	}
-	d := ev.GetTurnEnded()
-	res := taskResult{}
-	if d.StopReason != "canceled" && d.Error != nil {
-		res.Err = d.Error.Message
-	}
-	s.finishTask(taskID, res)
 }
 
 func (s *nodeState) closeAllTasks() {
@@ -157,7 +138,7 @@ func (s *nodeState) closeAllTasks() {
 	}
 	s.tasks = nil
 	s.toolCalls = nil
-	s.childSessions = nil
+	s.archiveErrors = nil
 	s.mu.Unlock()
 }
 
@@ -169,15 +150,10 @@ type remoteAgent struct {
 	commandsMenu []*types.CommandSpec
 	close        func()
 	send         aop.SendFunc
-	// sendCh is retained for isolated AgentPool tests; live nodes bind send to
-	// the shared Connection mechanism instead of running a second write pump.
-	sendCh    chan *aop.Envelope
-	connectAt time.Time
-	runtime   *aop.AgentRuntimeInfo
-	status    *aop.AgentStatus
-	stats     *aop.AgentStats
-
-	done chan struct{}
+	connectAt    time.Time
+	runtime      *aop.AgentRuntimeInfo
+	status       *aop.AgentStatus
+	stats        *aop.AgentStats
 }
 
 func (a *remoteAgent) NodeID() string    { return a.nodeID }
@@ -233,15 +209,18 @@ type SessionLookup interface {
 	BroadcastAOPEvent(sessionID string, event *aop.Event)
 }
 
-// AgentPool manages connected aiscan agent nodes. Every member is a node that
+// AgentPool manages connected cyber agent nodes. Every member is a node that
 // registered over the application WebSocket — including the hub's own embedded
 // agent, which connects over loopback like any other node.
 type AgentPool struct {
+	closing        bool
+	streams        map[*nodeStream]struct{}
+	streamDone     chan struct{}
 	mu             sync.RWMutex
 	agents         map[string]*remoteAgent
 	hub            *Hub
 	sessions       SessionLookup
-	artifacts      managementapi.ArtifactImporter
+	store          *SQLiteStore
 	config         func(context.Context) (*types.DistributeConfig, error)
 	ptyMu          sync.RWMutex
 	ptySubs        map[string]chan *ptypb.ProtocolMessage
@@ -251,11 +230,11 @@ type AgentPool struct {
 	upgrader       websocket.Upgrader
 }
 
-func NewAgentPool(hub *Hub, artifacts managementapi.ArtifactImporter, allowedOrigins ...string) *AgentPool {
+func NewAgentPool(hub *Hub, store *SQLiteStore, allowedOrigins ...string) *AgentPool {
 	return &AgentPool{
 		agents:         make(map[string]*remoteAgent),
 		hub:            hub,
-		artifacts:      artifacts,
+		store:          store,
 		ptySubs:        make(map[string]chan *ptypb.ProtocolMessage),
 		ptyNodeIDs:     make(map[string]string),
 		upgrader:       buildUpgrader(allowedOrigins),
@@ -293,7 +272,7 @@ func (p *AgentPool) unregister(a *remoteAgent) {
 	}
 	p.mu.Unlock()
 	if removed {
-		p.notifyPTY(a.NodeID(), terminal.NewDetached)
+		p.notifyPTY(a.NodeID(), ptypb.NewDetached)
 	}
 	a.state().closeAllTasks()
 }
@@ -338,7 +317,7 @@ func (p *AgentPool) Pick() *remoteAgent {
 
 // DispatchToolCall sends a canonical AOP tool.call to a tool-capable node.
 // The task completes only on the matching AOP tool.result.
-func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
@@ -377,7 +356,7 @@ func (p *AgentPool) DispatchToolCall(nodeID, taskID string, call *aop.ToolCall) 
 	return ch, nil
 }
 
-func (p *AgentPool) DispatchOpenSession(nodeID, requestID string, request *aop.OpenSessionRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchOpenSession(nodeID, requestID string, request *aop.OpenSessionRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return nil, fmt.Errorf("open session envelope id and session_id are required")
 	}
@@ -392,14 +371,14 @@ func (p *AgentPool) SessionOpen(nodeID, sessionID string) bool {
 	return agent.state().sessionOpen(sessionID)
 }
 
-func (p *AgentPool) DispatchCloseSession(nodeID, requestID string, request *aop.CloseSessionRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCloseSession(nodeID, requestID string, request *aop.CloseSessionRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" {
 		return nil, fmt.Errorf("close session envelope id and session_id are required")
 	}
 	return p.dispatchMessage(nodeID, requestID, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_CloseSessionRequest{CloseSessionRequest: request}})
 }
 
-func (p *AgentPool) DispatchCancelTurn(nodeID, requestID string, request *aop.CancelTurnRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCancelTurn(nodeID, requestID string, request *aop.CancelTurnRequest) (<-chan protobuf.Message, error) {
 	if request == nil || strings.TrimSpace(requestID) == "" || strings.TrimSpace(request.SessionId) == "" || strings.TrimSpace(request.TurnId) == "" {
 		return nil, fmt.Errorf("cancel turn envelope id, session_id, and turn_id are required")
 	}
@@ -432,7 +411,7 @@ func (p *AgentPool) ensureSessionOpen(a *remoteAgent, sessionID string) error {
 	return nil
 }
 
-func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
@@ -448,7 +427,7 @@ func (p *AgentPool) DispatchRun(nodeID string, request *aop.RunTurnRequest) (<-c
 	return p.dispatchMessage(nodeID, request.TurnId, &aop.ProtocolMessage{Message: &aop.ProtocolMessage_RunTurnRequest{RunTurnRequest: request}})
 }
 
-func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.CommandRequest) (<-chan taskResult, error) {
+func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.CommandRequest) (<-chan protobuf.Message, error) {
 	if command == nil || taskID == "" {
 		return nil, fmt.Errorf("command and operation id are required")
 	}
@@ -464,16 +443,15 @@ func (p *AgentPool) DispatchCommand(nodeID, taskID string, command *types.Comman
 	return p.dispatchMessage(nodeID, taskID, &types.CommandProtocolMessage{Message: &types.CommandProtocolMessage_Request{Request: protobuf.CloneOf(command)}})
 }
 
-func (p *AgentPool) dispatchMessage(nodeID, taskID string, message protobuf.Message) (<-chan taskResult, error) {
+func (p *AgentPool) dispatchMessage(nodeID, taskID string, message protobuf.Message) (<-chan protobuf.Message, error) {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil, fmt.Errorf("node %s not connected", nodeID)
 	}
-	ch := make(chan taskResult, 1)
+	ch := make(chan protobuf.Message, 1)
 	st := a.state()
 	st.mu.Lock()
 	st.tasks[taskID] = ch
-	st.turns[taskID] = 0
 	st.mu.Unlock()
 	envelope, err := aop.Wrap(taskID, "", message)
 	if err != nil {
@@ -522,24 +500,13 @@ func (p *AgentPool) sendAgentMessage(nodeID, id, replyTo string, message protobu
 }
 
 func (a *remoteAgent) enqueue(envelope *aop.Envelope) error {
-	if a == nil {
+	if a == nil || a.send == nil {
 		return fmt.Errorf("agent connection is unavailable")
 	}
-	if a.send != nil {
-		return a.send(envelope)
-	}
-	if a.sendCh == nil {
-		return fmt.Errorf("agent connection is unavailable")
-	}
-	select {
-	case a.sendCh <- envelope:
-		return nil
-	case <-a.done:
-		return fmt.Errorf("agent disconnected")
-	}
+	return a.send(envelope)
 }
 
-func (p *AgentPool) CancelTask(nodeID, taskID string, sessionID ...string) error {
+func (p *AgentPool) CancelTask(nodeID, taskID, sessionID string) error {
 	a := p.get(nodeID)
 	if a == nil {
 		return nil
@@ -552,13 +519,9 @@ func (p *AgentPool) CancelTask(nodeID, taskID string, sessionID ...string) error
 	if !pending {
 		return nil
 	}
-	var chatSessionID string
-	if len(sessionID) > 0 {
-		chatSessionID = sessionID[0]
-	}
 	requestID := generateID()
 	cancelMessage := protobuf.Message(&aop.ProtocolMessage{Message: &aop.ProtocolMessage_CancelTurnRequest{CancelTurnRequest: &aop.CancelTurnRequest{
-		SessionId: chatSessionID, TurnId: taskID,
+		SessionId: sessionID, TurnId: taskID,
 	}}})
 	if isToolCall {
 		cancelMessage = &aop.ProtocolMessage{Message: &aop.ProtocolMessage_CancelOperation{CancelOperation: &aop.CancelOperation{TargetId: taskID}}}
@@ -570,11 +533,11 @@ func (p *AgentPool) CancelTask(nodeID, taskID string, sessionID ...string) error
 }
 
 func (p *AgentPool) CancelPTY(nodeID, terminalID string) {
-	_ = p.sendAgentMessage(nodeID, generateID(), "", terminal.NewKill(terminalID))
+	_ = p.sendAgentMessage(nodeID, generateID(), "", ptypb.NewKill(terminalID))
 }
 
 func (p *AgentPool) ClosePTY(nodeID, terminalID string) {
-	_ = p.sendAgentMessage(nodeID, generateID(), "", terminal.NewDetach(terminalID))
+	_ = p.sendAgentMessage(nodeID, generateID(), "", ptypb.NewDetach(terminalID))
 }
 
 func (p *AgentPool) SubscribePTY(nodeID, terminalID string) (<-chan *ptypb.ProtocolMessage, bool, func()) {
@@ -636,7 +599,7 @@ func (p *AgentPool) rebindPTY(agent *remoteAgent) {
 	for _, terminalID := range terminalIDs {
 		terminalID := terminalID
 		go func() {
-			_ = agent.enqueue(aop.MustWrap(generateID(), "", terminal.NewList(terminalID, "")))
+			_ = agent.enqueue(aop.MustWrap(generateID(), "", ptypb.NewList(terminalID, "")))
 		}()
 	}
 }
@@ -660,12 +623,82 @@ func buildUpgrader(origins []string) websocket.Upgrader {
 	}
 }
 
-func aopToolResultText(content []*aop.Content) string {
-	var parts []string
-	for _, item := range content {
-		if text := item.GetText().GetText(); text != "" {
-			parts = append(parts, text)
+// taskError reads the canonical terminal reply only when an API needs an error
+// projection. Pending tasks retain the complete protobuf response.
+func taskError(reply protobuf.Message) *aop.ProtocolError {
+	if rejected, ok := reply.(interface{ GetRejected() *aop.Rejection }); ok {
+		if failure := rejected.GetRejected(); failure != nil {
+			return &aop.ProtocolError{Code: failure.Code, Message: failure.Message}
 		}
 	}
-	return strings.Join(parts, "\n")
+	switch reply := reply.(type) {
+	case *aop.ProtocolError:
+		return reply
+	case *aop.ToolResult:
+		if reply.IsError {
+			return &aop.ProtocolError{Code: "TOOL_FAILED", Message: coretool.ResultText(reply)}
+		}
+	}
+	return nil
+}
+
+// nodeStream includes connections still waiting for their first hello.
+type nodeStream struct {
+	cancel context.CancelFunc
+	stream aop.EnvelopeStream
+}
+
+func (p *AgentPool) admitStream(parent context.Context, stream aop.EnvelopeStream) (context.Context, func(), error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closing {
+		return nil, nil, fmt.Errorf("agent pool is closing")
+	}
+	ctx, cancel := context.WithCancel(parent)
+	entry := &nodeStream{cancel: cancel, stream: stream}
+	if p.streams == nil {
+		p.streams = make(map[*nodeStream]struct{})
+	}
+	p.streams[entry] = struct{}{}
+	return ctx, func() {
+		cancel()
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		delete(p.streams, entry)
+		if p.closing && len(p.streams) == 0 && p.streamDone != nil {
+			close(p.streamDone)
+			p.streamDone = nil
+		}
+	}, nil
+}
+func (p *AgentPool) Close(ctx context.Context) error {
+	p.mu.Lock()
+	p.closing = true
+	var streams []*nodeStream
+	for stream := range p.streams {
+		streams = append(streams, stream)
+	}
+	if len(streams) > 0 && p.streamDone == nil {
+		p.streamDone = make(chan struct{})
+	}
+	done := p.streamDone
+	p.mu.Unlock()
+	for _, stream := range streams {
+		stream.cancel()
+		switch closer := stream.stream.(type) {
+		case interface{ Close() error }:
+			_ = closer.Close()
+		case interface{ Close() }:
+			closer.Close()
+		}
+	}
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return errors.Join(extension.ErrCloseIncomplete, ctx.Err())
+	}
 }

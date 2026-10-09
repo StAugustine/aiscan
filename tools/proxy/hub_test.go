@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	coretool "github.com/chainreactors/cyber/core/tool"
 	"io"
 	"net"
 	"net/http"
@@ -18,8 +19,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/chainreactors/aiscan/pkg/commands"
 )
 
 // newTestHub starts a hub (capture or relay) with an isolated CA dir and returns
@@ -68,7 +67,7 @@ func runMitm(t *testing.T, store *FlowStore, hub *ProxyHub, args ...string) stri
 	t.Helper()
 	cmd := NewMitmCommand(store, hub)
 	var out bytes.Buffer
-	exec := &commands.Execution{Args: args, Stdout: &out, Stderr: &out}
+	exec := &coretool.Execution{Args: args, Stdout: &out, Stderr: &out}
 	if _, err := cmd.Run(context.Background(), exec); err != nil {
 		t.Fatalf("mitm %v: %v", args, err)
 	}
@@ -231,7 +230,7 @@ func TestCaptureFiltersAndVerbs(t *testing.T) {
 	}
 	first := store.Query(QueryOpts{Last: 1})
 	if len(first) == 1 {
-		out := runMitm(t, store, hub, "flow", first[0].ID)
+		out := runMitm(t, store, hub, "flow", first[0].Id)
 		if !strings.Contains(out, "Request Headers") {
 			t.Errorf("flow detail missing headers: %q", out)
 		}
@@ -321,11 +320,9 @@ func TestChainTraversesUpstreamProxy(t *testing.T) {
 	upstreamAddr, connects := startCountingConnectProxy(t)
 
 	_, state, client := newTestHub(t, true)
-	restore, err := state.WithOverrideDial("http://" + upstreamAddr)
-	if err != nil {
-		t.Fatalf("override: %v", err)
+	if err := state.SetProxyURL("http://" + upstreamAddr); err != nil {
+		t.Fatalf("set proxy: %v", err)
 	}
-	defer restore()
 
 	body := get(t, client, localhost(target.URL))
 	if !strings.Contains(body, "reached-via-chain") {
@@ -345,11 +342,9 @@ func TestFailClosedNoDirectLeak(t *testing.T) {
 	defer target.Close()
 
 	_, state, client := newTestHub(t, true)
-	restore, err := state.WithOverrideDial("socks5://127.0.0.1:1") // nothing listening
-	if err != nil {
-		t.Fatalf("override: %v", err)
+	if err := state.SetProxyURL("socks5://127.0.0.1:1"); err != nil { // nothing listening
+		t.Fatalf("set proxy: %v", err)
 	}
-	defer restore()
 
 	resp, err := client.Get(target.URL)
 	if err == nil {

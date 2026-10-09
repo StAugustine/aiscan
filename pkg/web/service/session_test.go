@@ -3,9 +3,10 @@ package service
 import (
 	"context"
 	"errors"
-	aop "github.com/chainreactors/aiscan/aop"
-	filepb "github.com/chainreactors/aiscan/aop/file"
-	types "github.com/chainreactors/aiscan/pkg/types"
+	aop "github.com/chainreactors/cyber/aop"
+	filepb "github.com/chainreactors/cyber/aop/file"
+	types "github.com/chainreactors/cyber/core/types"
+	scanpb "github.com/chainreactors/cyber/pkg/web/scan"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/anypb"
@@ -68,7 +69,7 @@ func TestAOPEnvelopeBinaryAndJSONAreEquivalent(t *testing.T) {
 }
 
 func TestAOPRequestIDReplayDoesNotDispatchTwice(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +78,10 @@ func TestAOPRequestIDReplayDoesNotDispatchTwice(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 8),
-		done: make(chan struct{}),
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	sent := bindAgentQueue(fake, 8)
 	pool.agents[fake.nodeID] = fake
 	server := service.api.Sessions
 	ctx := context.Background()
@@ -99,14 +100,14 @@ func TestAOPRequestIDReplayDoesNotDispatchTwice(t *testing.T) {
 	if err != nil || !proto.Equal(first, second) {
 		t.Fatalf("replay = %v, %v; want %v", second, err, first)
 	}
-	if got := len(fake.sendCh); got != 1 {
+	if got := len(sent); got != 1 {
 		t.Fatalf("agent frames = %d, want one run", got)
 	}
 	events, err := store.ListAOPEvents(ctx, "session-1", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(events) != 1 || events[0].GetMessage().GetId() != "input-1" || events[0].GetEmitter() != "aiscan.web" {
+	if len(events) != 1 || events[0].GetMessage().GetId() != "input-1" || events[0].GetEmitter() != "cyber.web" {
 		t.Fatalf("canonical user history = %+v", events)
 	}
 	conflicting := proto.Clone(request).(*aop.RunTurnRequest)
@@ -118,26 +119,26 @@ func TestAOPRequestIDReplayDoesNotDispatchTwice(t *testing.T) {
 }
 
 func TestOpenSessionLinksTypedScanExtension(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.Create(context.Background(), &types.Scan{
+	if err := store.Create(context.Background(), &scanpb.Scan{
 		Id: "scan-1", Target: "127.0.0.1", Mode: "quick", CreatedAt: nowProto(), UpdatedAt: nowProto(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(ServiceConfig{Store: store})
+	service := NewService(ServiceConfig{Store: store, Scans: &ScanServiceConfig{}})
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 1),
-		done: make(chan struct{}),
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	bindAgentQueue(fake, 1)
 	pool.agents[fake.nodeID] = fake
-	value, err := anypb.New(&types.SessionBinding{ScanId: "scan-1"})
+	value, err := anypb.New(&scanpb.SessionBinding{ScanId: "scan-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,8 +156,11 @@ func TestOpenSessionLinksTypedScanExtension(t *testing.T) {
 }
 
 func acceptCancelTurnRequests(pool *AgentPool, agent *remoteAgent) {
+	send := agent.send
 	agent.send = func(envelope *aop.Envelope) error {
-		agent.sendCh <- envelope
+		if err := send(envelope); err != nil {
+			return err
+		}
 		message, err := aop.Unwrap(envelope)
 		if err != nil {
 			return err
@@ -178,7 +182,7 @@ func acceptCancelTurnRequests(pool *AgentPool, agent *remoteAgent) {
 }
 
 func TestCancelTurnDispatchesRuntimeOwnedTurn(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,9 +193,9 @@ func TestCancelTurnDispatchesRuntimeOwnedTurn(t *testing.T) {
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
 		nodeState: newNodeState(),
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 1),
-		done: make(chan struct{}),
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	sent := bindAgentQueue(fake, 1)
 	fake.openSessions["session-1"] = struct{}{}
 	pool.agents[fake.nodeID] = fake
 	acceptCancelTurnRequests(pool, fake)
@@ -209,7 +213,7 @@ func TestCancelTurnDispatchesRuntimeOwnedTurn(t *testing.T) {
 	if err != nil || canceled.GetAccepted().GetTurnId() != "automatic-turn" {
 		t.Fatalf("CancelTurn = %v, %v", canceled, err)
 	}
-	message, err := aop.Unwrap(<-fake.sendCh)
+	message, err := aop.Unwrap(<-sent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +224,7 @@ func TestCancelTurnDispatchesRuntimeOwnedTurn(t *testing.T) {
 }
 
 func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "chat.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,10 +234,10 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 8),
-		done: make(chan struct{}),
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	sent := bindAgentQueue(fake, 8)
 	pool.agents[fake.nodeID] = fake
 	acceptCancelTurnRequests(pool, fake)
 	server := service.api.Sessions
@@ -258,9 +262,9 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 	// The cancel shares the single FIFO with the two run dispatches; drain it
 	// and locate the cancel_turn envelope.
 	var request *aop.CancelTurnRequest
-	drain := len(fake.sendCh)
+	drain := len(sent)
 	for i := 0; i < drain; i++ {
-		message, err := aop.Unwrap(<-fake.sendCh)
+		message, err := aop.Unwrap(<-sent)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -274,7 +278,19 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 	if request.GetSessionId() != "session-1" || request.GetTurnId() != "turn-1" {
 		t.Fatalf("cancel frame = %v", request)
 	}
-	pool.handleAgentEnvelope(fake, turnEndEnvelope(t, "turn-1", "session-1", "canceled"))
+	before, err := store.ListAOPEvents(ctx, "session-1", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range before {
+		if event.GetTurnEnded() != nil {
+			t.Fatal("cancel acceptance published a terminal before Runtime drained")
+		}
+	}
+	terminal := &aop.Event{Id: "runtime-terminal", SessionId: "session-1", TurnId: "turn-1", Emitter: "runtime",
+		Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "canceled", Usage: &aop.TokenUsage{InputTokens: 17, OutputTokens: 9}, Error: &aop.ProtocolError{Code: "CANCELED", Message: "execution drained"}}},
+	}
+	pool.handleAgentEnvelope(fake, aop.MustWrap("terminal", "turn-1", &aop.ProtocolMessage{Message: &aop.ProtocolMessage_Event{Event: terminal}}))
 	fake.mu.Lock()
 	_, firstPending := fake.tasks["turn-1"]
 	_, secondPending := fake.tasks["turn-2"]
@@ -295,6 +311,9 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 		if event.TurnId != "turn-1" || event.GetTurnEnded().GetStopReason() != "canceled" {
 			t.Fatalf("unexpected terminal event after exact cancel: %v", event)
 		}
+		if event.Id != terminal.Id || !proto.Equal(event.GetTurnEnded(), terminal.GetTurnEnded()) {
+			t.Fatalf("Runtime terminal details were replaced: %v", event)
+		}
 	}
 	if terminalCount != 1 {
 		t.Fatalf("terminal events after exact cancel = %d, want 1", terminalCount)
@@ -307,18 +326,19 @@ func TestCancelTurnTargetsOnlyRequestedTurn(t *testing.T) {
 
 func TestAOPRequestLedgerSurvivesServerRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "chat.db")
-	store, err := NewSQLiteStore(path)
+	store, err := NewSQLiteStore(path, ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	service := NewService(ServiceConfig{Store: store})
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
-	pool.agents["agent-1"] = &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 1),
-		done: make(chan struct{}),
+	fake := &remoteAgent{
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	bindAgentQueue(fake, 1)
+	pool.agents["agent-1"] = fake
 	request := &aop.OpenSessionRequest{SessionId: "session-1", NodeId: "agent-1", Title: "original"}
 	first, err := service.api.Sessions.OpenSession(context.Background(), "open-durable", request)
 	if err != nil || first.GetAccepted() == nil {
@@ -329,7 +349,7 @@ func TestAOPRequestLedgerSurvivesServerRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err = NewSQLiteStore(path)
+	store, err = NewSQLiteStore(path, ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,19 +372,21 @@ func TestAOPRequestLedgerSurvivesServerRestart(t *testing.T) {
 // ListEvents replay is a pure read: it must not dispatch frames, converge an
 // in-flight task, or append another copy of a terminal event.
 func TestListEventsReplayHasNoSideEffects(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "replay.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "replay.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
 
 	pool := NewAgentPool(NewHub(), nil)
-	svc := NewService(ServiceConfig{Store: store, AgentPool: pool})
+	svc := NewService(ServiceConfig{Store: store})
+	svc.SetAgentPool(pool)
 	remote := &remoteAgent{
 		nodeState: newNodeState(),
-		nodeID:    "agent-1", name: "worker", sendCh: make(chan *aop.Envelope, 8), done: make(chan struct{}),
+		nodeID:    "agent-1", name: "worker",
 	}
-	taskCh := make(chan taskResult, 1)
+	sent := bindAgentQueue(remote, 8)
+	taskCh := make(chan proto.Message, 1)
 	remote.tasks["task-1"] = taskCh
 	pool.register(remote)
 
@@ -372,11 +394,11 @@ func TestListEventsReplayHasNoSideEffects(t *testing.T) {
 	session := createTestSession(t, svc, "agent-1", "replay me")
 	arguments, _ := aop.JSONValue(map[string]string{"command": "ls"})
 	stored := []*aop.Event{
-		{Id: "e-1", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 1, 0, time.UTC)), SessionId: session.GetSession().GetId(), Emitter: "aiscan",
+		{Id: "e-1", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 1, 0, time.UTC)), SessionId: session.GetSession().GetId(), Emitter: "cyber",
 			Payload: &aop.Event_Message{Message: &aop.Message{Id: "m-1", Role: "user", Content: []*aop.Content{aop.Text("hi")}}}},
-		{Id: "e-2", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 2, 0, time.UTC)), SessionId: session.GetSession().GetId(), Emitter: "aiscan",
+		{Id: "e-2", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 2, 0, time.UTC)), SessionId: session.GetSession().GetId(), Emitter: "cyber",
 			Payload: &aop.Event_ToolCall{ToolCall: &aop.ToolCall{Id: "tc-1", Name: "bash", Arguments: arguments}}},
-		{Id: "e-3", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 3, 0, time.UTC)), SessionId: session.GetSession().GetId(), TurnId: "turn-1", Emitter: "aiscan",
+		{Id: "e-3", EmittedAt: timestamppb.New(time.Date(2026, 7, 19, 0, 0, 3, 0, time.UTC)), SessionId: session.GetSession().GetId(), TurnId: "turn-1", Emitter: "cyber",
 			Payload: &aop.Event_TurnEnded{TurnEnded: &aop.TurnEnded{StopReason: "completed"}}},
 	}
 	for _, event := range stored {
@@ -398,7 +420,7 @@ func TestListEventsReplayHasNoSideEffects(t *testing.T) {
 		}
 	}
 	select {
-	case frame := <-remote.sendCh:
+	case frame := <-sent:
 		t.Fatalf("replay dispatched a frame: %v", frame)
 	default:
 	}
@@ -420,7 +442,7 @@ func TestListEventsReplayHasNoSideEffects(t *testing.T) {
 }
 
 func TestWatchEventsResumesAfterCursor(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "resume.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "resume.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,7 +451,7 @@ func TestWatchEventsResumesAfterCursor(t *testing.T) {
 	session := createTestSession(t, svc, "", "resume")
 	for seq := 1; seq <= 3; seq++ {
 		if err := store.AddAOPEvent(context.Background(), session.GetSession().GetId(), &aop.Event{
-			Id: string(rune('0' + seq)), EmittedAt: timestamppb.Now(), SessionId: session.GetSession().GetId(), Emitter: "aiscan",
+			Id: string(rune('0' + seq)), EmittedAt: timestamppb.Now(), SessionId: session.GetSession().GetId(), Emitter: "cyber",
 			Payload: &aop.Event_Status{Status: &aop.Status{State: "running"}},
 		}); err != nil {
 			t.Fatal(err)
@@ -458,7 +480,7 @@ func TestWatchEventsResumesAfterCursor(t *testing.T) {
 // before the close, so no close dispatch is attempted; the hub persists the
 // terminal session event itself.
 func TestCloseSessionMarksStoreClosedAndRecordsEvent(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "close.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "close.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -468,10 +490,10 @@ func TestCloseSessionMarksStoreClosedAndRecordsEvent(t *testing.T) {
 	pool := NewAgentPool(service.Hub(), nil)
 	service.SetAgentPool(pool)
 	fake := &remoteAgent{
-		nodeState: &nodeState{tasks: make(map[string]chan taskResult), turns: make(map[string]int), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{}), childSessions: make(map[string]map[string]struct{})},
-		nodeID:    "agent-1", name: "agent-1", sendCh: make(chan *aop.Envelope, 1),
-		done: make(chan struct{}),
+		nodeState: &nodeState{tasks: make(map[string]chan proto.Message), openSessions: map[string]struct{}{"session-1": {}}, toolCalls: make(map[string]struct{})},
+		nodeID:    "agent-1", name: "agent-1",
 	}
+	bindAgentQueue(fake, 1)
 	pool.agents[fake.nodeID] = fake
 
 	ctx := context.Background()
@@ -496,7 +518,7 @@ func TestCloseSessionMarksStoreClosedAndRecordsEvent(t *testing.T) {
 }
 
 func TestHandleFileUploadCancellationRemovesPendingAgentTask(t *testing.T) {
-	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "upload.db"))
+	store, err := NewSQLiteStore(filepath.Join(t.TempDir(), "upload.db"), ScanSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,9 +534,10 @@ func TestHandleFileUploadCancellationRemovesPendingAgentTask(t *testing.T) {
 	}
 
 	pool := NewAgentPool(NewHub(), nil)
-	remote := newFakeAgent(session.GetSession().GetNodeId(), 1)
+	remote, sent := newFakeAgent(session.GetSession().GetNodeId(), 1)
 	pool.register(remote)
-	svc := NewService(ServiceConfig{Store: store, AgentPool: pool})
+	svc := NewService(ServiceConfig{Store: store})
+	svc.SetAgentPool(pool)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -525,7 +548,7 @@ func TestHandleFileUploadCancellationRemovesPendingAgentTask(t *testing.T) {
 
 	var upload *aop.Envelope
 	select {
-	case upload = <-remote.sendCh:
+	case upload = <-sent:
 	case <-time.After(time.Second):
 		t.Fatal("upload was not dispatched")
 	}
@@ -554,7 +577,7 @@ func TestHandleFileUploadCancellationRemovesPendingAgentTask(t *testing.T) {
 		t.Fatal("canceled upload remained in the agent task map")
 	}
 	select {
-	case envelope := <-remote.sendCh:
+	case envelope := <-sent:
 		message, err := aop.Unwrap(envelope)
 		if err != nil {
 			t.Fatal(err)

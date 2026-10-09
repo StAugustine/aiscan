@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/chainreactors/aiscan/core/eventbus"
-	"github.com/chainreactors/aiscan/core/telemetry"
+	"github.com/chainreactors/cyber/core/telemetry"
 )
 
 type Event interface {
@@ -24,57 +23,42 @@ const (
 	ActionCapabilityDone  ActionKind = "capability done"
 )
 
-type Observation struct {
+type Observation[T Event] struct {
 	Action     ActionKind
 	Capability string
-	Event      Event
+	Event      T
 }
 
-type Route struct {
+type Route[T Event] struct {
 	From   string
-	Accept func(Event) bool
+	Accept func(T) bool
 }
 
-type Capability struct {
+type Capability[T Event] struct {
 	Name   string
-	Routes []Route
+	Routes []Route[T]
 	Worker int
-	RunKey func(Event) string
-	Run    func(ctx context.Context, event Event, emit func(Event))
+	Run    func(ctx context.Context, event T, emit func(T))
 }
 
-func (c Capability) KeyFor(e Event) string {
-	if c.RunKey != nil {
-		return c.RunKey(e)
-	}
-	return c.Name + "|" + e.Key()
-}
-
-type Config struct {
-	Capabilities []Capability
-	Bus          *eventbus.Bus[Observation]
-}
-
-type routedEvent struct {
-	event  Event
+type routedEvent[T Event] struct {
+	event  T
 	source string
 }
 
-type routeEntry struct {
-	from   string
-	cap    *Capability
-	accept func(Event) bool
-	mu     sync.Mutex
+type routeEntry[T Event] struct {
+	cap    *Capability[T]
+	accept func(T) bool
 	seen   map[string]struct{}
 }
 
-type Pipeline struct {
+type Pipeline[T Event] struct {
 	ctx            context.Context
-	capabilities   []Capability
-	bus            *eventbus.Bus[Observation]
-	events         chan routedEvent
-	queues         map[string]chan Event
-	routes         map[string][]*routeEntry
+	capabilities   []Capability[T]
+	observe        func(Observation[T])
+	events         chan routedEvent[T]
+	queues         map[string]chan T
+	routes         map[string][]*routeEntry[T]
 	dispatcherDone chan struct{}
 	workersDone    sync.WaitGroup
 	mu             sync.Mutex
@@ -82,53 +66,28 @@ type Pipeline struct {
 	pending        int
 }
 
-// RouteStats returns per-route dedup map sizes. Keyed by "from->cap".
-// A value of -1 means the map has been freed. For testing only.
-func (p *Pipeline) RouteStats() map[string]int {
-	stats := make(map[string]int)
-	for source, entries := range p.routes {
-		for _, entry := range entries {
-			key := source + "->" + entry.cap.Name
-			entry.mu.Lock()
-			if entry.seen != nil {
-				stats[key] = len(entry.seen)
-			} else {
-				stats[key] = -1
-			}
-			entry.mu.Unlock()
-		}
-	}
-	return stats
-}
-
 const seedSource = ""
 
-func New(ctx context.Context, cfg Config) (*Pipeline, error) {
-	bus := cfg.Bus
-	if bus == nil {
-		bus = eventbus.New[Observation]()
-	}
-
-	if err := validateDAG(cfg.Capabilities); err != nil {
+func New[T Event](ctx context.Context, capabilities []Capability[T], observe func(Observation[T])) (*Pipeline[T], error) {
+	if err := validateDAG(capabilities); err != nil {
 		return nil, err
 	}
 
-	p := &Pipeline{
+	p := &Pipeline[T]{
 		ctx:            ctx,
-		capabilities:   cfg.Capabilities,
-		bus:            bus,
-		events:         make(chan routedEvent, 1024),
-		queues:         make(map[string]chan Event, len(cfg.Capabilities)),
-		routes:         make(map[string][]*routeEntry),
+		capabilities:   capabilities,
+		observe:        observe,
+		events:         make(chan routedEvent[T], 1024),
+		queues:         make(map[string]chan T, len(capabilities)),
+		routes:         make(map[string][]*routeEntry[T]),
 		dispatcherDone: make(chan struct{}),
 	}
 	p.cond = sync.NewCond(&p.mu)
 
-	for i := range cfg.Capabilities {
-		cap := &cfg.Capabilities[i]
+	for i := range capabilities {
+		cap := &p.capabilities[i]
 		for _, route := range cap.Routes {
-			entry := &routeEntry{
-				from:   route.From,
+			entry := &routeEntry[T]{
 				cap:    cap,
 				accept: route.Accept,
 				seen:   make(map[string]struct{}),
@@ -140,7 +99,7 @@ func New(ctx context.Context, cfg Config) (*Pipeline, error) {
 	return p, nil
 }
 
-func (p *Pipeline) Run(seeds []Event) {
+func (p *Pipeline[T]) Run(seeds []T) {
 	p.start()
 	for _, seed := range seeds {
 		p.submit(seed, seedSource)
@@ -152,43 +111,27 @@ func (p *Pipeline) Run(seeds []Event) {
 		close(queue)
 	}
 	p.workersDone.Wait()
-	p.cleanup()
-}
-
-func (p *Pipeline) Submit(e Event) {
-	p.submit(e, seedSource)
-}
-
-func (p *Pipeline) cleanup() {
-	for _, entries := range p.routes {
-		for _, entry := range entries {
-			entry.mu.Lock()
-			clear(entry.seen)
-			entry.seen = nil
-			entry.mu.Unlock()
-		}
-	}
 	p.routes = nil
 	p.queues = nil
 }
 
-func (p *Pipeline) start() {
+func (p *Pipeline[T]) start() {
 	for i := range p.capabilities {
 		cap := &p.capabilities[i]
 		workers := cap.Worker
 		if workers <= 0 {
 			workers = 1
 		}
-		queue := make(chan Event, 256)
+		queue := make(chan T, 256)
 		p.queues[cap.Name] = queue
 		for j := 0; j < workers; j++ {
 			p.workersDone.Add(1)
-			go func(cap *Capability, queue <-chan Event) {
+			go func(cap *Capability[T], queue <-chan T) {
 				defer p.workersDone.Done()
 				for input := range queue {
 					telemetry.SafeRun("pipeline."+cap.Name, func() {
 						p.emit(ActionCapabilityStart, cap.Name, input)
-						cap.Run(p.ctx, input, func(e Event) {
+						cap.Run(p.ctx, input, func(e T) {
 							p.submit(e, cap.Name)
 						})
 						p.emit(ActionCapabilityDone, cap.Name, input)
@@ -210,20 +153,20 @@ func (p *Pipeline) start() {
 	}()
 }
 
-func (p *Pipeline) submit(e Event, source string) {
-	if e == nil || e.Key() == "" {
+func (p *Pipeline[T]) submit(e T, source string) {
+	if e.Key() == "" {
 		return
 	}
 	p.emit(ActionEmit, source, e)
 	p.add()
 	select {
-	case p.events <- routedEvent{event: e, source: source}:
+	case p.events <- routedEvent[T]{event: e, source: source}:
 	case <-p.ctx.Done():
 		p.done()
 	}
 }
 
-func (p *Pipeline) dispatch(re routedEvent) {
+func (p *Pipeline[T]) dispatch(re routedEvent[T]) {
 	key := re.event.Key()
 	if key == "" {
 		return
@@ -238,19 +181,11 @@ func (p *Pipeline) dispatch(re routedEvent) {
 		}
 		matched = true
 
-		dedupKey := entry.cap.KeyFor(re.event)
-		if dedupKey == "" {
-			continue
-		}
-
-		entry.mu.Lock()
-		if _, seen := entry.seen[dedupKey]; seen {
-			entry.mu.Unlock()
+		if _, seen := entry.seen[key]; seen {
 			p.emit(ActionDedupRoute, entry.cap.Name, re.event)
 			continue
 		}
-		entry.seen[dedupKey] = struct{}{}
-		entry.mu.Unlock()
+		entry.seen[key] = struct{}{}
 
 		if !dispatched {
 			p.emit(ActionAccept, re.source, re.event)
@@ -270,13 +205,13 @@ func (p *Pipeline) dispatch(re routedEvent) {
 	}
 }
 
-func (p *Pipeline) add() {
+func (p *Pipeline[T]) add() {
 	p.mu.Lock()
 	p.pending++
 	p.mu.Unlock()
 }
 
-func (p *Pipeline) done() {
+func (p *Pipeline[T]) done() {
 	p.mu.Lock()
 	p.pending--
 	if p.pending == 0 {
@@ -285,7 +220,7 @@ func (p *Pipeline) done() {
 	p.mu.Unlock()
 }
 
-func (p *Pipeline) waitIdle() {
+func (p *Pipeline[T]) waitIdle() {
 	p.mu.Lock()
 	for p.pending > 0 {
 		p.cond.Wait()
@@ -293,11 +228,13 @@ func (p *Pipeline) waitIdle() {
 	p.mu.Unlock()
 }
 
-func (p *Pipeline) emit(action ActionKind, capability string, e Event) {
-	p.bus.Emit(Observation{Action: action, Capability: capability, Event: e})
+func (p *Pipeline[T]) emit(action ActionKind, capability string, e T) {
+	if p.observe != nil {
+		p.observe(Observation[T]{Action: action, Capability: capability, Event: e})
+	}
 }
 
-func validateDAG(capabilities []Capability) error {
+func validateDAG[T Event](capabilities []Capability[T]) error {
 	adj := make(map[string]map[string]struct{})
 	nodes := make(map[string]struct{})
 	for _, cap := range capabilities {

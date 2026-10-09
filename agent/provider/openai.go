@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 )
 
 type OpenAIProvider struct {
@@ -28,6 +28,9 @@ func NewOpenAIProvider(cfg *ProviderConfig) (*OpenAIProvider, error) {
 func (p *OpenAIProvider) Name() string {
 	return p.config.Provider
 }
+
+// Identity excludes credentials while distinguishing deployments of one model.
+func (p *OpenAIProvider) Identity() string { return p.Name() + "/" + p.config.BaseURL }
 
 func (p *OpenAIProvider) supportsImages() bool {
 	if p.config.Images != nil {
@@ -85,7 +88,7 @@ func (p *OpenAIProvider) ChatCompletionStream(ctx context.Context, req *ChatComp
 	events, err := streamSSE(ctx, p.client, timeoutFromConfig(p.config.Timeout),
 		p.completionEndpoint(), bodyBytes, p.setAuthHeaders, p.Name(), ProviderOpenAI,
 		true,
-		func(_ string, data []byte) (ChatCompletionStreamEvent, error) {
+		func(_ string, data []byte) ([]ChatCompletionStreamEvent, error) {
 			return parseOpenAIStreamChunk(data)
 		},
 	)
@@ -144,7 +147,7 @@ type openAIMessage struct {
 	Name             string           `json:"name,omitempty"`
 	Role             string           `json:"role"`
 	Content          any              `json:"content"`
-	ReasoningContent string           `json:"reasoning_content,omitempty"`
+	ReasoningContent *string          `json:"reasoning_content,omitempty"`
 	ToolCalls        []openAIToolCall `json:"tool_calls,omitempty"`
 	ToolCallID       string           `json:"tool_call_id,omitempty"`
 }
@@ -170,9 +173,9 @@ type openAIToolCall struct {
 type openAITool struct {
 	Type     string `json:"type"`
 	Function struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Parameters  map[string]any `json:"parameters"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
 }
 
@@ -201,7 +204,7 @@ func aopToOpenAIMessages(messages []*aop.Message) []openAIMessage {
 					text.WriteString(value.Text.Text)
 				}
 			case *aop.Content_Reasoning:
-				wire.ReasoningContent = value.Reasoning.Text
+				wire.ReasoningContent = &value.Reasoning.Text
 			case *aop.Content_Media:
 				if media := value.Media; media.Kind == "image" && media.Resource != nil {
 					if data := media.Resource.GetData(); len(data) > 0 {
@@ -266,15 +269,7 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 		t.Type = "function"
 		t.Function.Name = def.Name
 		t.Function.Description = def.Description
-		if def.InputSchema != nil {
-			var schema map[string]any
-			if err := json.Unmarshal(def.InputSchema.Data, &schema); err == nil {
-				t.Function.Parameters = schema
-			}
-		}
-		if t.Function.Parameters == nil {
-			t.Function.Parameters = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
+		t.Function.Parameters = toolInputSchema(def.InputSchema)
 		tools = append(tools, t)
 	}
 	body := map[string]any{
@@ -288,8 +283,14 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 	if req.MaxTokens > 0 {
 		body["max_tokens"] = req.MaxTokens
 	}
+	if req.JSONOutput {
+		body["response_format"] = map[string]string{"type": "json_object"}
+	}
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
+	}
+	if req.ReasoningEffort != "" {
+		body["reasoning_effort"] = req.ReasoningEffort
 	}
 	if req.Stream {
 		body["stream_options"] = map[string]any{"include_usage": true}
@@ -306,11 +307,13 @@ func marshalOpenAIRequest(req *ChatCompletionRequest) ([]byte, error) {
 // --- OpenAI response parsing ---
 
 type openAIUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	CacheReadTokens  int `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	PromptTokens     int  `json:"prompt_tokens"`
+	CompletionTokens int  `json:"completion_tokens"`
+	TotalTokens      int  `json:"total_tokens"`
+	CacheReadTokens  int  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int  `json:"cache_write_tokens,omitempty"`
+	CacheMissTokens  *int `json:"prompt_cache_miss_tokens,omitempty"`
+	ReasoningTokens  *int `json:"reasoning_tokens,omitempty"`
 }
 
 func (u *openAIUsage) UnmarshalJSON(data []byte) error {
@@ -323,6 +326,9 @@ func (u *openAIUsage) UnmarshalJSON(data []byte) error {
 			CacheWriteTokens int `json:"cache_write_tokens"`
 		} `json:"prompt_tokens_details,omitempty"`
 		// DeepSeek format
+		CompletionTokensDetails *struct {
+			ReasoningTokens *int `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details"`
 		PromptCacheHitTokens  *int `json:"prompt_cache_hit_tokens,omitempty"`
 		PromptCacheMissTokens *int `json:"prompt_cache_miss_tokens,omitempty"`
 	}
@@ -335,9 +341,10 @@ func (u *openAIUsage) UnmarshalJSON(data []byte) error {
 		u.CacheWriteTokens = raw.PromptTokensDetails.CacheWriteTokens
 	} else if raw.PromptCacheHitTokens != nil {
 		u.CacheReadTokens = *raw.PromptCacheHitTokens
-		if raw.PromptCacheMissTokens != nil {
-			u.CacheWriteTokens = *raw.PromptCacheMissTokens
-		}
+	}
+	u.CacheMissTokens = raw.PromptCacheMissTokens
+	if raw.CompletionTokensDetails != nil {
+		u.ReasoningTokens = raw.CompletionTokensDetails.ReasoningTokens
 	}
 	return nil
 }
@@ -346,7 +353,14 @@ func (u *openAIUsage) toProto() *aop.TokenUsage {
 	if u == nil {
 		return nil
 	}
-	return TokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens, u.CacheReadTokens, u.CacheWriteTokens)
+	out := TokenUsage(u.PromptTokens, u.CompletionTokens, u.TotalTokens, u.CacheReadTokens, u.CacheWriteTokens)
+	if u.CacheMissTokens != nil {
+		out.Detail["cache_miss"] = uint64(max(0, *u.CacheMissTokens))
+	}
+	if u.ReasoningTokens != nil {
+		out.Detail["reasoning"] = uint64(max(0, *u.ReasoningTokens))
+	}
+	return out
 }
 
 type openAIResponseMessage struct {
@@ -361,7 +375,9 @@ func openAIMessageToAOP(msg *openAIResponseMessage) *aop.Message {
 		msg.Role = "assistant"
 	}
 	out := &aop.Message{Role: msg.Role}
-	if msg.ReasoningContent != nil && *msg.ReasoningContent != "" {
+	// An explicitly empty reasoning field is still part of the provider's
+	// history contract (notably DeepSeek's successive tool calls).
+	if msg.ReasoningContent != nil {
 		out.Content = append(out.Content, aop.Reasoning(*msg.ReasoningContent))
 	}
 	if msg.Content != nil && *msg.Content != "" {
@@ -436,30 +452,32 @@ type openAIStreamChunk struct {
 	Error *APIError    `json:"error,omitempty"`
 }
 
-func parseOpenAIStreamChunk(data []byte) (ChatCompletionStreamEvent, error) {
+func parseOpenAIStreamChunk(data []byte) ([]ChatCompletionStreamEvent, error) {
 	var chunk openAIStreamChunk
 	if err := json.Unmarshal(data, &chunk); err != nil {
-		return ChatCompletionStreamEvent{}, fmt.Errorf("unmarshal stream chunk: %w", err)
+		return nil, fmt.Errorf("unmarshal stream chunk: %w", err)
 	}
 	if chunk.Error != nil {
-		return ChatCompletionStreamEvent{}, chunk.Error
+		return nil, chunk.Error
 	}
 	event := ChatCompletionStreamEvent{Usage: chunk.Usage.toProto()}
 	if len(chunk.Choices) == 0 {
-		return event, nil
+		return []ChatCompletionStreamEvent{event}, nil
 	}
 	delta := chunk.Choices[0].Delta
 	event.Role = delta.Role
 	event.FinishReason = chunk.Choices[0].FinishReason
+	var events []ChatCompletionStreamEvent
+	if delta.ReasoningContent != nil {
+		events = append(events, ChatCompletionStreamEvent{MessageDelta: &aop.MessageDelta{
+			Operation: aop.DeltaOperation_DELTA_OPERATION_APPEND,
+			Value:     &aop.MessageDelta_Reasoning{Reasoning: *delta.ReasoningContent},
+		}})
+	}
 	if delta.Content != nil && *delta.Content != "" {
 		event.MessageDelta = &aop.MessageDelta{
 			Operation: aop.DeltaOperation_DELTA_OPERATION_APPEND,
 			Value:     &aop.MessageDelta_Text{Text: *delta.Content},
-		}
-	} else if delta.ReasoningContent != nil && *delta.ReasoningContent != "" {
-		event.MessageDelta = &aop.MessageDelta{
-			Operation: aop.DeltaOperation_DELTA_OPERATION_APPEND,
-			Value:     &aop.MessageDelta_Reasoning{Reasoning: *delta.ReasoningContent},
 		}
 	}
 	for _, tc := range delta.ToolCalls {
@@ -471,7 +489,7 @@ func parseOpenAIStreamChunk(data []byte) (ChatCompletionStreamEvent, error) {
 		}
 		event.ToolDeltas = append(event.ToolDeltas, callDelta)
 	}
-	return event, nil
+	return append(events, event), nil
 }
 
 // --- WebSearch via OpenAI Responses API ---

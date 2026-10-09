@@ -1,13 +1,15 @@
-# 第三方语言接入 aiscan
+# 第三方语言接入 cyber
 
-本文档面向 Android/Kotlin、Java、Swift、Python、TypeScript 等非 Go 客户端，说明如何从 aiscan protobuf schema 生成代码，并接入两组外部 API。
+[开发者指南](development.md) · 前置：[会话与宿主集成](developer/hosting.md) · 字段：[API 参考](api.md)
+
+本文档面向 Android/Kotlin、Java、Swift、Python、TypeScript 等非 Go 客户端，说明如何从 cyber protobuf schema 生成代码，并接入两组外部 API。
 
 | 功能组 | 传输 | 用途 |
 |--------|------|------|
 | Application WebSocket | 二进制 protobuf 长连接 | 创建会话、发送自然语言、接收流式回答、取消 Turn |
-| ConnectRPC | protobuf unary RPC | 查询会话历史、扫描、配置、Agent、系统状态和 SCO |
+| ConnectRPC | protobuf unary RPC | 查询会话历史、扫描、配置、Agent、系统状态及同步原始 Artifact |
 
-详细字段与错误语义见 [api.md](api.md)。Go 开发者请直接阅读 [`examples/acp/README.md`](../examples/acp/README.md)。
+详细字段与错误语义见 [api.md](api.md)。Go 进程内嵌入从[会话示例](../examples/session/main.go)开始；AOP 连接示例见 [examples/acp](../examples/acp/README.md)。协议类型与数据归属见[事件与数据](architecture.md#协议类型的归属)，宿主实现见[连接与协议处理](developer/hosting.md#连接与协议处理)。
 
 ## 1. 获取 protobuf schema
 
@@ -17,7 +19,7 @@ Application/AOP schema：
 web/frontend/cyber-ui/packages/aop/proto/aop/
 ```
 
-ConnectRPC service 和 aiscan 类型：
+ConnectRPC service 和 cyber 类型：
 
 ```text
 proto/rpc/
@@ -31,10 +33,10 @@ proto/types/
 -I proto
 ```
 
-schema 的自动生成字段文档：
+字段级参考以 proto 源码为准：
 
-- [api/aop.md](api/aop.md)
-- [api/rpc.md](api/rpc.md)
+- Application WebSocket：`web/frontend/cyber-ui/packages/aop/proto/aop/**`
+- 管理平面：`proto/rpc/*.proto`、`proto/types/*.proto`
 
 ## 2. protobuf 代码生成
 
@@ -103,6 +105,26 @@ proto/rpc/*.proto
 - Python：支持 Connect 协议的生成器，或使用 gRPC client 访问同一 handler
 
 server handler 同时支持 Connect、gRPC 和 gRPC-Web。具体 service 与 method 见 [api.md#connectrpc-api](api.md#connectrpc-api)。
+
+仓库内 Go 类型与 Connect client/handler 统一用 `go run ./cmd/gen`（或 `make proto-gen`）生成，产物分别位于 `aop/`、`core/types/` 和 `pkg/rpc/`。Go 插件版本由 `go.mod` 固定，修改 schema 后使用这一入口更新。
+
+### 2.3 生成字段文档
+
+字段以 protobuf 源码为准。需要逐字段参考时，安装 protoc 和文档插件，在仓库根目录运行：
+
+```sh
+go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@latest
+mkdir -p docs/api
+protoc -I web/frontend/cyber-ui/packages/aop/proto \
+  --doc_out=docs/api --doc_opt=markdown,aop.md \
+  web/frontend/cyber-ui/packages/aop/proto/aop/*.proto \
+  web/frontend/cyber-ui/packages/aop/proto/aop/*/*.proto
+protoc -I proto -I web/frontend/cyber-ui/packages/aop/proto \
+  --doc_out=docs/api --doc_opt=markdown,rpc.md \
+  proto/rpc/*.proto proto/types/*.proto
+```
+
+`aop.md` 包含 AOP message 与 enum，`rpc.md` 包含 Cyber 管理服务及请求响应。这些是本地生成物，不纳入版本控制；schema 更新后重新生成。上例使用 POSIX shell，Windows 可在 MSYS2 环境执行。
 
 ## 3. Application WebSocket 接入
 
@@ -208,6 +230,8 @@ subscriptions[watch_id]  -> 持续接收事件
 不要假设响应按发送顺序返回。事件也可能先于 `RunTurnResponse` 到达。
 
 ## 4. 最小会话流程
+
+以下示例中的 `local` 代表已连接节点的 ID。实际接入先通过 `AgentService/ListAgents` 或 Web 的 Agent 列表取得在线节点 ID；通用 Hub 不自带执行节点。服务与节点准备见[Go 示例](../examples/acp/README.md#准备服务与节点)。
 
 ### 4.1 OpenSession
 
@@ -360,11 +384,11 @@ ListEvents(aop.ListEventsRequest) -> aop.ListEventsResponse
 主要 procedure：
 
 ```text
-/aiscan.rpc.chat.SessionService/ListSessions
-/aiscan.rpc.chat.SessionService/ListEvents
-/aiscan.rpc.scan.ScanService/ListScans
-/aiscan.rpc.agent.AgentService/ListAgents
-/aiscan.rpc.system.SystemService/GetStatus
+/cyber.rpc.chat.SessionService/ListSessions
+/cyber.rpc.chat.SessionService/ListEvents
+/cyber.rpc.scan.ScanService/ListScans
+/cyber.rpc.agent.AgentService/ListAgents
+/cyber.rpc.system.SystemService/GetStatus
 ```
 
 第三方语言应通过生成的 Connect/gRPC client 调用，不需要手写这些 HTTP body。

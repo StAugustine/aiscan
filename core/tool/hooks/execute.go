@@ -7,11 +7,10 @@ import (
 	"runtime/debug"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	operationpb "github.com/chainreactors/aiscan/aop/operation"
-	corehooks "github.com/chainreactors/aiscan/core/hooks"
-	"github.com/chainreactors/aiscan/core/operation"
-	"github.com/chainreactors/aiscan/core/tool"
+	aop "github.com/chainreactors/cyber/aop"
+	operationpb "github.com/chainreactors/cyber/aop/operation"
+	corehooks "github.com/chainreactors/cyber/core/hooks"
+	"github.com/chainreactors/cyber/core/operation"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -43,7 +42,7 @@ func CancellationCause(cancellation Cancellation, handlerErr error) error {
 // Execute is the single tool invocation boundary. Agents, ToolNode and direct
 // callers all enter here; it does not publish protocol ToolCall/ToolResult
 // events, whose ownership remains with their existing producers.
-func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments string, run func(context.Context, string) (*tool.Result, error)) (result *tool.Result, err error) {
+func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments string, run func(context.Context, string) (*aop.ToolResult, error)) (result *aop.ToolResult, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -73,7 +72,7 @@ func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments 
 			err = errors.Join(err, cause)
 		}
 		if result == nil {
-			result = &tool.Result{}
+			result = &aop.ToolResult{}
 		}
 		if err != nil {
 			result.IsError = true
@@ -87,16 +86,16 @@ func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments 
 		if !startedAt.IsZero() {
 			result.DurationMs = uint64(endedAt.Sub(startedAt).Milliseconds())
 		}
-		if registry.Has(Completed.Kind) {
+		if Completed.Has(registry) {
 			corehooks.Notify(context.WithoutCancel(ctx), registry, Completed, Completion{
 				Lifecycle: Lifecycle{Operation: cloneCorrelation(correlation), StartedAt: startedAt, EndedAt: endedAt, Err: err},
 				Call:      proto.Clone(call).(*aop.ToolCall),
-				Result:    proto.Clone(result).(*tool.Result),
+				Result:    proto.Clone(result).(*aop.ToolResult),
 			})
 		}
 	}()
 
-	if registry.Has(Before.Kind) {
+	if Before.Has(registry) {
 		admission, hookErr := Before.Emit(ctx, registry, CallEvent{Call: proto.Clone(call).(*aop.ToolCall), Operation: cloneCorrelation(correlation)})
 		if err = Check(admission, hookErr); err != nil {
 			return nil, err
@@ -107,7 +106,7 @@ func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments 
 	}
 
 	startedAt = time.Now()
-	if registry.Has(Started.Kind) {
+	if Started.Has(registry) {
 		corehooks.Notify(ctx, registry, Started, CallEvent{Call: proto.Clone(call).(*aop.ToolCall), Operation: cloneCorrelation(correlation)})
 	}
 	if err = context.Cause(ctx); err != nil {
@@ -116,11 +115,11 @@ func Execute(ctx context.Context, registry *corehooks.Registry, name, arguments 
 
 	result, err = run(ctx, arguments)
 	if result == nil {
-		result = &tool.Result{}
+		result = &aop.ToolResult{}
 	}
-	if registry.Has(After.Kind) {
+	if After.Has(registry) {
 		wasError, wasTerminate := result.IsError, result.Terminate
-		transformed := proto.Clone(result).(*tool.Result)
+		transformed := proto.Clone(result).(*aop.ToolResult)
 		_, hookErr := After.Emit(ctx, registry, ResultEvent{
 			Call: proto.Clone(call).(*aop.ToolCall), Operation: cloneCorrelation(correlation), Result: transformed,
 		})

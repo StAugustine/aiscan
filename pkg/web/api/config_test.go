@@ -4,15 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/chainreactors/cyber/core/resource"
+	types "github.com/chainreactors/cyber/core/types"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	searchext "github.com/chainreactors/cyber/exts/search"
+	hostcli "github.com/chainreactors/cyber/pkg/cli"
+	configpkg "github.com/chainreactors/cyber/pkg/config"
+	flags "github.com/jessevdk/go-flags"
+	"google.golang.org/protobuf/types/known/structpb"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
-
-	scannerprobe "github.com/chainreactors/aiscan/pkg/exts/scanner/probe"
-	searchprobe "github.com/chainreactors/aiscan/pkg/exts/search/probe"
-	"github.com/chainreactors/aiscan/pkg/probe"
-	types "github.com/chainreactors/aiscan/pkg/types"
 )
 
 // fakeConfigStore is a minimal in-memory ConfigStore.
@@ -32,21 +36,33 @@ func (f *fakeConfigStore) GetDistributeConfig(context.Context) (string, bool, *t
 }
 
 func (f *fakeConfigStore) SaveConfig(context.Context, *types.DistributeConfig) (*types.ConfigView, error) {
-	return nil, errors.New("configuration updates unavailable in probe fixture")
+	return nil, errors.New("configuration updates unavailable in connection fixture")
 }
 
 func (f *fakeConfigStore) ActivateConfig(context.Context, string) (*types.ConfigView, error) {
-	return nil, errors.New("configuration activation unavailable in probe fixture")
+	return nil, errors.New("configuration activation unavailable in connection fixture")
 }
 
 func newConfig(backend ConfigBackend) *Config {
-	registry := probe.New()
-	for name, check := range map[string]probe.Check{"cyberhub": scannerprobe.Cyberhub, "recon": scannerprobe.Recon, "search": searchprobe.Check} {
-		if err := registry.Register(name, name, check); err != nil {
-			panic(err)
-		}
+	sections := configpkg.NewSections()
+	resources := resource.New()
+	if _, err := resource.Define[configpkg.Section](resources, sections); err != nil {
+		panic(err)
 	}
-	return NewConfig(backend, ConfigOptions{Probes: registry})
+	if _, err := resource.Define[hostcli.Contribution](resources, hostcli.New(flags.NewParser(&struct{}{}, flags.None))); err != nil {
+		panic(err)
+	}
+	if _, err := resource.Define[configpkg.Connection](resources, sections.ConnectionPoint()); err != nil {
+		panic(err)
+	}
+	if err := scannerext.Declare(resources); err != nil {
+		panic(err)
+	}
+	if err := searchext.Declare(resources); err != nil {
+		panic(err)
+	}
+	resources.Freeze()
+	return NewConfig(backend, ConfigOptions{Sections: sections})
 }
 
 // configWith builds a DistributeConfig, letting each test set only the fields
@@ -57,6 +73,40 @@ func configWith(fn func(*types.DistributeConfig)) *types.DistributeConfig {
 		fn(c)
 	}
 	return c
+}
+
+func setConfigSection(config *types.DistributeConfig, name string, values map[string]any) {
+	section, err := structpb.NewStruct(values)
+	if err != nil {
+		panic(err)
+	}
+	if config.Extensions == nil {
+		config.Extensions = map[string]*structpb.Struct{}
+	}
+	config.Extensions[name] = section
+}
+
+func TestScannerSettingsViewUsesRedactedExtensions(t *testing.T) {
+	stored := configWith(func(config *types.DistributeConfig) {
+		setConfigSection(config, "cyberhub", map[string]any{"url": "https://hub.example", "key": "hub-secret", "mitm": false})
+		setConfigSection(config, "recon", map[string]any{"fofa_key": "fofa-secret", "hunter_api_key": "hunter-secret"})
+		setConfigSection(config, "scan", map[string]any{"verify": "high"})
+	})
+	view, err := newConfig(&fakeConfigStore{cfg: stored}).View(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub := view.GetExtensions()["cyberhub"]
+	recon := view.GetExtensions()["recon"]
+	if hub.GetValues().AsMap()["key"] != nil || !slices.Contains(hub.GetConfiguredSecrets(), "key") || hub.GetValues().AsMap()["mitm"] != false {
+		t.Fatalf("cyberhub view leaked secret or lost settings: %v", hub)
+	}
+	if recon.GetValues().AsMap()["fofa_key"] != nil || !slices.Contains(recon.GetConfiguredSecrets(), "fofa_key") || !slices.Contains(recon.GetConfiguredSecrets(), "hunter_api_key") {
+		t.Fatalf("recon view leaked secrets: %v", recon)
+	}
+	if view.GetExtensions()["scan"].GetValues().AsMap()["verify"] != "high" {
+		t.Fatalf("scan view lost verify mode: %v", view.GetExtensions()["scan"])
+	}
 }
 
 func findCheck(checks []*types.ConnectionCheck, name string) (*types.ConnectionCheck, bool) {
@@ -105,7 +155,7 @@ func TestConfigStatusIncludesModelLimits(t *testing.T) {
 			MaxTokens: 32768, ContextWindow: 1000000, Timeout: 45, Images: &images,
 		}},
 	}}
-	view := ConfigView(conf, "aiscan.yaml", true)
+	view := ConfigView(conf, "cyber.yaml", true)
 	if view.GetLlm().GetActive().GetMaxTokens() != 32768 || view.GetLlm().GetActive().GetContextWindow() != 1000000 {
 		t.Fatalf("active limits missing from view: %+v", view.GetLlm())
 	}
@@ -124,7 +174,7 @@ func TestTestConnUnknownSection(t *testing.T) {
 	}
 }
 
-func TestProbeCyberhubSuccess(t *testing.T) {
+func TestConnectionCyberhubSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.Path, "/api/v1/fingerprints/export") {
 			http.NotFound(w, r)
@@ -142,7 +192,7 @@ func TestProbeCyberhubSuccess(t *testing.T) {
 	defer srv.Close()
 
 	cfg := configWith(func(c *types.DistributeConfig) {
-		c.Cyberhub = &types.CyberhubConfig{Url: srv.URL, Key: "hub-key"}
+		setConfigSection(c, "cyberhub", map[string]any{"url": srv.URL, "key": "hub-key"})
 	})
 	resp, err := testConn(context.Background(), &fakeConfigStore{}, "cyberhub", cfg)
 	if err != nil {
@@ -153,7 +203,7 @@ func TestProbeCyberhubSuccess(t *testing.T) {
 	}
 }
 
-func TestProbeCyberhubAuthError(t *testing.T) {
+func TestConnectionCyberhubAuthError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte("bad key"))
@@ -161,7 +211,7 @@ func TestProbeCyberhubAuthError(t *testing.T) {
 	defer srv.Close()
 
 	cfg := configWith(func(c *types.DistributeConfig) {
-		c.Cyberhub = &types.CyberhubConfig{Url: srv.URL, Key: "nope"}
+		setConfigSection(c, "cyberhub", map[string]any{"url": srv.URL, "key": "nope"})
 	})
 	resp, err := testConn(context.Background(), &fakeConfigStore{}, "cyberhub", cfg)
 	if err != nil {
@@ -172,7 +222,7 @@ func TestProbeCyberhubAuthError(t *testing.T) {
 	}
 }
 
-func TestProbeFofaSuccessAndStoredKeyFallback(t *testing.T) {
+func TestConnectionFofaSuccessAndStoredKeyFallback(t *testing.T) {
 	var gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotKey = r.URL.Query().Get("key")
@@ -181,13 +231,15 @@ func TestProbeFofaSuccessAndStoredKeyFallback(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	orig := scannerprobe.FofaInfoEndpoint
-	scannerprobe.FofaInfoEndpoint = srv.URL
-	defer func() { scannerprobe.FofaInfoEndpoint = orig }()
+	orig := scannerext.FofaInfoEndpoint
+	scannerext.FofaInfoEndpoint = srv.URL
+	defer func() { scannerext.FofaInfoEndpoint = orig }()
 
 	// FOFA key left blank in the request: the stored secret must be used.
 	store := &fakeConfigStore{}
-	store.cfg = &types.DistributeConfig{Recon: &types.ReconConfig{FofaKey: "stored-fofa"}}
+	store.cfg = configWith(func(c *types.DistributeConfig) {
+		setConfigSection(c, "recon", map[string]any{"fofa_key": "stored-fofa"})
+	})
 
 	resp, err := testConn(context.Background(), store, "recon", configWith(nil))
 	if err != nil {
@@ -205,17 +257,17 @@ func TestProbeFofaSuccessAndStoredKeyFallback(t *testing.T) {
 	}
 }
 
-func TestProbeFofaError(t *testing.T) {
+func TestConnectionFofaError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": true, "errmsg": "[-700] account invalid"})
 	}))
 	defer srv.Close()
-	orig := scannerprobe.FofaInfoEndpoint
-	scannerprobe.FofaInfoEndpoint = srv.URL
-	defer func() { scannerprobe.FofaInfoEndpoint = orig }()
+	orig := scannerext.FofaInfoEndpoint
+	scannerext.FofaInfoEndpoint = srv.URL
+	defer func() { scannerext.FofaInfoEndpoint = orig }()
 
 	resp, _ := testConn(context.Background(), &fakeConfigStore{}, "recon", configWith(func(c *types.DistributeConfig) {
-		c.Recon = &types.ReconConfig{FofaKey: "bad"}
+		setConfigSection(c, "recon", map[string]any{"fofa_key": "bad"})
 	}))
 	c, ok := findCheck(resp, "fofa")
 	if !ok || c.Ok {
@@ -226,7 +278,7 @@ func TestProbeFofaError(t *testing.T) {
 	}
 }
 
-func TestProbeHunterSuccess(t *testing.T) {
+func TestConnectionHunterSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("api-key") == "" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -237,29 +289,29 @@ func TestProbeHunterSuccess(t *testing.T) {
 		})
 	}))
 	defer srv.Close()
-	orig := scannerprobe.HunterSearchEndpoint
-	scannerprobe.HunterSearchEndpoint = srv.URL
-	defer func() { scannerprobe.HunterSearchEndpoint = orig }()
+	orig := scannerext.HunterSearchEndpoint
+	scannerext.HunterSearchEndpoint = srv.URL
+	defer func() { scannerext.HunterSearchEndpoint = orig }()
 
 	resp, _ := testConn(context.Background(), &fakeConfigStore{}, "recon", configWith(func(c *types.DistributeConfig) {
-		c.Recon = &types.ReconConfig{HunterApiKey: "hk"}
+		setConfigSection(c, "recon", map[string]any{"hunter_api_key": "hk"})
 	}))
 	if c, ok := findCheck(resp, "hunter"); !ok || !c.Ok {
 		t.Fatalf("expected hunter ok, got %+v", resp)
 	}
 }
 
-func TestProbeHunterError(t *testing.T) {
+func TestConnectionHunterError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 401, "message": "invalid api-key"})
 	}))
 	defer srv.Close()
-	orig := scannerprobe.HunterSearchEndpoint
-	scannerprobe.HunterSearchEndpoint = srv.URL
-	defer func() { scannerprobe.HunterSearchEndpoint = orig }()
+	orig := scannerext.HunterSearchEndpoint
+	scannerext.HunterSearchEndpoint = srv.URL
+	defer func() { scannerext.HunterSearchEndpoint = orig }()
 
 	resp, _ := testConn(context.Background(), &fakeConfigStore{}, "recon", configWith(func(c *types.DistributeConfig) {
-		c.Recon = &types.ReconConfig{HunterApiKey: "bad"}
+		setConfigSection(c, "recon", map[string]any{"hunter_api_key": "bad"})
 	}))
 	c, ok := findCheck(resp, "hunter")
 	if !ok || c.Ok {

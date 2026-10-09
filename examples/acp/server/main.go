@@ -1,13 +1,12 @@
-//go:build full && cstx
+//go:build full
 
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
-	cstxext "github.com/chainreactors/aiscan/pkg/exts/cstx"
-	webext "github.com/chainreactors/aiscan/pkg/exts/web"
 	"net"
 	"net/http"
 	"os"
@@ -15,29 +14,33 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chainreactors/aiscan/core/extension"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	"github.com/chainreactors/aiscan/pkg/web"
-	managementapi "github.com/chainreactors/aiscan/pkg/web/api"
-	webservice "github.com/chainreactors/aiscan/pkg/web/service"
+	webext "github.com/chainreactors/cyber/exts/web"
+
+	"github.com/chainreactors/cyber/core/extension"
+	"github.com/chainreactors/cyber/core/telemetry"
+	"github.com/chainreactors/cyber/pkg/web"
 )
 
 // newHeadlessHandler wires the RPC + AOP WebSocket surfaces without any UI:
 // static is nil, so only Connect RPC, the two AOP WebSockets, and /health
 // are served.
-func newHeadlessHandler(store *webservice.SQLiteStore, ingestor managementapi.ArtifactImporter, token string) (*webservice.Service, *webservice.AgentPool, http.Handler, error) {
-	service := webservice.NewService(webservice.ServiceConfig{Store: store, Artifacts: ingestor, AccessKey: token})
-	pool := webservice.NewAgentPool(service.Hub(), ingestor)
-	service.SetAgentPool(pool)
-	handler, err := web.NewHandler(service.Auth(), nil, webext.Routes(service)...)
+func newHeadlessHandler(ctx context.Context, database, token string) (*extension.Set, http.Handler, error) {
+	webExtension := webext.New(webext.Config{Database: database, AccessKey: token})
+	set, err := extension.New(webExtension)
 	if err != nil {
-		_ = service.Close(context.Background())
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	return service, pool, handler, nil
+	if err := set.Load(ctx); err != nil {
+		return nil, nil, errors.Join(err, set.Close(context.Background()))
+	}
+	handler, err := web.NewHandler(webExtension.Service().Auth(), nil, webExtension.Routes()...)
+	if err != nil {
+		return nil, nil, errors.Join(err, set.Close(context.Background()))
+	}
+	return set, handler, nil
 }
 
-// acp server: AIScan headless control plane — no UI and no hidden local
+// acp server: Cyber headless control plane — no UI and no hidden local
 // application graph. Agents connect through the public AOP endpoint.
 //
 //	go run ./examples/acp/server --addr 127.0.0.1:8080
@@ -60,48 +63,21 @@ func main() {
 		token = fmt.Sprintf("acp-%d", time.Now().UnixNano())
 	}
 
-	store, err := webservice.NewSQLiteStore(dbPath)
+	set, handler, err := newHeadlessHandler(ctx, dbPath, token)
 	if err != nil {
-		logger.Errorf("open database: %v", err)
-		os.Exit(1)
-	}
-	defer store.Close()
-	artifactExt, err := cstxext.New(store)
-	if err != nil {
-		logger.Errorf("init artifact normalization: %v", err)
-		os.Exit(1)
-	}
-	artifactSet, err := extension.New(extension.Entry{ID: "cstx", Extension: artifactExt})
-	if err != nil {
-		logger.Errorf("init artifact scope: %v", err)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := artifactSet.Close(context.Background()); err != nil {
-			logger.Errorf("close artifact scope: %v", err)
-		}
-	}()
-	if err := artifactSet.Load(ctx); err != nil {
-		logger.Errorf("load artifact scope: %v", err)
-		os.Exit(1)
-	}
-	ingestor := artifactExt.Importer()
-
-	service, _, handler, err := newHeadlessHandler(store, ingestor, token)
-	if err != nil {
-		logger.Errorf("create handler: %v", err)
+		logger.Errorf("create server: %v", err)
 		return
 	}
 	defer func() {
-		if err := service.Close(context.Background()); err != nil {
-			logger.Errorf("close service: %v", err)
+		if err := set.Close(context.Background()); err != nil {
+			logger.Errorf("close server: %v", err)
 		}
 	}()
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		logger.Errorf("listen on %s: %v", addr, err)
-		os.Exit(1)
+		return
 	}
 	defer listener.Close()
 	listenAddr := listener.Addr().String()
@@ -119,6 +95,6 @@ func main() {
 
 	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		logger.Errorf("serve: %v", err)
-		os.Exit(1)
+		return
 	}
 }

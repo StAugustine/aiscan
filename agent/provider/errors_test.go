@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	aop "github.com/chainreactors/aiscan/aop"
+	aop "github.com/chainreactors/cyber/aop"
 )
 
 // A 404 on the chat endpoint must surface as an actionable protocol-mismatch
@@ -59,6 +59,11 @@ func TestChatCompletion404GivesProtocolHint(t *testing.T) {
 // The official Anthropic endpoint is unambiguous and must infer the anthropic
 // protocol even with a blank provider; arbitrary gateways stay openai-default.
 func TestInferFromBaseURLAnthropicOfficial(t *testing.T) {
+	for _, endpoint := range []string{"https://api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic/v1", "https://api.deepseek.com/anthropic/v1/messages"} {
+		if got := InferFromBaseURL(endpoint); got != "anthropic" {
+			t.Fatalf("InferFromBaseURL(%q) = %q", endpoint, got)
+		}
+	}
 	if got := InferFromBaseURL("https://api.anthropic.com/v1"); got != "anthropic" {
 		t.Fatalf("InferFromBaseURL(api.anthropic.com) = %q, want anthropic", got)
 	}

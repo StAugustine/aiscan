@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	aop "github.com/chainreactors/aiscan/aop"
-	"github.com/chainreactors/aiscan/core/tool"
+	aop "github.com/chainreactors/cyber/aop"
+	coretool "github.com/chainreactors/cyber/core/tool"
 )
 
 type recordingSession struct {
@@ -83,7 +83,7 @@ func (t *Tool) start(ctx context.Context, args Args, duration time.Duration) (*r
 	return session, nil
 }
 
-func (t *Tool) runSession(ctx context.Context, session *recordingSession, target resolvedTarget) {
+func (t *Tool) runSession(ctx context.Context, session *recordingSession, target ResolvedTarget) {
 	defer session.cancel()
 	started := time.Now().UTC()
 	session.update(func(info *SessionInfo) {
@@ -128,7 +128,7 @@ func (t *Tool) runSession(ctx context.Context, session *recordingSession, target
 	close(session.done)
 }
 
-func callBackendRecord(backend captureBackend, ctx context.Context, target resolvedTarget, output string, fps int) (media mediaInfo, err error) {
+func callBackendRecord(backend Backend, ctx context.Context, target ResolvedTarget, output string, fps int) (media MediaInfo, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("capture backend panicked: %v", recovered)
@@ -137,7 +137,7 @@ func callBackendRecord(backend captureBackend, ctx context.Context, target resol
 	return backend.Record(ctx, target, output, fps)
 }
 
-func callBackendResolve(backend captureBackend, ctx context.Context, req captureRequest) (target resolvedTarget, err error) {
+func callBackendResolve(backend Backend, ctx context.Context, req CaptureRequest) (target ResolvedTarget, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("capture backend panicked while resolving target: %v", recovered)
@@ -146,7 +146,7 @@ func callBackendResolve(backend captureBackend, ctx context.Context, req capture
 	return backend.Resolve(ctx, req)
 }
 
-func callBackendScreenshot(backend captureBackend, ctx context.Context, target resolvedTarget) (img image.Image, err error) {
+func callBackendScreenshot(backend Backend, ctx context.Context, target ResolvedTarget) (img image.Image, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("capture backend panicked while taking screenshot: %v", recovered)
@@ -155,7 +155,7 @@ func callBackendScreenshot(backend captureBackend, ctx context.Context, target r
 	return backend.Screenshot(ctx, target)
 }
 
-func (t *Tool) stop(ctx context.Context, id string) (*tool.Result, error) {
+func (t *Tool) stop(ctx context.Context, id string) (*coretool.Result, error) {
 	if id == "" {
 		return nil, fmt.Errorf("recording_id is required for action=stop")
 	}
@@ -170,15 +170,15 @@ func (t *Tool) stop(ctx context.Context, id string) (*tool.Result, error) {
 	return t.waitResult(ctx, session)
 }
 
-func (t *Tool) waitResult(ctx context.Context, session *recordingSession) (*tool.Result, error) {
+func (t *Tool) waitResult(ctx context.Context, session *recordingSession) (*coretool.Result, error) {
 	select {
 	case <-session.done:
 		info := session.snapshot()
 		if info.State == sessionFailed {
-			return tool.ErrorResult(marshalJSON(info)), nil
+			return coretool.ErrorResult(marshalJSON(info)), nil
 		}
 		text := marshalJSON(info)
-		return &tool.Result{Output: []*aop.Content{
+		return &coretool.Result{Output: []*aop.Content{
 			aop.Text(text),
 			aop.MediaURI("video", "video/mp4", filepath.Base(info.Output), t.mediaURI(ctx, info.Output)),
 		}}, nil
@@ -195,7 +195,7 @@ func (t *Tool) waitResult(ctx context.Context, session *recordingSession) (*tool
 	}
 }
 
-func (t *Tool) status(id string) (*tool.Result, error) {
+func (t *Tool) status(id string) (*coretool.Result, error) {
 	if id != "" {
 		session, ok := t.session(id)
 		if !ok {

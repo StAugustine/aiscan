@@ -13,15 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	cfg "github.com/chainreactors/aiscan/core/config"
-	"github.com/chainreactors/aiscan/core/output"
-	"github.com/chainreactors/aiscan/core/telemetry"
-	hostcli "github.com/chainreactors/aiscan/pkg/cli"
-	"github.com/chainreactors/aiscan/pkg/edition"
-	agentext "github.com/chainreactors/aiscan/pkg/exts/session"
-	settings "github.com/chainreactors/aiscan/pkg/exts/settings"
-	"github.com/chainreactors/aiscan/pkg/runner"
-	transportpkg "github.com/chainreactors/aiscan/pkg/transport"
+	"github.com/chainreactors/cyber/core/telemetry"
+	scannerext "github.com/chainreactors/cyber/exts/scanner"
+	hostcli "github.com/chainreactors/cyber/pkg/cli"
+	"github.com/chainreactors/cyber/pkg/cli/configuration"
+	taskcli "github.com/chainreactors/cyber/pkg/cli/task"
+	cfg "github.com/chainreactors/cyber/pkg/config"
+	"github.com/chainreactors/cyber/pkg/output"
+
 	goflags "github.com/jessevdk/go-flags"
 )
 
@@ -29,27 +28,22 @@ const runModeWeb cfg.RunMode = "web"
 
 func cliCommandSummary() string {
 	base := "agent, web, serve"
-	summaries := edition.Catalog().Summaries()
+	summaries := scannerext.Names()
 	if len(summaries) == 0 {
 		return base
 	}
 	return base + ", " + strings.Join(summaries, ", ")
 }
 
-// webServeFunc is set via init() in web_full.go (full build only).
-var webServeFunc func(ctx context.Context, option, explicitOption *cfg.Option, web webCommand, logger telemetry.Logger) error
-
 type webCommand struct {
-	Addr               string `long:"addr" default:"127.0.0.1:8080" description:"HTTP listen address"`
-	DB                 string `long:"db" default:"aiscan-web.db" description:"SQLite database path"`
-	MaxScans           int    `long:"max-scans" default:"3" description:"Maximum concurrent scans"`
-	ScanTimeout        int    `long:"scan-timeout" default:"600" description:"Maximum scan runtime in seconds"`
-	Token              string `long:"token" description:"Access key for the server (auto-generated if empty)"`
-	NoAgent            bool   `long:"no-agent" description:"Start the web console only, without the embedded agent node"`
-	cfg.LLMOptions     `group:"LLM Options"`
-	cfg.ScannerOptions `group:"Scanner Options"`
-	cfg.NodeOptions    `group:"Server Options"`
-	cfg.ReconOptions   `group:"Recon Options"`
+	Addr            string `long:"addr" default:"127.0.0.1:8080" description:"HTTP listen address"`
+	DB              string `long:"db" default:"cyber-web.db" description:"SQLite database path"`
+	MaxScans        int    `long:"max-scans" default:"3" description:"Maximum concurrent scans"`
+	ScanTimeout     int    `long:"scan-timeout" default:"600" description:"Maximum scan runtime in seconds"`
+	Token           string `long:"token" description:"Access key for the server (auto-generated if empty)"`
+	NoAgent         bool   `long:"no-agent" description:"Start the web console only, without the embedded agent node"`
+	cfg.LLMOptions  `group:"LLM Options"`
+	cfg.NodeOptions `group:"Server Options"`
 }
 
 type cliOptions struct {
@@ -58,15 +52,12 @@ type cliOptions struct {
 	Timeout         int          `long:"timeout" description:"Overall timeout in seconds"`
 	Agent           agentCommand `command:"agent" description:"Run the natural-language agent"`
 	Web             webCommand   `command:"web" description:"Start the web UI server (includes embedded agent server)"`
-	cfg.ScannerCommands
 }
 
 type agentCommand struct {
-	cfg.LLMOptions     `group:"LLM Options"`
-	cfg.ScannerOptions `group:"Scanner Options"`
-	cfg.AgentOptions   `no-flag:"true"`
-	cfg.NodeOptions    `group:"Server Options"`
-	cfg.ReconOptions   `group:"Recon Options"`
+	cfg.LLMOptions   `group:"LLM Options"`
+	cfg.AgentOptions `no-flag:"true"`
+	cfg.NodeOptions  `group:"Server Options"`
 }
 
 func (agentCommand) Usage() string { return "[OPTIONS]" }
@@ -80,107 +71,100 @@ type parsedCLI struct {
 	Help        bool
 }
 
-func aiscan() {
-	parsed, err := parseCLI(os.Args[1:])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
-	}
-
-	option := parsed.Option
-	explicitOption := option
-	if option.Version {
-		fmt.Printf("aiscan v%s\n", cfg.Version)
-		return
-	}
-	if option.InitConfig {
-		if err := os.WriteFile(cfg.DefaultConfigName, []byte(productDefaultConfig()), 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stdout, "Config file generated: %s\n", cfg.DefaultConfigName)
-		return
-	}
-	if option.ViewFile != "" {
-		if err := output.RenderEventFile(option.ViewFile, option.ViewFormat, option.ViewOutput); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %s\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-	if parsed.Help {
-		return
-	}
-	if parsed.Mode == cfg.RunModeNoCommand && parsed.Action == nil {
-		fmt.Fprintf(os.Stderr, "error: missing subcommand: use %s\n", cliCommandSummary())
-		os.Exit(1)
-	}
-
-	cfgPath, err := runner.ResolveRuntimeConfig(&option)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
-	}
-	if err := applyProductIdentity(&option); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
-	}
-	if cfgPath != "" && option.Debug {
-		fmt.Fprintf(os.Stderr, "loaded config: %s\n", cfgPath)
-	}
-	if cfgPath != "" {
-		option.ConfigFile = cfgPath
-	}
-	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: os.Stderr, Color: !option.NoColor})
-
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc
-	)
-	switch {
-	case parsed.Mode == runModeWeb || parsed.Action != nil && parsed.Action.Persistent:
-		ctx, cancel = context.WithCancel(context.Background())
-	default:
-		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(option.Timeout)*time.Second)
-	}
+func cyber() {
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	sigHandler := setupSignalHandler(cancel, logger)
-	if parsed.Action != nil {
-		if err := parsed.Action.Run(ctx, hostcli.Environment{Config: &option, Logger: logger, Out: os.Stdout, Err: os.Stderr}); err != nil {
-			logger.Errorf("command failed: %s", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	switch parsed.Mode {
-	case cfg.RunModeAgent:
-		err := transportpkg.Run(ctx, aiscanProfileFactory, &option, logger, os.Stdin, os.Stdout, sigHandler.SetStopFunc)
-		if err != nil {
-			logger.Errorf("agent failed: %s", err)
-			os.Exit(1)
-		}
-	case runModeWeb:
-		if webServeFunc == nil {
-			fmt.Fprintln(os.Stderr, "error: web server not available (requires full build)")
-			os.Exit(1)
-		}
-		if err := webServeFunc(ctx, &option, &explicitOption, parsed.WebOpts, logger); err != nil {
-			logger.Errorf("web server failed: %s", err)
-			os.Exit(1)
-		}
-	case cfg.RunModeScanner:
-		if err := runner.RunDirectScannerMode(ctx, aiscanProfileFactory, &option, parsed.ScannerArgs, logger); err != nil {
-			logger.Errorf("scanner command failed: %s", err)
-			os.Exit(1)
-		}
+	signals := setupSignalHandler(cancel, telemetry.NopLogger())
+	if err := runCLI(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr, signals.SetStopFunc); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
 	}
 }
 
-func parseCLI(args []string) (parsedCLI, error) {
+// runCLI returns only after resources have closed. Process exit belongs to main.
+func runCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer, setInterrupt func(func() bool)) (resultErr error) {
+	if handled, err := configuration.Run(ctx, args, configuration.Host{Name: "aiscan", Sections: defaultSections(), Checks: configChecks, Out: stdout, Err: stderr}); handled {
+		return err
+	}
+	if len(args) == 0 {
+		var cli cliOptions
+		writeHelp(newCLIParser(&cli, goflags.Default&^goflags.PrintErrors), stdout)
+		return nil
+	}
+	parsed, err := parseCLIWithOutput(args, stdout)
+	option := parsed.Option
+	taskOutput := taskcli.NewOutput(&option, stdout, stderr)
+	defer func() {
+		if parsed.Mode == cfg.RunModeAgent || parsed.Mode == cfg.RunModeScanner && option.AI && len(parsed.ScannerArgs) > 0 && parsed.ScannerArgs[0] != "scan" {
+			resultErr = taskOutput.Finish(resultErr)
+		}
+	}()
+	if err != nil {
+		return err
+	}
+	explicitOption := option
+	if option.Version {
+		_, err := fmt.Fprintf(stdout, "aiscan v%s\n", cfg.Version)
+		return err
+	}
+	if option.ViewFile != "" {
+		return output.RenderEventFile(option.ViewFile, option.ViewFormat, option.ViewOutput)
+	}
+	if parsed.Help {
+		return nil
+	}
+	if parsed.Mode == cfg.RunModeNoCommand && parsed.Action == nil {
+		return fmt.Errorf("missing subcommand: use %s", cliCommandSummary())
+	}
+	resolveConfig := cfg.ResolveRuntimeConfig
+	if parsed.Mode == cfg.RunModeAgent {
+		resolveConfig = cfg.ResolveAgentRuntimeConfig
+	}
+	if parsed.Mode == cfg.RunModeScanner {
+		resolveConfig = func(option *cfg.Option) (string, error) {
+			return resolveScannerRuntimeConfig(option, parsed.ScannerArgs)
+		}
+	}
+	cfgPath, err := resolveConfig(&option)
+	if err != nil {
+		return err
+	}
+	if err := applyIdentity(&option); err != nil {
+		return err
+	}
+	if cfgPath != "" && option.Debug {
+		fmt.Fprintf(stderr, "loaded config: %s\n", cfgPath)
+	}
+	if option.Snapshot != nil {
+		for _, message := range option.Snapshot.Diagnostics {
+			fmt.Fprintln(stderr, message)
+		}
+	}
+	logger := telemetry.GlobalLogger(telemetry.LogConfig{Debug: option.Debug, Quiet: option.Quiet, Output: stderr, Color: !option.NoColor})
+	if parsed.Mode != runModeWeb && !(parsed.Action != nil && parsed.Action.Persistent) && option.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(option.Timeout)*time.Second)
+		defer cancel()
+	}
+	if parsed.Action != nil {
+		return parsed.Action.Run(ctx, hostcli.Environment{Config: &option, Logger: logger, Out: stdout, Err: stderr})
+	}
+	switch parsed.Mode {
+	case cfg.RunModeAgent:
+		return runAgentTransport(ctx, newAIScanProfile, &option, logger, stdin, stdout, setInterrupt, taskOutput)
+	case runModeWeb:
+		return serveWeb(ctx, &option, &explicitOption, parsed.WebOpts, logger)
+	case cfg.RunModeScanner:
+		return runDirectScannerMode(ctx, newAIScanProfile, &option, parsed.ScannerArgs, logger, taskOutput)
+	}
+	return nil
+}
+
+func parseCLI(args []string) (parsedCLI, error) { return parseCLIWithOutput(args, os.Stdout) }
+
+func parseCLIWithOutput(args []string, stdout io.Writer) (parsedCLI, error) {
 	if scannerName, rootArgs, scannerRest, ok := splitScannerCommand(args); ok {
-		return parseScannerCLI(scannerName, rootArgs, scannerRest)
+		return parseScannerCLI(scannerName, rootArgs, scannerRest, stdout)
 	}
 
 	var cli cliOptions
@@ -188,17 +172,17 @@ func parseCLI(args []string) (parsedCLI, error) {
 	rest, err := parser.ParseArgs(args)
 	if err != nil {
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
-			if scannerName := firstCommandName(args, rootFlagValueArity); isScannerCommandName(scannerName) {
+			if scannerName := firstCommandName(args, rootFlagValueArity); scannerext.Available(scannerName) {
 				option := cfg.Option{MiscOptions: cli.MiscOptions}
-				finalizeProductOptions(&option, nil)
+				finalizeOptions(&option, nil)
 				option.Timeout = 3600
 				scannerArgs := append([]string{scannerName}, argsAfterCommand(args, scannerName)...)
 				return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: scannerArgs}, nil
 			}
-			printHelp(parser)
+			writeHelp(parser, stdout)
 			return parsedCLI{Mode: cfg.RunModeNoCommand, Help: true}, nil
 		}
-		return parsedCLI{}, err
+		return parsedCLI{Option: buildOption(&cli, parser), Mode: selectedMode(parser)}, err
 	}
 
 	if cli.Version {
@@ -207,14 +191,22 @@ func parseCLI(args []string) (parsedCLI, error) {
 
 	mode := selectedMode(parser)
 	option := buildOption(&cli, parser)
+	cfg.CaptureExplicitFlags(&option, parser)
 	action := cli.registry.Selected()
 	option.Extensions = cli.registry.Values()
-	finalizeProductOptions(&option, action)
-	if cli.Timeout > 0 {
+	finalizeOptions(&option, action)
+	if flag := parser.Group.FindOptionByLongName("timeout"); flag != nil && flag.IsSet() {
 		option.Timeout = cli.Timeout
 	}
+	if option.Timeout == 0 && !option.Explicit["timeout"] {
+		// Commands that own their options through the extension registry (the IOA
+		// queries, for one) never receive AgentOptions, so nothing else supplies
+		// this default. A zero deadline would cancel the context before the
+		// command runs.
+		option.Timeout = 3600
+	}
 	if err := validateOutputFlags(&option); err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: option, Mode: mode}, err
 	}
 
 	if mode == cfg.RunModeNoCommand && action == nil {
@@ -224,9 +216,9 @@ func parseCLI(args []string) (parsedCLI, error) {
 	if mode == cfg.RunModeScanner {
 		scannerName := selectedScanner(parser)
 		option.Timeout = 3600
-		scannerRest, err := applyScannerRootArgs(rest, &option)
+		scannerRest, err := applyScannerCommandArgs("", rest, &option)
 		if err != nil {
-			return parsedCLI{}, err
+			return parsedCLI{Option: option, Mode: mode}, err
 		}
 		scannerArgs := append([]string{scannerName}, scannerRest...)
 		return parsedCLI{Option: option, Mode: mode, ScannerArgs: scannerArgs}, nil
@@ -239,33 +231,41 @@ func parseCLI(args []string) (parsedCLI, error) {
 	return parsedCLI{Option: option, Mode: mode, Action: action}, nil
 }
 
-func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsedCLI, error) {
+func parseScannerCLI(scannerName string, rootArgs, scannerRest []string, stdout io.Writer) (parsedCLI, error) {
 	var manual cfg.Option
 	filteredRootArgs, err := applyScannerCommandArgs("", rootArgs, &manual)
 	if err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: manual, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 	}
 	var cli cliOptions
 	parser := newCLIParser(&cli, goflags.Default&^goflags.PrintErrors)
 	if scannerName == "scan" {
 		parser = newCLIParser(&cli, (goflags.Default&^goflags.PrintErrors)|goflags.IgnoreUnknown)
 	}
-	if _, err := parser.ParseArgs(filteredRootArgs); err != nil {
+	_, parseErr := parser.ParseArgs(filteredRootArgs)
+	if parseErr != nil {
+		err := parseErr
 		if flagsErr, ok := err.(*goflags.Error); ok && flagsErr.Type == goflags.ErrHelp {
-			printHelp(parser)
+			writeHelp(parser, stdout)
 			return parsedCLI{Mode: cfg.RunModeNoCommand, Help: true}, nil
 		}
-		return parsedCLI{}, err
 	}
 
 	option := cfg.Option{MiscOptions: cli.MiscOptions}
-	finalizeProductOptions(&option, nil)
+	finalizeOptions(&option, nil)
 	mergeManualScannerOptions(&option, manual)
+	if parseErr != nil {
+		return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, parseErr
+	}
+	cfg.CaptureExplicitFlags(&option, parser)
+	for flag := range manual.Explicit {
+		option.MarkExplicit(flag)
+	}
 	if cli.Version {
 		return parsedCLI{Option: option, Mode: cfg.RunModeNoCommand}, nil
 	}
 	option.Timeout = cli.Timeout
-	if option.Timeout <= 0 {
+	if option.Timeout == 0 && !option.Explicit["timeout"] {
 		option.Timeout = 3600
 	}
 
@@ -273,19 +273,16 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 	if scannerName == "scan" {
 		scannerArgs, err = applyScannerCommandArgs(scannerName, scannerRest, &option)
 		if err != nil {
-			return parsedCLI{}, err
+			return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 		}
 	} else {
-		scannerArgs, err = applyScannerPersistenceArgs(scannerRest, &option)
-		if err != nil {
-			return parsedCLI{}, err
-		}
+		scannerArgs = append([]string(nil), scannerRest...)
 	}
-	if boolFlagEnabled(scannerArgs, "--debug") {
+	if scannerBoolFlagEnabled(scannerArgs, "--debug") {
 		option.Debug = true
 	}
 	if err := validateOutputFlags(&option); err != nil {
-		return parsedCLI{}, err
+		return parsedCLI{Option: option, Mode: cfg.RunModeScanner, ScannerArgs: []string{scannerName}}, err
 	}
 	return parsedCLI{
 		Option:      option,
@@ -295,46 +292,13 @@ func parseScannerCLI(scannerName string, rootArgs, scannerRest []string) (parsed
 }
 
 func validateOutputFlags(option *cfg.Option) error {
-	format := strings.TrimSpace(option.OutputFormat)
-	if option.JSON {
-		format = "json"
-	}
-	if format == "" {
-		format = "text"
-	}
-	if format != "text" && format != "json" && format != "stream-json" {
-		return fmt.Errorf("unsupported --output-format %q: use text, json, or stream-json", format)
+	if err := cfg.ResolveOutputFormat(option); err != nil {
+		return err
 	}
 	if strings.TrimSpace(option.ViewOutput) != "" && strings.TrimSpace(option.ViewFile) == "" {
 		return fmt.Errorf("--file/-f is only valid with --view/-F")
 	}
-	option.OutputFormat = format
 	return nil
-}
-
-func applyScannerPersistenceArgs(args []string, option *cfg.Option) ([]string, error) {
-	out := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		key, value, hasValue := strings.Cut(arg, "=")
-		switch key {
-		case "--output", "-o":
-			resolved, err := flagValue(arg, hasValue, value, args, &i)
-			if err != nil {
-				return nil, err
-			}
-			option.OutputFile = resolved
-		case "--resume", "-r":
-			resolved, err := flagValue(arg, hasValue, value, args, &i)
-			if err != nil {
-				return nil, err
-			}
-			option.Resume = resolved
-		default:
-			out = append(out, arg)
-		}
-	}
-	return out, nil
 }
 
 func mergeManualScannerOptions(option *cfg.Option, manual cfg.Option) {
@@ -342,6 +306,7 @@ func mergeManualScannerOptions(option *cfg.Option, manual cfg.Option) {
 	option.OutputFormat = cfg.ResolveString(manual.OutputFormat, option.OutputFormat)
 	option.Observe = cfg.ResolveString(manual.Observe, option.Observe)
 	option.JSON = option.JSON || manual.JSON
+	option.ActiveProfile = cfg.ResolveString(manual.ActiveProfile, option.ActiveProfile)
 	option.Provider = cfg.ResolveString(manual.Provider, option.Provider)
 	option.BaseURL = cfg.ResolveString(manual.BaseURL, option.BaseURL)
 	option.APIKey = cfg.ResolveString(manual.APIKey, option.APIKey)
@@ -356,16 +321,19 @@ func mergeManualScannerOptions(option *cfg.Option, manual cfg.Option) {
 	if manual.AI {
 		option.AI = true
 	}
-	option.CyberhubURL = cfg.ResolveString(manual.CyberhubURL, option.CyberhubURL)
-	option.CyberhubKey = cfg.ResolveString(manual.CyberhubKey, option.CyberhubKey)
-	option.CyberhubMode = cfg.ResolveString(manual.CyberhubMode, option.CyberhubMode)
-	option.FofaKey = cfg.ResolveString(manual.FofaKey, option.FofaKey)
-	option.HunterAPIKey = cfg.ResolveString(manual.HunterAPIKey, option.HunterAPIKey)
-	option.ReconProxy = cfg.ResolveString(manual.ReconProxy, option.ReconProxy)
-	if manual.ReconLimit != nil {
-		option.ReconLimit = manual.ReconLimit
+	for key, fields := range manual.Extensions {
+		if option.Extensions == nil {
+			option.Extensions = cfg.Values{}
+		}
+		target := option.Extensions[key]
+		if target == nil {
+			target = map[string]any{}
+			option.Extensions[key] = target
+		}
+		for name, value := range fields {
+			target[name] = value
+		}
 	}
-	option.Proxy = cfg.ResolveString(manual.Proxy, option.Proxy)
 	if manual.NoColor {
 		option.NoColor = true
 	}
@@ -389,15 +357,11 @@ func buildOption(cli *cliOptions, parser *goflags.Parser) cfg.Option {
 	switch active.Name {
 	case "agent":
 		opt.LLMOptions = cli.Agent.LLMOptions
-		opt.ScannerOptions = cli.Agent.ScannerOptions
 		opt.AgentOptions = cli.Agent.AgentOptions
 		opt.NodeOptions = cli.Agent.NodeOptions
-		opt.ReconOptions = cli.Agent.ReconOptions
 	case "web":
 		opt.LLMOptions = cli.Web.LLMOptions
-		opt.ScannerOptions = cli.Web.ScannerOptions
 		opt.NodeOptions = cli.Web.NodeOptions
-		opt.ReconOptions = cli.Web.ReconOptions
 	}
 
 	return opt
@@ -405,19 +369,14 @@ func buildOption(cli *cliOptions, parser *goflags.Parser) cfg.Option {
 
 func newCLIParser(cli *cliOptions, options goflags.Options) *goflags.Parser {
 	parser := goflags.NewParser(cli, options)
+	configuration.RegisterHelp(parser)
+	for _, name := range scannerext.Names() {
+		if _, err := parser.AddCommand(name, scannerext.Description(name), "", &struct{}{}); err != nil {
+			panic(err)
+		}
+	}
 	cli.registry = hostcli.New(parser)
-	if err := declareProductCLI(cli.registry); err != nil {
-		panic(err)
-	}
-	// Session flags are inert declarations installed before Parse/WriteHelp.
-	// Runtime Session loading is not part of command-line discovery.
-	settingsExt, err := settings.New([]settings.Declaration{agentext.Declaration(&cli.Agent.AgentOptions)})
-	if err != nil {
-		panic(err)
-	}
-	if err := settingsExt.Declare(cli.registry); err != nil {
-		panic(fmt.Sprintf("invalid session flag declaration: %v", err))
-	}
+	declareResources(cli.registry, &cli.Agent.AgentOptions)
 	if err := cli.registry.Seal(); err != nil {
 		panic(err)
 	}
@@ -427,7 +386,10 @@ func newCLIParser(cli *cliOptions, options goflags.Options) *goflags.Parser {
 aiscan - AI-assisted security scanner
 
 Commands:
-  scan           Scan a target, with optional AI skills (--verify, --sniper, --deep)
+  init           Initialize user configuration (--project for this directory)
+  config         Inspect, validate and manage configuration
+  doctor         Check configuration and dependencies
+  scan           Scan a target, with optional AI skills (--verify, --sniper)
   agent          Run the natural-language agent
   web            Start the web UI server (includes embedded agent server)
   serve          Run the standalone agent server
@@ -437,10 +399,10 @@ Advanced scanners:
 
 Examples:
   aiscan scan -i 127.0.0.1
-  aiscan scan -i http://target.com --verify=high --sniper --model gpt-4o
+  aiscan scan -i http://target.com --verify=on --sniper --model gpt-4o
   aiscan agent -p "find web services and check vulnerabilities" -i 192.168.1.0/24
   aiscan web --addr 0.0.0.0:8080
-  aiscan serve --token mykey --addr 0.0.0.0:8765`, strings.Join(edition.Catalog().UsageLines(), "\n"))
+  aiscan serve --token mykey --addr 0.0.0.0:8765`, strings.Join(scannerext.UsageLines(), "\n"))
 	return parser
 }
 
@@ -449,7 +411,7 @@ func parserOptionsForArgs(args []string) goflags.Options {
 	if len(args) == 0 {
 		return options
 	}
-	if isScannerCommandName(firstCommandName(args, rootFlagValueArity)) {
+	if scannerext.Available(firstCommandName(args, rootFlagValueArity)) {
 		options |= goflags.IgnoreUnknown
 	}
 	return options
@@ -458,7 +420,7 @@ func parserOptionsForArgs(args []string) goflags.Options {
 func splitScannerCommand(args []string) (string, []string, []string, bool) {
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		if isScannerCommandName(arg) {
+		if scannerext.Available(arg) {
 			return arg, append([]string(nil), args[:i]...), append([]string(nil), args[i+1:]...), true
 		}
 		if shouldSkipRootFlagValue(arg) && i+1 < len(args) {
@@ -497,15 +459,38 @@ func firstCommandName(args []string, valueArity map[string]int) string {
 type knownFlag struct {
 	names []string
 	arity int
-	apply func(opt *cfg.Option, val string)
+	// extension flags carry their own presence in Option.Extensions; they are
+	// not marked in Option.Explicit.
+	extension bool
+	apply     func(opt *cfg.Option, val string)
+}
+
+// setExtension records a scanner-passthrough flag as a CLI-layer extension
+// value; section Environment hooks read CLI presence from there.
+func setExtension(o *cfg.Option, key, field string, value any) {
+	if o.Extensions == nil {
+		o.Extensions = cfg.Values{}
+	}
+	fields := o.Extensions[key]
+	if fields == nil {
+		fields = map[string]any{}
+		o.Extensions[key] = fields
+	}
+	fields[field] = value
 }
 
 var scannerKnownFlags = []knownFlag{
 	{names: []string{"--config", "-c"}, arity: 1, apply: func(o *cfg.Option, v string) { o.ConfigFile = v }},
 	{names: []string{"--data-dir"}, arity: 1, apply: func(o *cfg.Option, v string) { o.DataDir = v }},
-	{names: []string{"--cyberhub-url"}, arity: 1, apply: func(o *cfg.Option, v string) { o.CyberhubURL = v }},
-	{names: []string{"--cyberhub-key"}, arity: 1, apply: func(o *cfg.Option, v string) { o.CyberhubKey = v }},
-	{names: []string{"--cyberhub-mode"}, arity: 1, apply: func(o *cfg.Option, v string) { o.CyberhubMode = v }},
+	{names: []string{"--cyberhub-url"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.CyberhubConfigKey, "url", v)
+	}},
+	{names: []string{"--cyberhub-key"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.CyberhubConfigKey, "key", v)
+	}},
+	{names: []string{"--cyberhub-mode"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.CyberhubConfigKey, "mode", v)
+	}},
 	{names: []string{"--no-color"}, arity: 0, apply: func(o *cfg.Option, _ string) { o.NoColor = true }},
 	{names: []string{"--ai"}, arity: 0, apply: func(o *cfg.Option, v string) {
 		if v != "" {
@@ -517,6 +502,7 @@ var scannerKnownFlags = []knownFlag{
 	{names: []string{"--prompt", "-p"}, arity: 1, apply: func(o *cfg.Option, v string) { o.Prompt = v }},
 	{names: []string{"--task-file"}, arity: 1, apply: func(o *cfg.Option, v string) { o.TaskFile = v }},
 	{names: []string{"--skill", "-s"}, arity: 1, apply: func(o *cfg.Option, v string) { o.Skills = append(o.Skills, v) }},
+	{names: []string{"--profile"}, arity: 1, apply: func(o *cfg.Option, v string) { o.ActiveProfile = v }},
 	{names: []string{"--provider"}, arity: 1, apply: func(o *cfg.Option, v string) { o.Provider = v }},
 	{names: []string{"--base-url"}, arity: 1, apply: func(o *cfg.Option, v string) { o.BaseURL = v }},
 	{names: []string{"--api-key"}, arity: 1, apply: func(o *cfg.Option, v string) { o.APIKey = v }},
@@ -531,15 +517,25 @@ var scannerKnownFlags = []knownFlag{
 			o.ContextWindow = n
 		}
 	}},
-	{names: []string{"--proxy"}, arity: 1, apply: func(o *cfg.Option, v string) { o.Proxy = v }},
+	{names: []string{"--proxy"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.CyberhubConfigKey, "proxy", v)
+	}},
 	{names: []string{"--llm-proxy"}, arity: 1, apply: func(o *cfg.Option, v string) { o.LLMProxy = v }},
-	{names: []string{"--fofa-key"}, arity: 1, apply: func(o *cfg.Option, v string) { o.FofaKey = v }},
-	{names: []string{"--hunter-api-key"}, arity: 1, apply: func(o *cfg.Option, v string) { o.HunterAPIKey = v }},
-	{names: []string{"--tavily-key"}, arity: 1, apply: func(o *cfg.Option, v string) { o.TavilyKey = v }},
-	{names: []string{"--recon-proxy"}, arity: 1, apply: func(o *cfg.Option, v string) { o.ReconProxy = v }},
-	{names: []string{"--recon-limit"}, arity: 1, apply: func(o *cfg.Option, v string) {
+	{names: []string{"--fofa-key"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.ReconConfigKey, "fofa_key", v)
+	}},
+	{names: []string{"--hunter-api-key"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.ReconConfigKey, "hunter_api_key", v)
+	}},
+	{names: []string{"--tavily-key"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.ReconConfigKey, "tavily_key", v)
+	}},
+	{names: []string{"--recon-proxy"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
+		setExtension(o, scannerext.ReconConfigKey, "proxy", v)
+	}},
+	{names: []string{"--recon-limit"}, arity: 1, extension: true, apply: func(o *cfg.Option, v string) {
 		if n, e := strconv.Atoi(v); e == nil {
-			o.ReconLimit = &n
+			setExtension(o, scannerext.ReconConfigKey, "limit", n)
 		}
 	}},
 	{names: []string{"--heartbeat"}, arity: 1, apply: func(o *cfg.Option, v string) {
@@ -595,10 +591,6 @@ func argsAfterCommand(args []string, command string) []string {
 	return nil
 }
 
-func isScannerCommandName(name string) bool {
-	return edition.Catalog().CLIAvailable(name)
-}
-
 func selectedMode(parser *goflags.Parser) cfg.RunMode {
 	active := parser.Active
 	if active == nil {
@@ -610,7 +602,7 @@ func selectedMode(parser *goflags.Parser) cfg.RunMode {
 	case "web":
 		return runModeWeb
 	default:
-		if edition.Catalog().CLIAvailable(active.Name) {
+		if scannerext.Available(active.Name) {
 			return cfg.RunModeScanner
 		}
 	}
@@ -622,14 +614,10 @@ func selectedScanner(parser *goflags.Parser) string {
 	if active == nil {
 		return ""
 	}
-	if edition.Catalog().CLIAvailable(active.Name) {
+	if scannerext.Available(active.Name) {
 		return active.Name
 	}
 	return ""
-}
-
-func applyScannerRootArgs(args []string, option *cfg.Option) ([]string, error) {
-	return applyScannerCommandArgs("", args, option)
 }
 
 func applyScannerCommandArgs(scannerName string, args []string, option *cfg.Option) ([]string, error) {
@@ -643,12 +631,15 @@ func applyScannerCommandArgs(scannerName string, args []string, option *cfg.Opti
 				continue
 			}
 			// scan owns --ai and --json as native scanner flags. Root forms
-			// before the command remain AIScan options; forms after the command
+			// before the command remain Cyber options; forms after the command
 			// must reach the scan command unchanged.
 			if scannerName == "scan" && (key == "--ai" || key == "--json") {
 				break
 			}
 			matched = true
+			if !f.extension {
+				option.MarkExplicit(f.names[0])
+			}
 			if f.arity == 0 {
 				if hasValue {
 					f.apply(option, value)
@@ -689,19 +680,6 @@ func truthyFlagValue(value string) bool {
 	default:
 		return false
 	}
-}
-
-func boolFlagEnabled(args []string, flag string) bool {
-	for _, arg := range args {
-		if arg == flag {
-			return true
-		}
-		if strings.HasPrefix(arg, flag+"=") {
-			v := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(arg, flag+"=")))
-			return v != "false" && v != "0" && v != "no"
-		}
-	}
-	return false
 }
 
 type signalHandler struct {
@@ -762,10 +740,6 @@ func setupSignalHandler(cancel context.CancelFunc, logger telemetry.Logger) *sig
 		}
 	}()
 	return handler
-}
-
-func printHelp(parser *goflags.Parser) {
-	writeHelp(parser, os.Stdout)
 }
 
 func writeHelp(parser *goflags.Parser, writer io.Writer) {
